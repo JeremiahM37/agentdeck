@@ -130,6 +130,30 @@ def test_delete_orphans_children_not_cascade(seeded):
     assert still["parent_task_id"] is None
 
 
+def test_token_mode_blocks_agent_self_approval(tmp_path, monkeypatch):
+    """Security: an agent knows the base URL and its per-attempt hook token. In
+    token mode it must NOT be able to reach the human decision endpoint to
+    self-approve its own gated action — while hook endpoints stay reachable.
+    (In 'none' mode a LAN agent CAN self-approve; that's the documented trust
+    boundary — see DESIGN §4.7.)"""
+    from fastapi.testclient import TestClient
+    from server import config
+    from server.app import create_app
+    monkeypatch.setattr(config, "DB_PATH", tmp_path / "auth.db")
+    monkeypatch.setattr(config, "AUTH_TOKEN", "humanonly")
+    with TestClient(create_app()) as c:
+        # agent (no human bearer) is blocked from the approval surfaces
+        assert c.get("/api/approvals?status=pending").status_code == 401
+        assert c.post("/api/approvals/1/decision",
+                      json={"decision": "approved"}).status_code == 401
+        # but the hook path is exempt (agent reaches it; 403/422, never 401)
+        assert c.post("/api/hook/approval", json={"token": "bad", "tool_name": "Bash",
+                                                  "tool_input": {}}).status_code in (403, 422)
+        # the human, with the bearer, gets through
+        assert c.get("/api/approvals?status=pending",
+                     headers={"Authorization": "Bearer humanonly"}).status_code == 200
+
+
 def test_read_file_uses_fast_tail_not_dd():
     """dd bs=1 was O(bytes) syscalls — a long agent log re-read every poll would
     crawl. Confirm both remote executors emit a byte-accurate tail command."""
