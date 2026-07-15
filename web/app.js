@@ -128,7 +128,7 @@ function card(t) {
       ${t.attempt?.result?.review ? (t.attempt.result.review.verdict === "APPROVE"
         ? '<span class="chip ds" title="reviewer approved">⚖ approved</span>'
         : '<span class="chip" style="color:var(--amber);border-color:rgba(255,180,84,.4)" title="reviewer requests changes">⚖ changes</span>') : ""}
-      ${(t.attempts || []).length > 1 ? `<span class="chip" style="color:var(--violet)">⑂ A/B ×${t.attempts.length}</span>` : ""}
+      ${(t.attempts || []).length > 1 ? `<span class="chip" style="color:var(--violet)" title="${t.attempts.length} attempts (retries / follow-ups / A/B)">⑂ ×${t.attempts.length}</span>` : ""}
     </div>`;
   $(".t", el).textContent = t.title;
   el.onclick = () => openTaskSheet(t.id);

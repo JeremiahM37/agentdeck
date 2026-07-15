@@ -15,8 +15,6 @@ from .executor.pct import PctExecutor
 
 log = logging.getLogger("agentdeck.scheduler")
 
-DIFF_DIR = config.ROOT / "diffs"
-
 AGENT_TASK_FOOTER = """
 
 ---
@@ -285,8 +283,9 @@ class Scheduler:
         except ExecutorError as e:
             patch, files = "", [{"path": f"(diff capture failed: {e})",
                                  "additions": 0, "deletions": 0}]
-        DIFF_DIR.mkdir(exist_ok=True)
-        Path(DIFF_DIR / f"attempt-{att['id']}.patch").write_text(patch)
+        diff_dir = config.diff_dir()
+        diff_dir.mkdir(parents=True, exist_ok=True)
+        Path(diff_dir / f"attempt-{att['id']}.patch").write_text(patch)
         db.update("attempts", att["id"], {"diff_stat_json": db.j(files)})
 
         # auto-verify: run the project's test command in the worktree and badge the result
@@ -356,7 +355,7 @@ class Scheduler:
                   "created_by_attempt=? LIMIT 1", (att["id"],)):
             return
         patch = ""
-        pf = DIFF_DIR / f"attempt-{att['id']}.patch"
+        pf = config.diff_dir() / f"attempt-{att['id']}.patch"
         if pf.exists():
             patch = pf.read_text()[:12000]
         prompt = (

@@ -5,6 +5,14 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 
 DB_PATH = Path(os.environ.get("AGENTDECK_DB", ROOT / "agentdeck.db"))
+
+
+def diff_dir() -> Path:
+    """Where captured diffs live — derived from the DB path so each database
+    (incl. every test's tmp DB) gets its own store. Computed lazily so tests that
+    monkeypatch DB_PATH are honored, and so mock runs never clobber the real
+    production diffs (they once did — attempt ids collide across databases)."""
+    return DB_PATH.parent / "agentdeck-diffs"
 PORT = int(os.environ.get("AGENTDECK_PORT", "9110"))
 HOST = os.environ.get("AGENTDECK_HOST", "0.0.0.0")
 

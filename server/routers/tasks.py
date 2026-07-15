@@ -337,7 +337,7 @@ def task_diff(task_id: int, attempt_n: int | None = None):
                      "ORDER BY n DESC LIMIT 1", (task_id,))
     if not att:
         raise HTTPException(404, "no diff captured yet")
-    patch_file = Path(config.ROOT / "diffs" / f"attempt-{att['id']}.patch")
+    patch_file = config.diff_dir() / f"attempt-{att['id']}.patch"
     patch = patch_file.read_text() if patch_file.exists() else ""
     return {"attempt_n": att["n"], "stats": db.unj(att["diff_stat_json"], []),
             "files": worktree.split_patch(patch)}

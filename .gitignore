@@ -7,7 +7,7 @@ __pycache__/
 
 # runtime state (never commit)
 agentdeck.db*
-diffs/
+agentdeck-diffs/
 smoke-repo/
 .agentdeck-worktrees/
 .playwright-mcp/

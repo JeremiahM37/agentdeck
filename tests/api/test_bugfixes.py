@@ -53,6 +53,26 @@ def test_expire_for_attempt_returns_count(seeded):
     assert broker.expire_for_attempt(att["id"]) == 0   # idempotent
 
 
+def test_diffs_isolated_per_database(seeded, tmp_path):
+    """A mock/test run must NOT write into another database's diff store —
+    attempt ids collide across databases and would clobber real diffs (they did:
+    running the suite once overwrote production attempt-N.patch with MOCK_DIFF)."""
+    from server import config
+    c, pid = seeded["client"], seeded["project_id"]
+    # this test's DB lives under tmp_path (conftest), so diffs must too
+    assert str(config.diff_dir()).startswith(str(tmp_path))
+    assert config.diff_dir() != config.ROOT / "diffs"
+
+    t = c.post("/api/tasks", json={"project_id": pid, "title": "iso",
+                                   "prompt": "x"}).json()
+    c.post(f"/api/tasks/{t['id']}/dispatch", json={})
+    wait_for(lambda: c.get(f"/api/tasks/{t['id']}").json()["status"] == "review",
+             msg="review")
+    # the patch landed in the isolated store, not the repo's real one
+    patches = list(config.diff_dir().glob("*.patch"))
+    assert patches and all(str(p).startswith(str(tmp_path)) for p in patches)
+
+
 def test_read_file_uses_fast_tail_not_dd():
     """dd bs=1 was O(bytes) syscalls — a long agent log re-read every poll would
     crawl. Confirm both remote executors emit a byte-accurate tail command."""
