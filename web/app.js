@@ -112,7 +112,7 @@ function card(t) {
   el.draggable = true;
   el.ondragstart = (e) => e.dataTransfer.setData("text/adk-task", JSON.stringify(
     { id: t.id, status: t.status }));
-  const ds = (t.attempt?.diff_stat || []);
+  const ds = Array.isArray(t.attempt?.diff_stat) ? t.attempt.diff_stat : [];
   const adds = ds.reduce((a, f) => a + (f.additions || 0), 0);
   const dels = ds.reduce((a, f) => a + (f.deletions || 0), 0);
   el.innerHTML = `
@@ -205,7 +205,10 @@ function renderColumns() {
     };
     const body = $(".col-body", c);
     if (!items.length) body.innerHTML = '<div class="col-empty">— empty —</div>';
-    items.forEach((t) => body.appendChild(card(t)));
+    items.forEach((t) => {
+      try { body.appendChild(card(t)); }   // one bad card must never blank the board
+      catch (err) { console.error("card render failed", t?.id, err); }
+    });
     board.appendChild(c);
   }
   // phone: land on the first column that has work, not an empty backlog

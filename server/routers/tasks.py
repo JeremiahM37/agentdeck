@@ -56,7 +56,10 @@ def _view(task: dict) -> dict:
                           ("id", "n", "status", "branch", "worktree_path", "tmux_session",
                            "started_at", "finished_at", "exit_code")}
         out["attempt"]["result"] = db.unj(att["result_json"])
-        out["attempt"]["diff_stat"] = db.unj(att["diff_stat_json"], [])
+        # diff_stat_json defaults to '{}' before a diff is captured — unj parses
+        # that to a dict, so coerce to a list or the UI's ds.reduce() crashes
+        _ds = db.unj(att["diff_stat_json"], [])
+        out["attempt"]["diff_stat"] = _ds if isinstance(_ds, list) else []
         out["attempt"]["verify"] = db.unj(att["verify_json"])
     out["attempts"] = [
         {"n": a["n"], "status": a["status"], "model": a["model"],

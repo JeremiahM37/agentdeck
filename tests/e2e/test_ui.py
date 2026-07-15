@@ -332,6 +332,23 @@ def test_delete_task_from_ui(page, server):
     expect(page.locator("#sheet")).to_be_hidden()
 
 
+def test_running_task_card_no_console_crash(page, server):
+    """A running/queued task has no diff yet (diff_stat is {} server-side). The
+    card must render without throwing — a JS error here aborted the whole column
+    render. (Found via the browser console during live testing.)"""
+    errors = []
+    page.on("console", lambda m: errors.append(m.text) if m.type == "error" else None)
+    page.on("pageerror", lambda e: errors.append(str(e)))
+    page.goto(server)
+    # a slow task stays in 'running' long enough for its no-diff card to render
+    _new_task(page, "Long runner", "work [mock:slow]")
+    expect(page.locator(".col.s-running .card", has_text="Long runner")) \
+        .to_be_visible(timeout=10000)
+    # the running card rendered AND the board is intact (6 columns still there)
+    expect(page.locator(".col-head")).to_have_count(6)
+    assert not [e for e in errors if "reduce" in e or "is not a function" in e], errors
+
+
 def test_pwa_assets(page, server):
     page.goto(server)
     assert page.evaluate("fetch('/manifest.webmanifest').then(r=>r.ok)")
