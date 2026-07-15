@@ -737,6 +737,11 @@ document.querySelectorAll(".tab").forEach((b) => (b.onclick = () => switchTab(b.
 $("#fab").onclick = () => { state.sheet = { kind: "new" }; renderSheet(); };
 $("#sheet-backdrop").onclick = closeSheet;
 addEventListener("keydown", (e) => { if (e.key === "Escape" && state.sheet) closeSheet(); });
+// mobile: a phone that was locked/backgrounded drops SSE silently — resync on
+// return to foreground (shares the reconnect resync path)
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "visible") { refreshTasks(); refreshApprovals(); }
+});
 
 if ("serviceWorker" in navigator) navigator.serviceWorker.register("/sw.js");
 

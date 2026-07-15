@@ -43,6 +43,31 @@ def server(tmp_path_factory):
     proc.wait(timeout=10)
 
 
+AUTH_PORT = 9198
+AUTH_BASE = f"http://127.0.0.1:{AUTH_PORT}"
+
+
+@pytest.fixture(scope="session")
+def auth_server(tmp_path_factory):
+    """A second server with AGENTDECK_AUTH_TOKEN set, to prove the PWA works in
+    token-auth mode (fetch + EventSource both need the token threaded through)."""
+    env = {**os.environ, "AGENTDECK_MOCK": "1", "AGENTDECK_TICK": "0.1",
+           "AGENTDECK_PORT": str(AUTH_PORT), "AGENTDECK_AUTH_TOKEN": "secret123",
+           "AGENTDECK_DB": str(tmp_path_factory.mktemp("auth") / "a.db"),
+           "AGENTDECK_BASE_URL": AUTH_BASE}
+    proc = subprocess.Popen([sys.executable, "-m", "server"], cwd=ROOT, env=env,
+                            stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+    for _ in range(100):
+        with socket.socket() as s:
+            if s.connect_ex(("127.0.0.1", AUTH_PORT)) == 0:
+                break
+        time.sleep(0.1)
+    else:
+        proc.kill(); raise RuntimeError("auth server did not start")
+    yield AUTH_BASE
+    proc.terminate(); proc.wait(timeout=10)
+
+
 @pytest.fixture(scope="session")
 def browser():
     with sync_playwright() as p:
@@ -225,6 +250,70 @@ def test_settings_ui_saves_sinks(page, server):
     page.reload()
     page.click(".tab[data-tab='targets']")
     expect(page.locator("#s-ntfy-topic")).to_have_value("adk-e2e", timeout=5000)
+
+
+def test_multi_attempt_badge_not_mislabeled_ab(page, server):
+    """A retry produces 2 attempts but is NOT a parallel A/B run — the card must
+    not claim 'A/B'. (Regression: the badge said 'A/B xN' for any multi-attempt.)"""
+    page.goto(server)
+    _new_task(page, "Retry me", "do it")
+    # first attempt → review
+    expect(page.locator(".col.s-review .card", has_text="Retry me")) \
+        .to_be_visible(timeout=20000)
+    # retry via API (sequential second attempt, not A/B)
+    tid = page.evaluate("""async () => {
+      const ts = await (await fetch('/api/tasks')).json();
+      const t = ts.find(x => x.title === 'Retry me');
+      await fetch(`/api/tasks/${t.id}/dispatch`, {method:'POST',
+        headers:{'Content-Type':'application/json'}, body:'{}'});
+      return t.id;
+    }""")
+    card = page.locator(".card", has_text="Retry me")
+    expect(card.locator(".chip", has_text="×2")).to_be_visible(timeout=20000)
+    # the false 'A/B' claim must be gone
+    assert page.locator(".card", has_text="Retry me").locator(
+        "text=A/B").count() == 0
+
+
+def test_foreground_resync_refetches(page, server):
+    """Returning to foreground (or SSE reconnect, shared path) must resync the
+    board — otherwise a phone that missed events while backgrounded shows stale
+    state. (Regression: onopen/visibility did nothing.)"""
+    page.goto(server)
+    page.wait_for_selector("#board")
+    page.wait_for_timeout(500)
+    hits = []
+    page.on("request", lambda r: hits.append(r.url)
+            if r.url.rstrip("/").endswith("/api/tasks")
+            else None)
+    # faithfully simulate a phone returning to foreground: visible + the event.
+    # (headless Chromium reports 'hidden' by default, which the handler correctly
+    # ignores — so force 'visible' as a real unlock would.)
+    page.evaluate("""() => {
+      Object.defineProperty(document, 'visibilityState',
+        { get: () => 'visible', configurable: true });
+      document.dispatchEvent(new Event('visibilitychange'));
+    }""")
+    page.wait_for_timeout(700)
+    assert len(hits) >= 1, "foreground/reconnect did not resync /api/tasks"
+
+
+def test_token_auth_ui_works(browser, auth_server):
+    """With AGENTDECK_AUTH_TOKEN set: no token → API 401 (UI can't load data);
+    token in localStorage → board renders and SSE goes LIVE. (Regression: the PWA
+    never sent the token via fetch or the SSE query param, so the UI was dead.)"""
+    ctx = browser.new_context(viewport=DESKTOP)
+    pg = ctx.new_page()
+    pg.goto(auth_server)
+    # same-origin API call with no token → rejected by the middleware
+    status = pg.evaluate("async () => (await fetch('/api/tasks')).status")
+    assert status == 401, f"expected 401 without token, got {status}"
+    # store the token as the 401-prompt flow does, then load
+    pg.evaluate("localStorage.setItem('adk-token','secret123')")
+    pg.reload()
+    expect(pg.locator(".col-head")).to_have_count(6, timeout=10000)
+    expect(pg.locator("#conn-label")).to_have_text("LIVE", timeout=10000)  # SSE authed via query token
+    ctx.close()
 
 
 def test_pwa_assets(page, server):
