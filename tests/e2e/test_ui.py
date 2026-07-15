@@ -316,6 +316,22 @@ def test_token_auth_ui_works(browser, auth_server):
     ctx.close()
 
 
+def test_delete_task_from_ui(page, server):
+    """The delete button removes the card from the board (via the task_deleted
+    SSE event) and closes the sheet. (Regression: there was no way to delete a
+    task; mistaken/test cards accumulated forever.)"""
+    page.goto(server)
+    _new_task(page, "UI delete target", "noop")
+    card = page.locator(".card", has_text="UI delete target")
+    expect(card).to_be_visible(timeout=15000)
+    card.first.click()
+    page.on("dialog", lambda d: d.accept())
+    page.click("#actions button:has-text('Delete')")
+    expect(page.locator(".card", has_text="UI delete target")).to_have_count(0,
+                                                                             timeout=10000)
+    expect(page.locator("#sheet")).to_be_hidden()
+
+
 def test_pwa_assets(page, server):
     page.goto(server)
     assert page.evaluate("fetch('/manifest.webmanifest').then(r=>r.ok)")

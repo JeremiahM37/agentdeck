@@ -73,6 +73,63 @@ def test_diffs_isolated_per_database(seeded, tmp_path):
     assert patches and all(str(p).startswith(str(tmp_path)) for p in patches)
 
 
+def test_delete_task_removes_all_traces(seeded):
+    """Deleting a task must leave no orphaned attempts/events/approvals/memories/
+    diff files (previously there was no delete at all; tasks accumulated forever)."""
+    from server import config
+    c, pid = seeded["client"], seeded["project_id"]
+    t = c.post("/api/tasks", json={"project_id": pid, "title": "delete me",
+                                   "prompt": "x [mock:note]"}).json()
+    c.post(f"/api/tasks/{t['id']}/dispatch", json={})
+    wait_for(lambda: c.get(f"/api/tasks/{t['id']}").json()["status"] == "review",
+             msg="review")
+    att = db.one("SELECT * FROM attempts WHERE task_id=?", (t["id"],))
+    diff_file = config.diff_dir() / f"attempt-{att['id']}.patch"
+    assert diff_file.exists()
+    assert db.query("SELECT id FROM events WHERE attempt_id=?", (att["id"],))
+    assert db.query("SELECT id FROM memories WHERE created_by_attempt=?", (att["id"],))
+
+    r = c.request("DELETE", f"/api/tasks/{t['id']}")
+    assert r.status_code == 200 and r.json()["deleted"] == t["id"]
+
+    assert c.get(f"/api/tasks/{t['id']}").status_code == 404
+    assert db.one("SELECT id FROM attempts WHERE id=?", (att["id"],)) is None
+    assert not db.query("SELECT id FROM events WHERE attempt_id=?", (att["id"],))
+    assert not db.query("SELECT id FROM approvals WHERE attempt_id=?", (att["id"],))
+    assert not db.query("SELECT id FROM memories WHERE created_by_attempt=?", (att["id"],))
+    assert not diff_file.exists()
+    assert c.request("DELETE", "/api/tasks/99999").status_code == 404
+
+
+def test_delete_running_task_cancels_first(seeded):
+    c, pid = seeded["client"], seeded["project_id"]
+    t = c.post("/api/tasks", json={"project_id": pid, "title": "delete running",
+                                   "prompt": "x [mock:slow]"}).json()
+    c.post(f"/api/tasks/{t['id']}/dispatch", json={})
+    wait_for(lambda: c.get(f"/api/tasks/{t['id']}").json()["status"] == "running",
+             msg="running")
+    r = c.request("DELETE", f"/api/tasks/{t['id']}")
+    assert r.status_code == 200
+    assert c.get(f"/api/tasks/{t['id']}").status_code == 404
+
+
+def test_delete_orphans_children_not_cascade(seeded):
+    """Agent-filed follow-ups may be real work — deleting the parent orphans them
+    (parent_task_id NULL), it does not delete them."""
+    c, pid = seeded["client"], seeded["project_id"]
+    t = c.post("/api/tasks", json={"project_id": pid, "title": "parent",
+                                   "prompt": "x [mock:subtask]"}).json()
+    c.post(f"/api/tasks/{t['id']}/dispatch", json={})
+    wait_for(lambda: c.get(f"/api/tasks/{t['id']}").json()["status"] == "review",
+             msg="review")
+    child = next(x for x in c.get("/api/tasks").json()
+                 if x["parent_task_id"] == t["id"])
+    c.request("DELETE", f"/api/tasks/{t['id']}")
+    still = c.get(f"/api/tasks/{child['id']}").json()
+    assert still["id"] == child["id"]
+    assert still["parent_task_id"] is None
+
+
 def test_read_file_uses_fast_tail_not_dd():
     """dd bs=1 was O(bytes) syscalls — a long agent log re-read every poll would
     crawl. Confirm both remote executors emit a byte-accurate tail command."""

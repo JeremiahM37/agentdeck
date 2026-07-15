@@ -60,6 +60,11 @@ function connectSSE() {
     if (state.sheet?.kind === "task" && state.sheet.id === task.id) loadTaskSheet(task.id, true);
   });
   es.addEventListener("approval", () => { refreshApprovals(); });
+  es.addEventListener("task_deleted", (e) => {
+    const { id } = JSON.parse(e.data);
+    if (state.sheet?.kind === "task" && state.sheet.id === id) closeSheet();
+    refreshTasks();
+  });
 }
 function setConn(on) {
   $("#conn-led").className = "led " + (on ? "led-on" : "led-err");
@@ -538,6 +543,11 @@ function renderSheet() {
       }
     });
   }
+  act("🗑 Delete", "no", async () => {
+    if (!confirm(`Delete "${t.title}"? Removes its attempts, events, diffs and worktrees. Cannot be undone.`)) return;
+    try { await api(`/tasks/${t.id}`, { method: "DELETE" }); toast("Task deleted"); closeSheet(); refreshTasks(); }
+    catch (e) { toast(e.message, true); }
+  });
 
   const apDiv = $("#sheet-approvals", sheet);
   state.approvals.filter((a) => a.task_id === t.id).forEach((a) => apDiv.appendChild(approvalCard(a, true)));

@@ -209,6 +209,46 @@ def complete(task_id: int):
     return _view(task)
 
 
+@router.delete("/tasks/{task_id}", status_code=200)
+async def delete_task(task_id: int):
+    task = db.one("SELECT * FROM tasks WHERE id=?", (task_id,))
+    if not task:
+        raise HTTPException(404, "no such task")
+    project = db.one("SELECT * FROM projects WHERE id=?", (task["project_id"],))
+    target = db.one("SELECT * FROM targets WHERE id=?",
+                    (project["target_id"],)) if project else None
+    attempts = db.query("SELECT * FROM attempts WHERE task_id=?", (task_id,))
+
+    # 1) stop anything live (kills tmux / destroys sandbox / expires approvals)
+    for a in attempts:
+        if a["status"] in ("queued", "running"):
+            await scheduler.cancel_attempt(a)
+
+    # 2) reclaim worktrees for non-sandbox targets (sandboxes self-destroy)
+    if target and target["kind"] != "sandbox":
+        for a in attempts:
+            if a["worktree_path"] and not (project or {}).get("keep_worktrees"):
+                try:
+                    await worktree.remove_worktree(get_executor(target),
+                                                   project["repo_path"], a["worktree_path"])
+                except Exception:
+                    pass   # best-effort; DB rows still get cleaned below
+
+    # 3) delete on-disk diffs + all DB rows that reference this task's attempts
+    for a in attempts:
+        (config.diff_dir() / f"attempt-{a['id']}.patch").unlink(missing_ok=True)
+        db.execute("DELETE FROM events WHERE attempt_id=?", (a["id"],))
+        db.execute("DELETE FROM approvals WHERE attempt_id=?", (a["id"],))
+        db.execute("DELETE FROM memories WHERE created_by_attempt=?", (a["id"],))
+    db.execute("DELETE FROM attempts WHERE task_id=?", (task_id,))
+    # child tasks (agent-filed / reviewer-gate) are orphaned, not cascaded —
+    # agent-filed follow-ups may be real work the user wants to keep
+    db.execute("UPDATE tasks SET parent_task_id=NULL WHERE parent_task_id=?", (task_id,))
+    db.execute("DELETE FROM tasks WHERE id=?", (task_id,))
+    bus.publish("board", "task_deleted", {"id": task_id})
+    return {"deleted": task_id}
+
+
 @router.post("/tasks/{task_id}/cancel")
 async def cancel(task_id: int):
     task = db.one("SELECT * FROM tasks WHERE id=?", (task_id,))
