@@ -1,0 +1,29 @@
+[project]
+name = "agentdeck"
+version = "0.8.0"
+description = "Self-hosted, mobile-first mission control for AI coding agents on your own infrastructure"
+readme = "README.md"
+license = { text = "MIT" }
+authors = [{ name = "Jeremiah Mackey" }]
+requires-python = ">=3.11"
+keywords = ["ai", "coding-agents", "claude-code", "kanban", "self-hosted",
+            "proxmox", "mobile", "orchestration"]
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn>=0.30",
+    "asyncssh>=2.14",
+    "httpx>=0.27",
+]
+
+[project.optional-dependencies]
+push = ["pywebpush>=2.0"]
+mcp = ["mcp>=1.0"]
+dev = ["pytest>=8", "pytest-asyncio>=0.24", "playwright>=1.45"]
+
+[project.urls]
+Homepage = "https://github.com/JeremiahM37/agentdeck"
+Documentation = "https://github.com/JeremiahM37/agentdeck/blob/main/DESIGN.md"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]

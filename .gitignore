@@ -1,0 +1,21 @@
+# venv / caches
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+*.egg-info/
+
+# runtime state (never commit)
+agentdeck.db*
+diffs/
+smoke-repo/
+.agentdeck-worktrees/
+.playwright-mcp/
+
+# local backups / scratch
+*.pre-v02-schema
+*.bak-*
+
+# secrets — config is via environment only
+*.env
+!deploy/*.example.env

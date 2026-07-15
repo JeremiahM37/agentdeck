@@ -1,0 +1,48 @@
+# Verify agentdeck is actually in a working state. Run: verify run .verify.yaml
+# (service is systemd-managed and already running; we verify the live instance)
+backend: web
+
+launch:
+  url: http://127.0.0.1:9110
+
+options:
+  web:
+    headless: true
+    viewport: [1280, 800]
+
+steps:
+  - name: full test suite passes
+    actions:
+      - shell: cd /home/admin/projects/agentdeck && .venv/bin/pytest -q
+    expect:
+      no_log_contains: "failed"
+
+  - name: systemd service healthy
+    actions:
+      - shell: systemctl is-active agentdeck
+      - shell: curl -sf http://127.0.0.1:9110/api/health | grep -q '"ok":true'
+
+  - name: board renders live
+    actions:
+      - navigate: http://127.0.0.1:9110/
+      - wait: 2.5
+    expect:
+      vision: >
+        a dark terminal-styled kanban board titled AGENTDECK with six columns
+        (backlog, queued, running, review, done, failed), a quick-dispatch input
+        bar at the top, and a LIVE connection indicator; no error text, no blank
+        white screen
+
+  # Deterministic sink-settings coverage (Discord/ntfy inputs, Save button,
+  # Spend card) lives in tests/e2e + tests/api; here we just confirm the tab
+  # renders content in a real browser without erroring. The small local vision
+  # model is unreliable at enumerating specific labeled fields, so we keep the
+  # visual assert coarse and let the deterministic tests own the detail.
+  - name: targets tab renders
+    actions:
+      - click: { selector: ".tab[data-tab='targets']" }
+      - wait: 1.5
+    expect:
+      vision: >
+        a settings/configuration screen with cards and buttons; not a blank
+        white page, not a stack trace, not an error message

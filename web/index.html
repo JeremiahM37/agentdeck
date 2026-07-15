@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>agentdeck</title>
+<meta name="theme-color" content="#0a0f0d">
+<link rel="manifest" href="/manifest.webmanifest">
+<link rel="icon" href="/icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="/icon.svg">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@500;600;700&family=IBM+Plex+Mono:ital,wght@0,400;0,500;0,600;1,400&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<div id="crt"></div>
+
+<header id="topbar">
+  <div class="brand">
+    <span class="brand-mark">▚▞</span>
+    <h1>AGENT<b>DECK</b></h1>
+    <span class="brand-sub">mission control</span>
+  </div>
+  <div class="top-status">
+    <span id="conn-led" class="led led-off" title="live connection"></span>
+    <span id="conn-label">OFFLINE</span>
+  </div>
+</header>
+
+<main id="view"></main>
+
+<button id="fab" title="new task" aria-label="New task">+</button>
+
+<nav id="tabbar">
+  <button data-tab="board" class="tab on"><span class="tab-ic">▦</span>Board</button>
+  <button data-tab="deck" class="tab desktop-only"><span class="tab-ic">▣</span>Deck</button>
+  <button data-tab="approvals" class="tab"><span class="tab-ic">✋</span>Approvals<b id="appr-badge" class="badge" hidden></b></button>
+  <button data-tab="targets" class="tab"><span class="tab-ic">⌁</span>Targets</button>
+</nav>
+
+<div id="sheet-backdrop" hidden></div>
+<section id="sheet" hidden></section>
+<div id="toasts"></div>
+
+<script type="module" src="/app.js"></script>
+</body>
+</html>
