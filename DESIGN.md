@@ -96,7 +96,7 @@ backlog → queued → running → review → done
 ### 4.1 Control plane
 
 - **FastAPI + uvicorn**, single process, asyncio. SQLite (WAL) via `aiosqlite`-style thin wrapper. No ORM — explicit SQL, few tables.
-- **SSE event bus**: in-process pub/sub; clients subscribe to `/api/stream` (global board updates) and `/api/tasks/{id}/stream` (task timeline). SSE over WebSockets because it survives proxies/PWA background better and is trivially resumable (`Last-Event-ID`).
+- **SSE event bus**: in-process pub/sub; clients subscribe to `/api/stream` (global board updates) and `/api/tasks/{id}/stream` (task timeline). SSE over WebSockets because it survives proxies/PWA background better. Events emitted while a client is disconnected are **not** replayed (no server-side buffer); instead the client resyncs on every (re)connect — the board refetches tasks+approvals in `onopen`, the task sheet refetches its event list. A 30s poll is the backstop. (A `Last-Event-ID` replay buffer is a possible future optimization; today resync-on-reconnect is the contract.)
 - **Scheduler loop** (asyncio task, 2s tick): promotes `queued` attempts when their target has a free slot; drives log tailing for running attempts; detects finished/dead sessions; captures result diff; transitions state; emits push notifications.
 - **Server restarts are safe**: on boot, scan `running` attempts, re-attach tailers at the stored byte offset, reconcile tmux session existence (session gone + result file present → finalize; gone + no result → failed).
 
@@ -154,7 +154,7 @@ hook   ← exits 0 (allow) or 2 with stderr reason (deny, fed back to Claude)
 - **PWA, no build step**: vanilla ES modules + `lit-html`-style tagged templates or plain DOM — same conventions as pocketlab/mttyd. Installable (manifest + SW), offline shell, icon.
 - **Phone layout**: bottom tab bar — *Board · Activity · Approvals (badge) · Targets*. Board columns horizontally swipable; card tap → task sheet (timeline, live). Diff viewer: per-file accordion, unified diff, word-wrap, font-size control, swipe between files. Approve/deny as full-width thumb buttons.
 - **Desktop layout** (≥1024px): board as columns side-by-side; task detail as right drawer; **Grid view**: N live task panes (timeline or embedded terminal iframe via ttyd) — the "16 terminals" BridgeSpace view, but each pane is a *different machine* if you want.
-- **Live everywhere**: one SSE connection drives board moves, timeline appends, approval badges. Reconnect with backoff + `Last-Event-ID` replay.
+- **Live everywhere**: one SSE connection drives board moves, timeline appends, approval badges. EventSource auto-reconnects; on each reconnect the client resyncs (refetch) rather than relying on replay.
 - Voice dispatch (roadmap): mic button on New Task → Web Speech API (or POST audio to local whisper) → prompt field.
 
 ### 4.6 Notifications
@@ -165,7 +165,7 @@ hook   ← exits 0 (allow) or 2 with stderr reason (deny, fed back to Claude)
 ### 4.7 Security
 
 - Control plane binds LAN/Tailscale; intended behind existing reverse proxy (Tier 2 Authelia gate on the homelab).
-- Auth modes: `none` (trusted LAN), `token` (single bearer for API + PWA), `header` (trust `Remote-User` from Authelia). Hook endpoint always uses per-attempt tokens regardless of mode.
+- Auth modes: `none` (trusted LAN) and `token` (single bearer, `AGENTDECK_AUTH_TOKEN`; the PWA stores it in localStorage and threads it through both fetch and the SSE query param since EventSource can't set headers). Header-trust auth (`Remote-User` from Authelia) is handled *at the reverse proxy* — the deployed setup gates at nginx+Authelia and runs agentdeck in `none` mode behind it, rather than a distinct in-app mode. Hook endpoints always use per-attempt tokens regardless.
 - No passwords stored; SSH by key only. Secrets never rendered into events (hook input is shown verbatim — documented caveat).
 - `sandbox` flag per target: only sandboxed targets allow `bypassPermissions`; recommend disposable LXC/VM targets for it. Roadmap: one-tap **ephemeral LXC target** via Proxmox API (clone template → run task → destroy).
 
@@ -274,5 +274,5 @@ ownership per task, reviewer gates merges. BridgeMemory = markdown graph in
 - **Claude CLI flag/schema drift** → parser tolerant of unknown events; integration seam isolated in `claude_runner.py`; smoke test catches breakage.
 - **Worktree edge cases** (dirty repos, submodules, LFS, force-deleted branches) → worktree ops are their own module with aggressive error surfacing; cleanup is explicit + a janitor sweep; vibe-kanban's issue tracker mined for known mines.
 - **SSH flakiness** → connection reuse, keepalives, exponential backoff; target `status` degrades visibly instead of silently.
-- **Phone browsers killing SSE** → resume via `Last-Event-ID`; push notifications carry state changes so backgrounded ≠ blind.
+- **Phone browsers killing SSE** → resync-on-reconnect (refetch, not replay) + 30s poll backstop; push notifications carry state changes so backgrounded ≠ blind.
 - **Hook long-poll ties up agent** → 15m timeout → deny with "human unavailable, proceed read-only or stop"; configurable.

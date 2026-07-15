@@ -8,11 +8,24 @@ const state = {
 };
 
 /* ---------- api ---------- */
+function authToken() { return localStorage.getItem("adk-token") || ""; }
+// EventSource can't set headers, and fetch needs the bearer too — thread the
+// token (when the server runs in token-auth mode) through both surfaces.
+function withToken(url) {
+  const t = authToken();
+  return t ? url + (url.includes("?") ? "&" : "?") + "token=" + encodeURIComponent(t) : url;
+}
 async function api(path, opts = {}) {
+  const headers = { "Content-Type": "application/json" };
+  if (authToken()) headers.Authorization = "Bearer " + authToken();
   const r = await fetch(`/api${path}`, {
-    headers: { "Content-Type": "application/json" },
-    ...opts, body: opts.body ? JSON.stringify(opts.body) : undefined,
+    headers, ...opts, body: opts.body ? JSON.stringify(opts.body) : undefined,
   });
+  if (r.status === 401) {
+    const t = prompt("This agentdeck requires an access token:", authToken());
+    if (t !== null) { localStorage.setItem("adk-token", t); location.reload(); }
+    throw new Error("unauthorized");
+  }
   if (!r.ok) {
     let msg = r.statusText;
     try { msg = (await r.json()).detail || msg; } catch {}
@@ -30,10 +43,16 @@ function toast(msg, err = false) {
 }
 
 /* ---------- live board stream ---------- */
-let es;
+let es, sseConnectedOnce = false;
 function connectSSE() {
-  es = new EventSource("/api/stream");
-  es.onopen = () => setConn(true);
+  es = new EventSource(withToken("/api/stream"));
+  es.onopen = () => {
+    setConn(true);
+    // EventSource auto-reconnects but never replays what it missed while down —
+    // resync board + approvals on every (re)connect after the first
+    if (sseConnectedOnce) { refreshTasks(); refreshApprovals(); }
+    sseConnectedOnce = true;
+  };
   es.onerror = () => setConn(false);
   es.addEventListener("task", (e) => {
     const task = JSON.parse(e.data);
@@ -237,7 +256,7 @@ function renderDeck() {
       log.scrollTop = log.scrollHeight;
     };
     api(`/tasks/${t.id}/events`).then((evs) => evs.slice(-15).forEach(add));
-    const es = new EventSource(`/api/tasks/${t.id}/stream`);
+    const es = new EventSource(withToken(`/api/tasks/${t.id}/stream`));
     es.addEventListener("agent_event", (e) => add(JSON.parse(e.data)));
     state.deckES.push(es);
   }
@@ -363,7 +382,14 @@ async function openTaskSheet(id) {
   state.taskDiff = null; state.diffOpen = false; state.attemptView = null;
   await loadTaskSheet(id);
   if (state.taskES) state.taskES.close();
-  state.taskES = new EventSource(`/api/tasks/${id}/stream`);
+  let taskSseOnce = false;
+  state.taskES = new EventSource(withToken(`/api/tasks/${id}/stream`));
+  state.taskES.onopen = () => {
+    // resync the timeline on reconnect — SSE doesn't replay missed events
+    if (taskSseOnce && state.sheet?.kind === "task" && state.sheet.id === id)
+      loadTaskSheet(id);
+    taskSseOnce = true;
+  };
   state.taskES.addEventListener("agent_event", (e) => {
     state.taskEvents.push(JSON.parse(e.data));
     renderSheet();

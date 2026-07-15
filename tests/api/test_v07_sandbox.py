@@ -84,6 +84,27 @@ def test_sandbox_skips_reviewer_gate(client):
                 if x["created_by"] == "reviewer-gate" and x["parent_task_id"] == t["id"]]
 
 
+def test_sandbox_destroyed_on_unexpected_launch_error(client, monkeypatch):
+    """A failure AFTER the container exists (not a clean ExecutorError) must still
+    destroy it — otherwise the generic handler marks the attempt failed and leaks
+    the LXC."""
+    p = _sandbox_project(client, "sbleak")
+    from server.scheduler import scheduler
+    orig = scheduler._launch_sandbox_inner
+
+    async def boom(att, ctx, host, vmid):
+        raise RuntimeError("unexpected explosion mid-launch")
+    monkeypatch.setattr(scheduler, "_launch_sandbox_inner", boom)
+
+    t = client.post("/api/tasks", json={"project_id": p["id"], "title": "leaky",
+                                        "prompt": "x"}).json()
+    client.post(f"/api/tasks/{t['id']}/dispatch", json={})
+    wait_for(lambda: _task(client, t["id"])["status"] == "failed", msg="failed")
+    # the container that provision created was destroyed despite the crash
+    assert any(c.startswith("sudo pct destroy 9001") for c in _mock().cmd_log)
+    monkeypatch.setattr(scheduler, "_launch_sandbox_inner", orig)
+
+
 def test_template_path_repo_skips_clone(client):
     p = _sandbox_project(client, "sbbaked", repo="/root/adk-demo")
     t = client.post("/api/tasks", json={"project_id": p["id"], "title": "baked repo",

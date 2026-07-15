@@ -47,6 +47,19 @@ def decide(approval_id: int, decision: str, note: str = "", decided_by: str = "u
     return row
 
 
+def expire_for_attempt(attempt_id: int) -> int:
+    """Resolve any still-pending approvals for an attempt that has ended
+    (cancelled/finalized). Without this they hang 'pending' forever — the board
+    badge sticks and the blocked hook never gets a decision."""
+    n = 0
+    for row in db.query("SELECT id FROM approvals WHERE attempt_id=? AND "
+                        "status='pending'", (attempt_id,)):
+        if decide(row["id"], "expired", note="attempt ended before decision",
+                  decided_by="system"):
+            n += 1
+    return n
+
+
 async def wait(approval_id: int, timeout: float) -> dict:
     """Long-poll helper: returns the row after decision, expiry, or poll timeout."""
     row = db.one("SELECT * FROM approvals WHERE id=?", (approval_id,))

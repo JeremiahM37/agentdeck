@@ -46,8 +46,10 @@ class SSHExecutor(Executor):
         return ExecResult(r.exit_status or 0, r.stdout or "", r.stderr or "")
 
     async def read_file(self, path: str, offset: int = 0) -> bytes:
-        # dd keeps this dependency-free on the target (no sftp subsystem assumptions)
-        r = await self.run(f"dd if={_q(path)} bs=1 skip={offset} 2>/dev/null || true", timeout=60)
+        # tail -c +N is 1-indexed and streams in big blocks — dd bs=1 was O(bytes)
+        # syscalls and pathologically slow re-reading a growing agent log every poll
+        r = await self.run(f"tail -c +{offset + 1} {_q(path)} 2>/dev/null || true",
+                           timeout=60)
         return r.stdout.encode(errors="replace") if isinstance(r.stdout, str) else r.stdout
 
     async def write_file(self, path: str, data: bytes) -> None:

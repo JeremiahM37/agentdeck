@@ -23,7 +23,7 @@ class PctExecutor(Executor):
         return await self._local.run(wrap(self.vmid, cmd, cwd), timeout=timeout)
 
     async def read_file(self, path: str, offset: int = 0) -> bytes:
-        r = await self.run(f"dd if={shlex.quote(path)} bs=1 skip={offset} "
+        r = await self.run(f"tail -c +{offset + 1} {shlex.quote(path)} "
                            f"2>/dev/null || true", timeout=60)
         return r.stdout.encode(errors="replace") if isinstance(r.stdout, str) else r.stdout
 

@@ -160,6 +160,17 @@ class Scheduler:
         vmid = await sandbox.provision(host, target["host"], att["id"])
         db.update("attempts", att["id"], {"sandbox_vmid": vmid})
         att = {**att, "sandbox_vmid": vmid}
+        try:
+            await self._launch_sandbox_inner(att, ctx, host, vmid)
+        except Exception:
+            # ANY failure after the container exists must not leak it — the
+            # generic handler in _promote_queued only marks the attempt failed
+            await sandbox.destroy(host, vmid)
+            db.update("attempts", att["id"], {"worktree_path": ""})
+            raise
+
+    async def _launch_sandbox_inner(self, att, ctx, host, vmid) -> None:
+        task, project, target = ctx["task"], ctx["project"], ctx["target"]
         inside = _attempt_executor(att, target)
 
         base = task["base_branch"] or project["default_base_branch"] or "main"
@@ -304,6 +315,7 @@ class Scheduler:
             db.update("attempts", att["id"], {"worktree_path": ""})
 
     def _finalize(self, att: dict, rc: int, note: str = "") -> None:
+        broker.expire_for_attempt(att["id"])   # no ghost approvals on a dead attempt
         ok = rc == 0
         result = db.unj(db.one("SELECT result_json FROM attempts WHERE id=?",
                                (att["id"],))["result_json"])
@@ -421,6 +433,7 @@ class Scheduler:
         return {"removed_attempts": removed}
 
     async def cancel_attempt(self, att: dict) -> None:
+        broker.expire_for_attempt(att["id"])
         ctx = _context(att)
         if ctx:
             try:
