@@ -451,6 +451,27 @@ def test_deck_persists_streams_across_updates(page, server):
     assert still == "orig", f"deck pane A recreated on another task's update (SSE thrash): {still}"
 
 
+def test_fable_dispatch_requires_confirmation(page, server):
+    """Fable 5 is the highest-usage model — dispatching an agent on it must
+    prompt for confirmation, and dismissing it aborts (no task created)."""
+    page.goto(server)
+    page.click("#fab")
+    page.fill("#f-title", "Fable guarded task")
+    page.select_option("#f-model", "fable")
+    # dismiss the confirm → the dialog mentions Fable and nothing is created
+    seen = []
+    page.once("dialog", lambda d: (seen.append(d.message), d.dismiss()))
+    page.click("#f-go")
+    page.wait_for_timeout(800)
+    assert seen and "fable" in seen[0].lower(), seen
+    expect(page.locator(".card", has_text="Fable guarded task")).to_have_count(0)
+
+    # accept the confirm → task is created and dispatched
+    page.once("dialog", lambda d: d.accept())
+    page.click("#f-go")
+    expect(page.locator(".card", has_text="Fable guarded task")).to_be_visible(timeout=10000)
+
+
 def test_pwa_assets(page, server):
     page.goto(server)
     assert page.evaluate("fetch('/manifest.webmanifest').then(r=>r.ok)")

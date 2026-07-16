@@ -658,11 +658,11 @@ function renderNewTask(sheet) {
     </select>
     <label class="f">Model</label>
     <select class="f" id="f-model">
-      <option value="">default</option><option>opus</option><option>sonnet</option><option>haiku</option>
+      <option value="">default</option><option>fable</option><option>opus</option><option>sonnet</option><option>haiku</option>
     </select>
     <label class="f">A/B second attempt (parallel, compare diffs)</label>
     <select class="f" id="f-modelb">
-      <option value="">off</option><option>opus</option><option>sonnet</option><option>haiku</option>
+      <option value="">off</option><option>fable</option><option>opus</option><option>sonnet</option><option>haiku</option>
     </select>
     <label class="f">Priority</label>
     <select class="f" id="f-prio">
@@ -702,9 +702,14 @@ function renderNewTask(sheet) {
   const create = async (dispatch) => {
     const data = collect();
     if (!data.title) return toast("Title required", true);
+    const modelB = $("#f-modelb").value;
+    // Fable 5 is the most capable — and highest-usage — model; confirm before
+    // dispatching an agent on it so it's never an accidental quota burn.
+    if (dispatch && (data.model === "fable" || modelB === "fable") &&
+        !confirm("Dispatch on Fable 5? It's the most capable model and uses the "
+                 + "most of your Claude Code plan. Continue?")) return;
     try {
       const t = await api("/tasks", { method: "POST", body: data });
-      const modelB = $("#f-modelb").value;
       if (dispatch) await api(`/tasks/${t.id}/dispatch`, { method: "POST",
         body: modelB ? { model_b: modelB } : {} });
       closeSheet(); refreshTasks();
