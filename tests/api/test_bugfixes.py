@@ -130,6 +130,28 @@ def test_delete_orphans_children_not_cascade(seeded):
     assert still["parent_task_id"] is None
 
 
+def test_store_events_survives_concurrent_delete(seeded):
+    """A task deleted mid-poll must not crash the scheduler with a FOREIGN KEY
+    error (which aborted the whole tick and stalled every other running task).
+    _store_events must no-op for a vanished attempt."""
+    c, pid = seeded["client"], seeded["project_id"]
+    t = c.post("/api/tasks", json={"project_id": pid, "title": "racer",
+                                   "prompt": "x [mock:slow]"}).json()
+    c.post(f"/api/tasks/{t['id']}/dispatch", json={})
+    wait_for(lambda: c.get(f"/api/tasks/{t['id']}").json()["status"] == "running",
+             msg="running")
+    att = db.one("SELECT * FROM attempts WHERE task_id=?", (t["id"],))
+    # simulate the delete winning the race: rows gone, scheduler still holds `att`
+    db.execute("DELETE FROM events WHERE attempt_id=?", (att["id"],))
+    db.execute("DELETE FROM attempts WHERE id=?", (att["id"],))
+    db.execute("DELETE FROM tasks WHERE id=?", (t["id"],))
+    from server.scheduler import scheduler
+    # this used to raise sqlite3.IntegrityError (FK) and abort the tick
+    scheduler._store_events(att, [{"type": "text", "payload": {"text": "late event"}}])
+    # no orphan event was written for the deleted attempt
+    assert not db.query("SELECT id FROM events WHERE attempt_id=?", (att["id"],))
+
+
 def test_token_mode_blocks_agent_self_approval(tmp_path, monkeypatch):
     """Security: an agent knows the base URL and its per-attempt hook token. In
     token mode it must NOT be able to reach the human decision endpoint to

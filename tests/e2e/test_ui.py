@@ -349,6 +349,35 @@ def test_running_task_card_no_console_crash(page, server):
     assert not [e for e in errors if "reduce" in e or "is not a function" in e], errors
 
 
+def test_deck_persists_streams_across_updates(page, server):
+    """The Deck must reconcile panes incrementally — a status change of one task
+    must not tear down and reopen every pane's SSE. We assert a persisting pane's
+    DOM node is the SAME element before and after another task changes status."""
+    page.goto(server)
+    # two tasks: one slow (stays running), one fast (will change status)
+    _new_task(page, "Deck persist A", "slow one [mock:slow]")
+    _new_task(page, "Deck persist B", "quick one")
+    page.click(".tab[data-tab='deck']")
+    paneA = page.locator(".pane", has_text="Deck persist A")
+    expect(paneA).to_be_visible(timeout=15000)
+    # tag pane A's DOM node so we can detect if it gets recreated
+    page.evaluate("""() => {
+      const p = [...document.querySelectorAll('.pane')]
+        .find(e => e.textContent.includes('Deck persist A'));
+      if (p) p.dataset.adkMark = 'orig';
+    }""")
+    # B finishes → a board task event fires → renderDeck runs again
+    expect(page.locator(".pane", has_text="Deck persist B")
+           .locator(".statpill", has_text="review")).to_be_visible(timeout=20000)
+    # pane A must be the SAME element (stream not torn down)
+    still = page.evaluate("""() => {
+      const p = [...document.querySelectorAll('.pane')]
+        .find(e => e.textContent.includes('Deck persist A'));
+      return p ? p.dataset.adkMark : null;
+    }""")
+    assert still == "orig", "deck pane A was recreated on another task's update (SSE thrash)"
+
+
 def test_pwa_assets(page, server):
     page.goto(server)
     assert page.evaluate("fetch('/manifest.webmanifest').then(r=>r.ok)")

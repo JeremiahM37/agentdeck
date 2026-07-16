@@ -5,6 +5,7 @@ const state = {
   tab: "board", tasks: [], projects: [], targets: [], approvals: [],
   sheet: null,            // {kind:'task', id} | {kind:'new'} | null
   taskES: null, taskEvents: [], taskDiff: null, diffOpen: false,
+  deckPanes: new Map(),   // taskId -> {el, es}: persisted deck panes/streams
 };
 
 /* ---------- api ---------- */
@@ -219,54 +220,72 @@ function renderColumns() {
 }
 
 /* ---------- deck view (desktop multi-pane cockpit) ---------- */
+// panes are reconciled incrementally: streams persist across task updates so a
+// status change elsewhere never tears down and reconnects every pane's SSE
+// (that thrash risked dropping mid-stream events under concurrent load).
 function closeDeckStreams() {
-  (state.deckES || []).forEach((es) => es.close());
-  state.deckES = [];
+  for (const p of state.deckPanes.values()) p.es.close();
+  state.deckPanes.clear();
+}
+function makePaneLogger(log) {
+  return (e) => {
+    const p = e.payload || {};
+    const line = document.createElement("div");
+    line.className = "pane-line";
+    line.textContent =
+      e.type === "text" ? p.text :
+      e.type === "tool_use" ? `▸ ${p.name} ${snippet(p.input)}` :
+      e.type === "tool_result" ? `↳ ${(p.content || "").slice(0, 80)}` :
+      e.type === "verify" ? `verify ${p.rc === 0 ? "PASS" : "FAIL"}` :
+      e.type === "result" ? `✔ ${p.result || ""}` : e.type;
+    log.appendChild(line);
+    while (log.children.length > 40) log.firstChild.remove();
+    log.scrollTop = log.scrollHeight;
+  };
 }
 function renderDeck() {
   const main = $("#view");
-  closeDeckStreams();
   const active = state.tasks
     .filter((t) => ["running", "review", "queued"].includes(t.status))
     .slice(0, 16);
+  let deck = $("#deck");
   if (!active.length) {
+    closeDeckStreams();
     main.innerHTML = '<div class="hint">Nothing live. Dispatch tasks and watch them run here, side by side.</div>';
     return;
   }
-  main.innerHTML = '<div id="deck"></div>';
-  const deck = $("#deck");
+  if (!deck) { main.innerHTML = '<div id="deck"></div>'; deck = $("#deck"); }
+  const activeIds = new Set(active.map((t) => t.id));
+  // remove panes whose task left the active set (close their stream)
+  for (const [id, p] of [...state.deckPanes]) {
+    if (!activeIds.has(id)) { p.es.close(); p.el.remove(); state.deckPanes.delete(id); }
+  }
+  // add or update
   for (const t of active) {
-    const pane = document.createElement("div");
-    pane.className = `pane s-${t.status}`;
-    pane.innerHTML = `
-      <div class="pane-head">
-        <span class="statpill">${t.status}</span>
-        <span class="pane-title"></span>
-        <span class="pane-sub">⌁ ${esc(t.target_name)}</span>
-      </div>
-      <div class="pane-log"></div>`;
-    $(".pane-title", pane).textContent = t.title;
-    $(".pane-head", pane).onclick = () => openTaskSheet(t.id);
-    deck.appendChild(pane);
-    const log = $(".pane-log", pane);
-    const add = (e) => {
-      const p = e.payload || {};
-      const line = document.createElement("div");
-      line.className = "pane-line";
-      line.textContent =
-        e.type === "text" ? p.text :
-        e.type === "tool_use" ? `▸ ${p.name} ${snippet(p.input)}` :
-        e.type === "tool_result" ? `↳ ${(p.content || "").slice(0, 80)}` :
-        e.type === "verify" ? `verify ${p.rc === 0 ? "PASS" : "FAIL"}` :
-        e.type === "result" ? `✔ ${p.result || ""}` : e.type;
-      log.appendChild(line);
-      while (log.children.length > 40) log.firstChild.remove();
-      log.scrollTop = log.scrollHeight;
-    };
-    api(`/tasks/${t.id}/events`).then((evs) => evs.slice(-15).forEach(add));
-    const es = new EventSource(withToken(`/api/tasks/${t.id}/stream`));
-    es.addEventListener("agent_event", (e) => add(JSON.parse(e.data)));
-    state.deckES.push(es);
+    let p = state.deckPanes.get(t.id);
+    if (!p) {
+      const pane = document.createElement("div");
+      pane.innerHTML = `
+        <div class="pane-head">
+          <span class="statpill"></span>
+          <span class="pane-title"></span>
+          <span class="pane-sub">⌁ ${esc(t.target_name)}</span>
+        </div>
+        <div class="pane-log"></div>`;
+      $(".pane-title", pane).textContent = t.title;
+      $(".pane-head", pane).onclick = () => openTaskSheet(t.id);
+      deck.appendChild(pane);
+      const log = $(".pane-log", pane);
+      const add = makePaneLogger(log);
+      const es = new EventSource(withToken(`/api/tasks/${t.id}/stream`));
+      es.addEventListener("agent_event", (e) => add(JSON.parse(e.data)));
+      p = { el: pane, es };
+      state.deckPanes.set(t.id, p);
+      api(`/tasks/${t.id}/events`).then((evs) => evs.slice(-15).forEach(add));
+    }
+    // update header status in place (no stream churn)
+    p.el.className = `pane s-${t.status}`;
+    $(".statpill", p.el).textContent = t.status;
   }
 }
 

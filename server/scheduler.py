@@ -5,6 +5,7 @@ targets survive a control-plane restart and are re-attached on the next tick.
 import asyncio
 import logging
 import secrets
+import sqlite3
 from pathlib import Path
 
 from . import agents, broker, claude_runner, config, db, sandbox, sinks, state, worktree
@@ -64,6 +65,12 @@ class Scheduler:
         for att in db.query("SELECT * FROM attempts WHERE status='running'"):
             try:
                 await self._poll(att)
+                self._poll_errors.pop(att["id"], None)
+            except sqlite3.IntegrityError:
+                # the task/attempt was deleted concurrently (DELETE /tasks/{id})
+                # mid-poll — nothing to do; it's gone from the next query. Must
+                # not abort the tick and stall every other running attempt.
+                log.info("attempt %s vanished mid-poll (concurrent delete)", att["id"])
                 self._poll_errors.pop(att["id"], None)
             except ExecutorError as e:
                 n = self._poll_errors.get(att["id"], 0) + 1
@@ -259,6 +266,10 @@ class Scheduler:
 
     def _store_events(self, att: dict, events: list[dict]) -> None:
         if not events:
+            return
+        # fast-path: skip if the attempt was deleted concurrently (avoids the
+        # common case of an FK error; the tick loop still catches the race).
+        if not db.one("SELECT 1 FROM attempts WHERE id=?", (att["id"],)):
             return
         seq = (db.one("SELECT MAX(seq) m FROM events WHERE attempt_id=?",
                       (att["id"],))["m"] or 0)
