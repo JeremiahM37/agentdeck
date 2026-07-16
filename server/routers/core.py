@@ -45,10 +45,15 @@ async def check_target(target_id: int, deep: bool = False):
         info = await ex.check()
         status = "online" if info.get("git") and info.get("tmux") else "degraded"
         if deep and info.get("claude"):
+            # provision current auth first, so the probe both TESTS and HEALS the
+            # exact path an agent dispatch uses (fresh OAuth creds, or the API key)
+            from .. import agents, credentials
+            await credentials.provision(ex, dict(t))
+            prefix = agents.env_prefix(credentials.base_agent_env())
             # real 1-token auth round-trip — catches rotated/stale OAuth creds
             # </dev/null: claude -p reads stdin to EOF — an ssh exec channel never
             # EOFs, so without the redirect the probe hangs until timeout
-            r = await ex.run('claude -p "Reply with exactly: ok" --model haiku '
+            r = await ex.run(f'{prefix}claude -p "Reply with exactly: ok" --model haiku '
                              '< /dev/null', timeout=120)
             if r.ok:
                 info["claude_auth"] = "ok"

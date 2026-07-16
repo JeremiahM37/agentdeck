@@ -43,3 +43,8 @@ WEB_DIR = ROOT / "web"
 HOOKS_DIR = ROOT / "hooks"
 
 CLAUDE_BIN = os.environ.get("AGENTDECK_CLAUDE_BIN", "claude")
+
+# Rotation-proof agent auth. When set, injected as ANTHROPIC_API_KEY into every
+# agent launch and no OAuth credentials are pushed to targets. When empty,
+# agentdeck provisions the control plane's current OAuth creds at dispatch.
+ANTHROPIC_API_KEY = os.environ.get("AGENTDECK_ANTHROPIC_API_KEY", "")

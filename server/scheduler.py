@@ -8,7 +8,8 @@ import secrets
 import sqlite3
 from pathlib import Path
 
-from . import agents, broker, claude_runner, config, db, sandbox, sinks, state, worktree
+from . import (agents, broker, claude_runner, config, credentials, db, sandbox,
+               sinks, state, worktree)
 from .bus import bus
 from .executor import get_executor
 from .executor.base import Executor, ExecutorError
@@ -143,12 +144,15 @@ class Scheduler:
         await ex.run(f"rm -f {rt}/exit_code {rt}/events.jsonl {rt}/stderr.log",
                      timeout=20)
 
+        # push CURRENT auth so the agent never runs on a rotated-out credential copy
+        await credentials.provision(ex, target)
+
         sess = f"adk-{att['id']}"
         cmd = agents.launch_command(
             task["agent"] or "claude", wt, sess, task["permission_mode"],
             model=att["model"] or task["model"],
             resume_session=att["resume_session"],
-            env=db.unj(project["env_json"]))
+            env={**credentials.base_agent_env(), **db.unj(project["env_json"])})
         r = await ex.run(cmd, timeout=60)
         if not r.ok:
             raise ExecutorError(f"tmux launch failed: {r.stderr.strip()}")
@@ -207,11 +211,14 @@ class Scheduler:
                 claude_runner.hook_settings(config.BASE_URL, att["token"])).encode())
         await inside.run(f"rm -f {rt}/exit_code {rt}/events.jsonl {rt}/stderr.log",
                          timeout=20)
+        # provision current auth into the container via its own executor (mock-safe)
+        await credentials.provision(inside, {"kind": "pct", "name": f"sandbox-{vmid}"})
         sess = f"adk-{att['id']}"
         cmd = agents.launch_command(task["agent"] or "claude", workdir, sess,
                                     task["permission_mode"],
                                     model=att["model"] or task["model"], sandbox=True,
-                                    env=db.unj(project["env_json"]))
+                                    env={**credentials.base_agent_env(),
+                                         **db.unj(project["env_json"])})
         r = await inside.run(cmd, timeout=60)
         if not r.ok:
             await sandbox.destroy(host, vmid)

@@ -38,11 +38,9 @@ async def provision(host: Executor, template_vmid: str, attempt_id: int) -> str:
     else:
         await destroy(host, vmid)
         raise ExecutorError(f"sandbox {vmid} never became ready")
-    # template creds rot when the source CLI rotates its OAuth token — push fresh
-    if os.path.exists(CREDS_PATH):
-        await host.run(f"sudo pct exec {vmid} -- mkdir -p /root/.claude", timeout=30)
-        await host.run(f"sudo pct push {vmid} {CREDS_PATH} "
-                       f"/root/.claude/.credentials.json --perms 600", timeout=60)
+    # NB: auth is provisioned by the scheduler right before launch (via the
+    # attempt's own executor), so it shares the one credentials code path and
+    # works under the mock executor in tests.
     log.info("sandbox %s provisioned from template %s", vmid, template_vmid)
     return vmid
 

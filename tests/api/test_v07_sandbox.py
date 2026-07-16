@@ -32,7 +32,8 @@ def test_sandbox_full_lifecycle(client):
     log = _mock().cmd_log
     assert any(c.startswith("sudo pct clone 110 9001") for c in log)
     assert any(c.startswith("sudo pct start 9001") for c in log)
-    assert any("pct push 9001" in c and ".credentials.json" in c for c in log)
+    # auth is provisioned into the container before launch (writes ~/.claude creds)
+    assert any(".claude/.credentials.json" in c for c in log)
     assert any(c.startswith("git clone --branch main https://github.com/user/demo.git "
                             "/root/work/sbdemo") for c in log)
     # destroyed right after finalize — diff/events already captured
