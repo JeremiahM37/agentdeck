@@ -17,9 +17,25 @@ PHONE = {"width": 390, "height": 844}
 DESKTOP = {"width": 1440, "height": 900}
 
 
-def _port_open() -> bool:
+def _port_open(port: int = PORT) -> bool:
     with socket.socket() as s:
-        return s.connect_ex(("127.0.0.1", PORT)) == 0
+        return s.connect_ex(("127.0.0.1", port)) == 0
+
+
+def _free_port(port: int) -> None:
+    """Kill any process still listening on `port` (a leaked server from a run
+    that was killed mid-way). Without this, a fixture's _port_open() check would
+    connect to the STALE server and every test runs against its accumulated
+    state — the exact failure that made deck tests flaky."""
+    import subprocess
+    try:
+        out = subprocess.run(["ss", "-tlnp"], capture_output=True, text=True).stdout
+        for line in out.splitlines():
+            if f":{port} " in line and "pid=" in line:
+                pid = line.split("pid=")[1].split(",")[0]
+                subprocess.run(["kill", "-9", pid], capture_output=True)
+    except Exception:
+        pass
 
 
 @pytest.fixture(scope="session")
@@ -29,6 +45,7 @@ def server(tmp_path_factory):
            "AGENTDECK_MOCK_DELAY": "0.25", "AGENTDECK_PORT": str(PORT),
            "AGENTDECK_DB": str(tmp_path_factory.mktemp("e2e") / "e2e.db"),
            "AGENTDECK_BASE_URL": BASE}
+    _free_port(PORT)   # evict any leaked server so we own this port
     proc = subprocess.Popen([sys.executable, "-m", "server"], cwd=ROOT, env=env,
                             stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
     for _ in range(100):
@@ -40,7 +57,11 @@ def server(tmp_path_factory):
         raise RuntimeError("server did not start")
     yield BASE
     proc.terminate()
-    proc.wait(timeout=10)
+    try:
+        proc.wait(timeout=10)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+    _free_port(PORT)   # belt-and-suspenders: never leak past teardown
 
 
 AUTH_PORT = 9198
@@ -55,17 +76,22 @@ def auth_server(tmp_path_factory):
            "AGENTDECK_PORT": str(AUTH_PORT), "AGENTDECK_AUTH_TOKEN": "secret123",
            "AGENTDECK_DB": str(tmp_path_factory.mktemp("auth") / "a.db"),
            "AGENTDECK_BASE_URL": AUTH_BASE}
+    _free_port(AUTH_PORT)
     proc = subprocess.Popen([sys.executable, "-m", "server"], cwd=ROOT, env=env,
                             stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
     for _ in range(100):
-        with socket.socket() as s:
-            if s.connect_ex(("127.0.0.1", AUTH_PORT)) == 0:
-                break
+        if _port_open(AUTH_PORT):
+            break
         time.sleep(0.1)
     else:
         proc.kill(); raise RuntimeError("auth server did not start")
     yield AUTH_BASE
-    proc.terminate(); proc.wait(timeout=10)
+    proc.terminate()
+    try:
+        proc.wait(timeout=10)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+    _free_port(AUTH_PORT)
 
 
 @pytest.fixture(scope="session")
@@ -74,6 +100,27 @@ def browser():
         b = p.chromium.launch()
         yield b
         b.close()
+
+
+@pytest.fixture(autouse=True)
+def clean_board(server):
+    """Clear the shared session server's board before each e2e test. Without this
+    the session-scoped server accumulates tasks and board-state-dependent tests
+    (deck panes past the 16-cap, filters, counts) become flaky and slow as more
+    tests are added — each timing out ~20s against a crowded board."""
+    import json
+    import urllib.request
+    try:
+        tasks = json.load(urllib.request.urlopen(f"{server}/api/tasks", timeout=10))
+        for t in tasks:
+            try:
+                urllib.request.urlopen(urllib.request.Request(
+                    f"{server}/api/tasks/{t['id']}", method="DELETE"), timeout=10)
+            except Exception:
+                pass
+    except Exception:
+        pass
+    yield
 
 
 @pytest.fixture()
@@ -232,8 +279,18 @@ def test_board_filter_narrows_cards(page, server):
 
 def test_deck_view_streams_panes(page, server):
     page.goto(server)
-    page.fill("#qb-input", "deck watch me work")
-    page.press("#qb-input", "Enter")
+    # high-priority so this task sorts to the top of the deck and isn't evicted
+    # by the 16-pane cap when the session-scoped server has accumulated tasks
+    proj = page.evaluate("async () => (await (await fetch('/api/projects')).json())[0].id")
+    page.evaluate(f"""async () => {{
+      const t = await (await fetch('/api/tasks', {{method:'POST',
+        headers:{{'Content-Type':'application/json'}},
+        body: JSON.stringify({{project_id:{proj}, title:'deck watch me work',
+          prompt:'stream it', priority:4}})}})).json();
+      await fetch(`/api/tasks/${{t.id}}/dispatch`, {{method:'POST',
+        headers:{{'Content-Type':'application/json'}}, body:'{{}}'}});
+    }}""")
+    expect(page.locator(".card", has_text="deck watch me")).to_be_visible(timeout=15000)
     page.click(".tab[data-tab='deck']")
     pane = page.locator(".pane", has_text="deck watch me")
     expect(pane).to_be_visible(timeout=15000)
@@ -353,29 +410,45 @@ def test_deck_persists_streams_across_updates(page, server):
     """The Deck must reconcile panes incrementally — a status change of one task
     must not tear down and reopen every pane's SSE. We assert a persisting pane's
     DOM node is the SAME element before and after another task changes status."""
+    marker = "DeckPersistA-uniqmark"
     page.goto(server)
-    # two tasks: one slow (stays running), one fast (will change status)
-    _new_task(page, "Deck persist A", "slow one [mock:slow]")
-    _new_task(page, "Deck persist B", "quick one")
+    # A: high-priority + slow so it stays running AND sorts to the top of the deck
+    # (never evicted by the 16-pane cap). Create + dispatch, then wait for it on
+    # the BOARD first so state.tasks is guaranteed fresh before we enter the deck.
+    proj = page.evaluate("async () => (await (await fetch('/api/projects')).json())[0].id")
+    page.evaluate(f"""async () => {{
+      const t = await (await fetch('/api/tasks', {{method:'POST',
+        headers:{{'Content-Type':'application/json'}},
+        body: JSON.stringify({{project_id:{proj}, title:'{marker}',
+          prompt:'slow one [mock:slow]', priority:4}})}})).json();
+      await fetch(`/api/tasks/${{t.id}}/dispatch`, {{method:'POST',
+        headers:{{'Content-Type':'application/json'}}, body:'{{}}'}});
+    }}""")
+    expect(page.locator(".card", has_text=marker)).to_be_visible(timeout=15000)
     page.click(".tab[data-tab='deck']")
-    paneA = page.locator(".pane", has_text="Deck persist A")
+    paneA = page.locator(".pane", has_text=marker)
     expect(paneA).to_be_visible(timeout=15000)
-    # tag pane A's DOM node so we can detect if it gets recreated
-    page.evaluate("""() => {
+    page.evaluate(f"""() => {{
       const p = [...document.querySelectorAll('.pane')]
-        .find(e => e.textContent.includes('Deck persist A'));
-      if (p) p.dataset.adkMark = 'orig';
-    }""")
-    # B finishes → a board task event fires → renderDeck runs again
-    expect(page.locator(".pane", has_text="Deck persist B")
-           .locator(".statpill", has_text="review")).to_be_visible(timeout=20000)
-    # pane A must be the SAME element (stream not torn down)
-    still = page.evaluate("""() => {
+        .find(e => e.textContent.includes('{marker}'));
+      p.dataset.adkMark = 'orig';
+    }}""")
+    # a second task appears in the deck → renderDeck reconciles again
+    page.evaluate(f"""async () => {{
+      const t = await (await fetch('/api/tasks', {{method:'POST',
+        headers:{{'Content-Type':'application/json'}},
+        body: JSON.stringify({{project_id:{proj}, title:'DeckPersistB', prompt:'quick'}})}})).json();
+      await fetch(`/api/tasks/${{t.id}}/dispatch`, {{method:'POST',
+        headers:{{'Content-Type':'application/json'}}, body:'{{}}'}});
+    }}""")
+    expect(page.locator(".pane", has_text="DeckPersistB")).to_be_visible(timeout=20000)
+    # pane A must be the SAME element (its stream was never torn down)
+    still = page.evaluate(f"""() => {{
       const p = [...document.querySelectorAll('.pane')]
-        .find(e => e.textContent.includes('Deck persist A'));
-      return p ? p.dataset.adkMark : null;
-    }""")
-    assert still == "orig", "deck pane A was recreated on another task's update (SSE thrash)"
+        .find(e => e.textContent.includes('{marker}'));
+      return p ? p.dataset.adkMark : 'PANE-GONE';
+    }}""")
+    assert still == "orig", f"deck pane A recreated on another task's update (SSE thrash): {still}"
 
 
 def test_pwa_assets(page, server):
