@@ -9,10 +9,16 @@ router = APIRouter(prefix="/api")
 
 @router.get("/health")
 def health():
+    counts = {r["status"]: r["c"] for r in
+              db.query("SELECT status, COUNT(*) c FROM tasks GROUP BY status")}
     return {
         "ok": True, "mock": config.MOCK,
-        "tasks": {r["status"]: r["c"] for r in
-                  db.query("SELECT status, COUNT(*) c FROM tasks GROUP BY status")},
+        "tasks": counts,
+        # flat, always-present counts so dashboard widgets (Homepage customapi)
+        # can map fields that never disappear when a column is empty
+        "running": counts.get("running", 0),
+        "queued": counts.get("queued", 0),
+        "review": counts.get("review", 0),
         "pending_approvals": db.one(
             "SELECT COUNT(*) c FROM approvals WHERE status='pending'")["c"],
     }

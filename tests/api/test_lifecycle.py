@@ -17,6 +17,9 @@ def _status(c, tid):
 def test_health(client):
     r = client.get("/api/health")
     assert r.status_code == 200 and r.json()["ok"] and r.json()["mock"]
+    # flat, always-present counts for dashboard widgets (Homepage customapi tile)
+    for f in ("running", "queued", "review", "pending_approvals"):
+        assert f in r.json() and isinstance(r.json()[f], int), f
 
 
 def test_crud_and_board(seeded):
