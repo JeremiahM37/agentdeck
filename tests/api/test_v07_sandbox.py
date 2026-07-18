@@ -19,7 +19,15 @@ def _sandbox_project(c, name, repo="https://github.com/user/demo.git"):
                                          "repo_path": repo}).json()
 
 
-def test_sandbox_full_lifecycle(client):
+def test_sandbox_full_lifecycle(client, tmp_path, monkeypatch):
+    # hermetic: fabricate control-plane OAuth creds — the host's real
+    # ~/.claude/.credentials.json must never be a test dependency (this test
+    # silently relied on it and failed on CI runners, which have none)
+    from server import credentials
+    fake = tmp_path / "creds.json"
+    fake.write_text('{"access_token": "test", "refresh_token": "test"}')
+    monkeypatch.setattr(credentials, "CREDS_PATH", str(fake))
+
     p = _sandbox_project(client, "sbdemo")
     t = client.post("/api/tasks", json={"project_id": p["id"], "title": "sb run",
                                         "prompt": "do it",

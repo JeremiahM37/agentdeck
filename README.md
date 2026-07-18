@@ -19,27 +19,30 @@ and hands you a reviewable diff.
 
 </div>
 
-AgentDeck is a self-hosted kanban board that dispatches [Claude Code](https://claude.com/claude-code)
-(and other agents) onto **your** machines — Proxmox LXCs, VMs, or any box with SSH.
-Every task runs sandboxed in its own worktree, streams a live timeline to a
-mobile-first PWA, and gates risky tool calls behind approvals that hit your phone.
-No SaaS, no shipping your code to someone else's cloud.
+AgentDeck is a self-hosted kanban board that dispatches AI coding agents onto
+**your** machines — anything you can SSH into, from a spare laptop or a VPS to a
+Raspberry Pi or a Proxmox cluster. Every task runs sandboxed in its own git
+worktree, streams a live timeline to a mobile-first PWA, and gates risky tool
+calls behind approvals that hit your phone. Bring your own agent and your own
+model. No SaaS, no shipping your code to someone else's cloud.
 
 ---
 
 ## Why it's different
 
-**Runs on your hardware.** Targets are `local`, `ssh`, `pct` (Proxmox-native, no
-SSH needed), or `sandbox` — an ephemeral LXC cloned per task and destroyed after.
-Your code and credentials never leave your network.
+**Runs on your hardware.** A target is any box with SSH — or the machine
+AgentDeck itself runs on. Proxmox users get native extras (`pct` targets and
+ephemeral `sandbox` containers cloned per task, destroyed after), but nothing
+requires Proxmox. Your code and credentials never leave your network.
 
 **Built for your phone.** The whole control loop — dispatch, live timeline, mobile
 diff review, approve/deny — is designed thumb-first. Approvals arrive as web-push,
 Discord, or ntfy notifications (ntfy carries approve/deny buttons inline).
 
-**Any agent, any model — including fully local.** Claude Code is first-class;
-Codex/Gemini plug in through an adapter seam. Point a project's `env` at any
-Anthropic-compatible endpoint (Ollama, LiteLLM, vLLM) to drive a local model.
+**Any agent, any model — including fully local.** Claude Code, Codex, and
+Gemini ship with adapters, and the adapter seam is small enough to add your
+own. Point a project's `env` at any Anthropic-compatible endpoint (Ollama,
+LiteLLM, vLLM) to drive whatever model you run.
 
 ## Quick start
 
@@ -64,8 +67,8 @@ AGENTDECK_MOCK=1 .venv/bin/python -m server
 ```
 
 Then register a target + project in the **Targets** tab (or `POST /api/targets` /
-`POST /api/projects`) and dispatch from the board. Real targets need only SSH
-reachability, `git`, `tmux`, `python3`, and the `claude` CLI.
+`POST /api/projects`) and dispatch from the board. A real target needs only SSH
+reachability, `git`, `tmux`, `python3`, and your agent's CLI.
 
 ## A quick tour
 
@@ -88,10 +91,12 @@ reachability, `git`, `tmux`, `python3`, and the `claude` CLI.
 
 - **Board** — kanban (mobile PWA + desktop), quick-dispatch bar, drag-to-dispatch,
   live SSE timeline, mobile diff review, and a desktop **Deck** multi-pane cockpit.
-- **Targets** — `local`, `ssh`, `pct` (Proxmox-native), and `sandbox` (ephemeral
-  LXC: clone template → run → capture → destroy), with a deep credentials probe.
-- **Agents** — Claude Code first-class, Codex/Gemini experimental, and **any
-  Anthropic-compatible endpoint** (local models via `ANTHROPIC_BASE_URL`).
+- **Targets** — `local` and `ssh` cover any machine; Proxmox users also get
+  `pct` (no SSH needed) and `sandbox` (ephemeral container: clone → run →
+  capture → destroy). Deep credentials probe included.
+- **Agents** — adapters for Claude Code, Codex, and Gemini; a small seam for
+  adding more; **any Anthropic-compatible endpoint** (local models via
+  `ANTHROPIC_BASE_URL`).
 - **Control loop** — hook-gated approvals with web-push + Discord/ntfy sinks, an
   always-allow policy engine, follow-ups, auto-verify, reviewer gates, A/B parallel
   attempts, agents that file their own task cards, and shared project memory.
