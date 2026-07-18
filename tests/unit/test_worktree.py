@@ -1,6 +1,5 @@
 from server.executor.mock import MOCK_DIFF
-from server.worktree import (branch_name, default_workroot, split_patch,
-                             worktree_path)
+from server.worktree import branch_name, default_workroot, split_patch, worktree_path
 
 
 def test_naming():

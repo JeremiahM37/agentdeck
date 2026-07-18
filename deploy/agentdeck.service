@@ -10,7 +10,8 @@ Wants=network-online.target
 Type=simple
 User=admin
 WorkingDirectory=/home/admin/projects/agentdeck
-Environment=AGENTDECK_BASE_URL=http://100.96.103.31:9110
+# URL that TARGETS use to reach this server for approval callbacks
+Environment=AGENTDECK_BASE_URL=http://YOUR-SERVER-IP:9110
 ExecStart=/home/admin/projects/agentdeck/.venv/bin/python -m server
 Restart=on-failure
 RestartSec=5

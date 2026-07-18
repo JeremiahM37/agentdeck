@@ -159,6 +159,7 @@ def test_token_mode_blocks_agent_self_approval(tmp_path, monkeypatch):
     (In 'none' mode a LAN agent CAN self-approve; that's the documented trust
     boundary — see DESIGN §4.7.)"""
     from fastapi.testclient import TestClient
+
     from server import config
     from server.app import create_app
     monkeypatch.setattr(config, "DB_PATH", tmp_path / "auth.db")

@@ -14,7 +14,7 @@ services:
       - ~/.ssh:/root/.ssh:ro
     environment:
       # URL targets use to call back for approvals — set to a host reachable FROM targets
-      AGENTDECK_BASE_URL: "http://192.168.1.19:9110"
+      AGENTDECK_BASE_URL: "http://YOUR-SERVER-IP:9110"
       # AGENTDECK_AUTH_TOKEN: "change-me"
       # AGENTDECK_VAPID_PUBLIC: ""
       # AGENTDECK_VAPID_PRIVATE: ""

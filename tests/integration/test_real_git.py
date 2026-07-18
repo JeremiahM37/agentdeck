@@ -9,8 +9,14 @@ from server import config, db
 from server import executor as executor_pkg
 from server.executor.base import ExecutorError
 from server.executor.local import LocalExecutor
-from server.worktree import (branch_name, capture_diff, ensure_worktree,
-                             remove_worktree, split_patch, worktree_path)
+from server.worktree import (
+    branch_name,
+    capture_diff,
+    ensure_worktree,
+    remove_worktree,
+    split_patch,
+    worktree_path,
+)
 from tests.conftest import wait_for
 
 

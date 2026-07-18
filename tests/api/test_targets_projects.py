@@ -1,6 +1,6 @@
 def test_target_crud_and_probe(client):
     r = client.post("/api/targets", json={"name": "lxc-104", "kind": "mock",
-                                          "host": "192.168.1.102", "user": "claude"})
+                                          "host": "192.0.2.20", "user": "dev"})
     assert r.status_code == 201
     tid = r.json()["id"]
     # duplicate name

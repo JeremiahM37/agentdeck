@@ -25,7 +25,7 @@ def test_project_env_reaches_launch_command(client):
     tid = client.get("/api/targets").json()[0]["id"]
     p = client.post("/api/projects", json={
         "name": "localmodel", "target_id": tid, "repo_path": "/mock/lm",
-        "env": {"ANTHROPIC_BASE_URL": "http://100.127.85.58:11434",
+        "env": {"ANTHROPIC_BASE_URL": "http://ollama-host:11434",
                 "ANTHROPIC_AUTH_TOKEN": "ollama"}}).json()
     t = client.post("/api/tasks", json={"project_id": p["id"], "title": "local run",
                                         "prompt": "x", "model": "qwen3.5:4b"}).json()
@@ -35,7 +35,7 @@ def test_project_env_reaches_launch_command(client):
     from server.executor import _cache
     mock = next(iter(_cache.values()))
     launch = next(c for c in mock.cmd_log if c.startswith("tmux new-session"))
-    assert "ANTHROPIC_BASE_URL=http://100.127.85.58:11434" in launch
+    assert "ANTHROPIC_BASE_URL=http://ollama-host:11434" in launch
     assert "ANTHROPIC_AUTH_TOKEN=ollama" in launch
     assert "--model qwen3.5:4b" in launch
 

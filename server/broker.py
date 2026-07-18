@@ -73,7 +73,7 @@ async def wait(approval_id: int, timeout: float) -> dict:
             ev = _waiters.setdefault(approval_id, asyncio.Event())
             try:
                 await asyncio.wait_for(ev.wait(), timeout=timeout)
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 pass
         row = db.one("SELECT * FROM approvals WHERE id=?", (approval_id,))
     return row

@@ -1,8 +1,6 @@
 """The rotation-proof auth fix: API-key precedence + OAuth provisioning."""
 import asyncio
 
-import pytest
-
 from server import config, credentials
 from server.executor.base import ExecResult
 

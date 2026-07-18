@@ -318,7 +318,7 @@ def test_multi_attempt_badge_not_mislabeled_ab(page, server):
     expect(page.locator(".col.s-review .card", has_text="Retry me")) \
         .to_be_visible(timeout=20000)
     # retry via API (sequential second attempt, not A/B)
-    tid = page.evaluate("""async () => {
+    page.evaluate("""async () => {
       const ts = await (await fetch('/api/tasks')).json();
       const t = ts.find(x => x.title === 'Retry me');
       await fetch(`/api/tasks/${t.id}/dispatch`, {method:'POST',
@@ -477,3 +477,18 @@ def test_pwa_assets(page, server):
     assert page.evaluate("fetch('/manifest.webmanifest').then(r=>r.ok)")
     assert page.evaluate("fetch('/sw.js').then(r=>r.ok)")
     assert page.evaluate("fetch('/icon.svg').then(r=>r.ok)")
+
+
+def test_mobile_board_has_no_page_level_horizontal_overflow(browser, server):
+    """regression AD1: the quickbar filter input pushed the document wider than
+    a phone viewport, so the whole page wobbled sideways while scrolling."""
+    ctx = browser.new_context(viewport=PHONE)
+    pg = ctx.new_page()
+    try:
+        pg.goto(server)
+        pg.wait_for_selector(".card, .col", timeout=10000)
+        scroll_w = pg.evaluate("() => document.documentElement.scrollWidth")
+        assert scroll_w <= PHONE["width"] + 1, \
+            f"page overflows horizontally on phones ({scroll_w}px)"
+    finally:
+        ctx.close()

@@ -15,7 +15,7 @@ class LocalExecutor(Executor):
         )
         try:
             out, err = await asyncio.wait_for(proc.communicate(), timeout=timeout)
-        except asyncio.TimeoutError:
+        except TimeoutError:
             proc.kill()
             return ExecResult(124, "", f"timeout after {timeout}s: {cmd}")
         return ExecResult(proc.returncode, out.decode(errors="replace"), err.decode(errors="replace"))

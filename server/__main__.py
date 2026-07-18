@@ -1,3 +1,4 @@
+"""Entrypoint: `python -m server` boots the agentdeck control plane."""
 import logging
 
 import uvicorn

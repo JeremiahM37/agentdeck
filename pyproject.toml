@@ -1,6 +1,6 @@
 [project]
 name = "agentdeck"
-version = "0.8.0"
+version = "1.0.0"
 description = "Self-hosted, mobile-first mission control for AI coding agents on your own infrastructure"
 readme = "README.md"
 license = { text = "MIT" }
@@ -27,3 +27,12 @@ Documentation = "https://github.com/JeremiahM37/agentdeck/blob/main/DESIGN.md"
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["."]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+exclude = [".venv", "smoke-repo"]
+
+[tool.ruff.lint]
+select = ["E", "F", "B", "I", "UP"]
+ignore = ["E501", "E701", "E702", "B008"]

@@ -347,3 +347,10 @@ textarea.f { min-height: 110px; resize: vertical; }
   @keyframes slidein { from { transform: translateX(40px); opacity: .4; } }
   #toasts { left: auto; width: 340px; bottom: 20px; }
 }
+
+/* AD1: on phones the quickbar filter pushed the page past the viewport,
+   causing sideways wobble. The filter is a desktop nicety — hide it small. */
+@media (max-width: 600px) {
+  #qb-filter { display: none; }
+  #quickbar { flex-wrap: nowrap; }
+}

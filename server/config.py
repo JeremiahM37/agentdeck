@@ -37,7 +37,7 @@ JANITOR_DAYS = float(os.environ.get("AGENTDECK_JANITOR_DAYS", "7"))
 
 VAPID_PRIVATE_KEY = os.environ.get("AGENTDECK_VAPID_PRIVATE", "")
 VAPID_PUBLIC_KEY = os.environ.get("AGENTDECK_VAPID_PUBLIC", "")
-VAPID_CLAIMS_EMAIL = os.environ.get("AGENTDECK_VAPID_EMAIL", "admin@homelab.internal")
+VAPID_CLAIMS_EMAIL = os.environ.get("AGENTDECK_VAPID_EMAIL", "admin@example.com")
 
 WEB_DIR = ROOT / "web"
 HOOKS_DIR = ROOT / "hooks"

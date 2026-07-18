@@ -8,8 +8,18 @@ import secrets
 import sqlite3
 from pathlib import Path
 
-from . import (agents, broker, claude_runner, config, credentials, db, sandbox,
-               sinks, state, worktree)
+from . import (
+    agents,
+    broker,
+    claude_runner,
+    config,
+    credentials,
+    db,
+    sandbox,
+    sinks,
+    state,
+    worktree,
+)
 from .bus import bus
 from .executor import get_executor
 from .executor.base import Executor, ExecutorError
@@ -52,7 +62,7 @@ class Scheduler:
                 log.exception("tick failed")
             try:
                 await asyncio.wait_for(self._stop.wait(), timeout=config.TICK_SECONDS)
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 pass
 
     async def tick(self) -> None:
@@ -164,7 +174,7 @@ class Scheduler:
 
     async def _launch_sandbox(self, att: dict, ctx: dict) -> None:
         """Ephemeral flow: clone template → repo inside container → agent → (destroy at finalize)."""
-        task, project, target = ctx["task"], ctx["project"], ctx["target"]
+        target = ctx["target"]
         host = get_executor(target)
         vmid = await sandbox.provision(host, target["host"], att["id"])
         db.update("attempts", att["id"], {"sandbox_vmid": vmid})
@@ -398,10 +408,8 @@ class Scheduler:
     def _apply_review_verdict(self, rtask: dict, result: dict) -> None:
         import re
         text = str(result.get("result", ""))
-        m = None
-        for m in re.finditer(r"VERDICT:\s*(APPROVE|REQUEST_CHANGES)", text):
-            pass
-        verdict = m.group(1) if m else "UNCLEAR"
+        matches = re.findall(r"VERDICT:\s*(APPROVE|REQUEST_CHANGES)", text)
+        verdict = matches[-1] if matches else "UNCLEAR"   # last verdict wins
         parent_att = db.one(
             "SELECT * FROM attempts WHERE task_id=? ORDER BY n DESC LIMIT 1",
             (rtask["parent_task_id"],))

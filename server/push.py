@@ -9,7 +9,7 @@ from . import config, db
 log = logging.getLogger("agentdeck.push")
 
 try:
-    from pywebpush import webpush, WebPushException   # optional dep
+    from pywebpush import WebPushException, webpush  # optional dep
 except ImportError:
     webpush = None
 

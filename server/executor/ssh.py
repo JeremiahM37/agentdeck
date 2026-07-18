@@ -38,7 +38,7 @@ class SSHExecutor(Executor):
         full = f"cd {_q(cwd)} && {cmd}" if cwd else cmd
         try:
             r = await asyncio.wait_for(conn.run(full, check=False), timeout=timeout)
-        except asyncio.TimeoutError:
+        except TimeoutError:
             return ExecResult(124, "", f"timeout after {timeout}s: {cmd}")
         except (OSError, asyncssh.Error) as e:
             self._conn = None

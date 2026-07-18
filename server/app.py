@@ -18,7 +18,7 @@ def seed_demo_data() -> None:
     if db.one("SELECT id FROM targets LIMIT 1"):
         return
     t1 = db.insert("targets", {"name": "lxc-101-project-env", "kind": "mock",
-                               "host": "192.168.1.182", "status": "online",
+                               "host": "192.0.2.10", "status": "online",
                                "max_concurrent": 4, "created_at": db.now()})
     t2 = db.insert("targets", {"name": "aiserver-local", "kind": "mock",
                                "host": "", "status": "online",
@@ -43,7 +43,7 @@ def create_app() -> FastAPI:
         await scheduler.stop()
         db.close()
 
-    app = FastAPI(title="agentdeck", version="0.1.0", lifespan=lifespan)
+    app = FastAPI(title="agentdeck", version="1.0.0", lifespan=lifespan)
 
     if config.AUTH_TOKEN:
         @app.middleware("http")

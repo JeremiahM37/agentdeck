@@ -1,5 +1,4 @@
 """v0.5: shared project memory + agent adapter validation."""
-from server import db
 from server.scheduler import build_notes_prefix
 from tests.conftest import wait_for
 

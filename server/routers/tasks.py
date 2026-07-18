@@ -1,6 +1,5 @@
 """Tasks: CRUD, dispatch, lifecycle actions, events, diff, SSE."""
 import asyncio
-from pathlib import Path
 
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
@@ -122,7 +121,7 @@ def patch_task(task_id: int, p: TaskPatch):
         try:
             state.check(task["status"], data["status"])
         except state.IllegalTransition as e:
-            raise HTTPException(409, str(e))
+            raise HTTPException(409, str(e)) from None
         if data["status"] == "queued":   # moving a card into queued = dispatch
             raise HTTPException(409, "use /dispatch to queue a task")
     if data:
@@ -147,7 +146,7 @@ def dispatch(task_id: int, body: DispatchIn | None = None):
     try:
         state.check(task["status"], "queued")
     except state.IllegalTransition as e:
-        raise HTTPException(409, str(e))
+        raise HTTPException(409, str(e)) from None
     updates = {"status": "queued", "updated_at": db.now()}
     if body and body.permission_mode:
         updates["permission_mode"] = body.permission_mode
@@ -205,7 +204,7 @@ def complete(task_id: int):
     try:
         state.check(task["status"], "done")
     except state.IllegalTransition as e:
-        raise HTTPException(409, str(e))
+        raise HTTPException(409, str(e)) from None
     db.update("tasks", task_id, {"status": "done", "updated_at": db.now()})
     task = db.one("SELECT * FROM tasks WHERE id=?", (task_id,))
     bus.publish("board", "task", task)
@@ -352,7 +351,7 @@ async def attach_terminal(task_id: int):
     try:
         port = await terminals.spawn(att, target)
     except TerminalError as e:
-        raise HTTPException(503, str(e))
+        raise HTTPException(503, str(e)) from None
     return {"port": port}
 
 
@@ -394,7 +393,7 @@ async def _sse(channel: str):
             try:
                 payload = await asyncio.wait_for(q.get(), timeout=15)
                 yield bus.sse_format(payload)
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 yield ": keepalive\n\n"
     finally:
         bus.unsubscribe(channel, q)
