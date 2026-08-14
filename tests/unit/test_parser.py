@@ -72,7 +72,9 @@ def test_launch_command_shapes():
     assert cmd.startswith("tmux new-session -d -s adk-1 ")
     assert "--permission-mode acceptEdits" in cmd
     assert "--model opus" in cmd
-    assert "--settings" not in cmd          # hooks only in gated mode
+    # settings.json ships in EVERY mode now: it is the only way to grant a
+    # headless run a tool, since there is no prompt to fall back to
+    assert "--settings .agentdeck/settings.json" in cmd
     assert "stream-json" in cmd and "exit_code" in cmd
 
     gated = launch_command("/wt/x", "adk-2", "default", resume_session="s-9")
@@ -80,9 +82,24 @@ def test_launch_command_shapes():
     assert "--resume s-9" in gated
 
 
+def test_launch_command_mcp_flags():
+    plain = launch_command("/wt/x", "adk-3", "acceptEdits")
+    assert "--mcp-config" not in plain and "--strict-mcp-config" not in plain
+
+    withmcp = launch_command("/wt/x", "adk-4", "acceptEdits",
+                             mcp_config=".agentdeck/mcp.json", strict_mcp=True)
+    assert "--mcp-config .agentdeck/mcp.json" in withmcp
+    assert "--strict-mcp-config" in withmcp
+    # strict is opt-in: it hides the host's own servers
+    assert "--strict-mcp-config" not in launch_command(
+        "/wt/x", "adk-5", "acceptEdits", mcp_config=".agentdeck/mcp.json")
+
+
 def test_hook_settings_carry_url_and_token():
     s = hook_settings("http://cp:9110", "tok123")
     cmd = s["hooks"]["PreToolUse"][0]["hooks"][0]["command"]
     assert "AGENTDECK_URL=http://cp:9110" in cmd
     assert "AGENTDECK_TOKEN=tok123" in cmd
-    assert s["hooks"]["PreToolUse"][0]["matcher"].startswith("Bash")
+    # '*' — anything the matcher misses is silently DENIED in headless mode
+    assert s["hooks"]["PreToolUse"][0]["matcher"] == "*"
+    assert hook_settings("u", "t", "Bash")["hooks"]["PreToolUse"][0]["matcher"] == "Bash"

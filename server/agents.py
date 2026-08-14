@@ -41,12 +41,17 @@ def env_prefix(env: dict | None, sandbox: bool = False) -> str:
 def launch_command(agent: str, worktree: str, tmux_session: str,
                   permission_mode: str, model: str = "",
                   resume_session: str = "", sandbox: bool = False,
-                  env: dict | None = None) -> str:
+                  env: dict | None = None, settings_path: str = "",
+                  mcp_config: str = "", strict_mcp: bool = False) -> str:
     prefix = env_prefix(env, sandbox=sandbox)
     if agent == "claude":
-        return claude_runner.launch_command(worktree, tmux_session, permission_mode,
-                                            model=model, resume_session=resume_session,
-                                            env_prefix=prefix)
+        return claude_runner.launch_command(
+            worktree, tmux_session, permission_mode, model=model,
+            resume_session=resume_session, env_prefix=prefix,
+            settings_path=settings_path or claude_runner.SETTINGS_REL,
+            mcp_config=mcp_config, strict_mcp=strict_mcp)
+    # codex/gemini have no equivalent of --settings/--mcp-config; the staged
+    # context bundle still reaches them through the prompt prefix
     rt = claude_runner.runtime_dir(worktree)
     if agent == "codex":
         parts = ["codex", "exec", "--json"]

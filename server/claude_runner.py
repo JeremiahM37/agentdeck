@@ -2,35 +2,104 @@
 Everything CLI-format-specific lives here so agent drift touches one file.
 """
 import json
+import re
 import shlex
 
 from . import config
+
+SETTINGS_REL = ".agentdeck/settings.json"
+MCP_REL = ".agentdeck/mcp.json"
+
+# Which tools the approval hook intercepts in gated mode. '*' matches every tool,
+# which is the only value that makes gated mode usable: anything NOT matched falls
+# through to the normal permission system, and headless `claude -p` has no way to
+# ask — so an unmatched tool is silently DENIED. The old narrow matcher meant MCP
+# tools, WebFetch and Task could never run in gated mode and never said why.
+DEFAULT_GATE_MATCHER = "*"
+
+# permission keys we pass through to settings.json; anything else is rejected so a
+# typo fails loudly at config time instead of silently widening or narrowing access
+PERMISSION_KEYS = ("allow", "deny", "ask", "defaultMode", "additionalDirectories")
 
 
 def runtime_dir(worktree: str) -> str:
     return f"{worktree}/.agentdeck"
 
 
-def hook_settings(base_url: str, token: str) -> dict:
-    """PreToolUse gate for mutating tools; only used when permission_mode='default'."""
+def hook_settings(base_url: str, token: str,
+                  matcher: str = DEFAULT_GATE_MATCHER) -> dict:
+    """PreToolUse gate; only used when permission_mode='default'."""
     cmd = (f"AGENTDECK_URL={base_url} AGENTDECK_TOKEN={token} "
            f"python3 .agentdeck/hook.py")
     return {"hooks": {"PreToolUse": [{
-        "matcher": "Bash|Write|Edit|MultiEdit|NotebookEdit",
+        "matcher": matcher or DEFAULT_GATE_MATCHER,
         "hooks": [{"type": "command", "command": cmd,
                    "timeout": int(config.APPROVAL_EXPIRE_SECONDS) + 30}],
     }]}}
 
 
+def build_settings(base_url: str = "", token: str = "", gated: bool = False,
+                   permissions: dict | None = None,
+                   matcher: str = DEFAULT_GATE_MATCHER) -> dict:
+    """The settings.json every attempt gets — permission rules always, hook when gated.
+
+    Written unconditionally (it used to be gated-mode only) because without it an
+    acceptEdits run can't be granted Bash at all: headless has no prompt, so any
+    tool needing permission is denied with no signal to the operator.
+    """
+    settings: dict = {}
+    perms = {k: v for k, v in (permissions or {}).items() if v}
+    unknown = set(perms) - set(PERMISSION_KEYS)
+    if unknown:
+        raise ValueError(f"unknown permission keys: {sorted(unknown)}")
+    if perms:
+        settings["permissions"] = perms
+    if gated:
+        settings.update(hook_settings(base_url, token, matcher))
+    return settings
+
+
+def project_slug(path: str) -> str:
+    """Claude Code's per-cwd session directory name under ~/.claude/projects.
+
+    Every non-alphanumeric character collapses to '-' (verified empirically against
+    the running CLI, 2.1.232). This mirrors an internal layout, not a public API —
+    which is why memory sharing is opt-in per target.
+    """
+    return re.sub(r"[^A-Za-z0-9-]", "-", path)
+
+
+def memory_link_command(worktree: str, memory_dir: str) -> str:
+    """Point this attempt's session memory at a shared store.
+
+    Claude Code keys memory by cwd, so a fresh worktree per attempt starts
+    memory-blind and everything an agent learns dies with the worktree. There is
+    no CLI flag for this, so the only mechanism is symlinking the session's
+    memory dir at a store the operator nominates.
+    """
+    proj = f'"$HOME/.claude/projects/{project_slug(worktree)}"'
+    link = f'"$HOME/.claude/projects/{project_slug(worktree)}/memory"'
+    tgt = shlex.quote(memory_dir)
+    # a real directory already sitting there (a previous non-shared run) has to go,
+    # but only ever that path, and only when it is not already our symlink
+    return (f"mkdir -p {proj} {tgt} && "
+            f"{{ [ -L {link} ] || rm -rf {link}; }} && ln -sfn {tgt} {link}")
+
+
 def launch_command(worktree: str, tmux_session: str, permission_mode: str,
                    model: str = "", resume_session: str = "",
-                   env_prefix: str = "") -> str:
+                   env_prefix: str = "", settings_path: str = SETTINGS_REL,
+                   mcp_config: str = "", strict_mcp: bool = False) -> str:
     rt = runtime_dir(worktree)
     parts = [config.CLAUDE_BIN, "-p", '"$(cat .agentdeck/prompt.md)"',
              "--output-format", "stream-json", "--verbose",
              "--permission-mode", permission_mode]
-    if permission_mode == "default":
-        parts += ["--settings", ".agentdeck/settings.json"]
+    if settings_path:
+        parts += ["--settings", settings_path]
+    if mcp_config:
+        parts += ["--mcp-config", mcp_config]
+        if strict_mcp:
+            parts.append("--strict-mcp-config")
     if model:
         parts += ["--model", model]
     if resume_session:

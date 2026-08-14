@@ -13,6 +13,7 @@ from . import (
     broker,
     claude_runner,
     config,
+    context,
     credentials,
     db,
     sandbox,
@@ -130,29 +131,7 @@ class Scheduler:
             base = task["base_branch"] or project["default_base_branch"] or "main"
             await worktree.ensure_worktree(ex, project["repo_path"], base, branch, wt)
 
-        rt = claude_runner.runtime_dir(wt)
-        prompt = att["prompt"] or task["prompt"] or task["title"]
-        notes = db.query("SELECT note FROM memories WHERE project_id=? "
-                         "ORDER BY id DESC LIMIT 12", (project["id"],))
-        if notes and task["created_by"] != "reviewer-gate":
-            prompt = build_notes_prefix([n["note"] for n in notes]) + prompt
-        if task["created_by"] != "reviewer-gate":
-            prompt += AGENT_TASK_FOOTER
-        await ex.write_file(f"{rt}/prompt.md", prompt.encode())
-        # task-filing kit: lets the agent put follow-up cards on the board
-        await ex.write_file(f"{rt}/adk.py", (config.HOOKS_DIR / "adk.py").read_bytes())
-        await ex.write_file(f"{rt}/env",
-                            f"ADK_URL={config.BASE_URL}\nADK_TOKEN={att['token']}\n".encode())
-        if task["permission_mode"] == "default":
-            hook_src = (config.HOOKS_DIR / "hook.py").read_bytes()
-            await ex.write_file(f"{rt}/hook.py", hook_src)
-            await ex.write_file(f"{rt}/settings.json", db.j(
-                claude_runner.hook_settings(config.BASE_URL, att["token"])).encode())
-
-        # reused worktrees (follow-ups, reviewer gate) carry the PREVIOUS attempt's
-        # runtime files — a stale exit_code would finalize this attempt instantly
-        await ex.run(f"rm -f {rt}/exit_code {rt}/events.jsonl {rt}/stderr.log",
-                     timeout=20)
+        launch_kw = await _stage_runtime(ex, wt, att, ctx)
 
         # push CURRENT auth so the agent never runs on a rotated-out credential copy
         await credentials.provision(ex, target)
@@ -162,7 +141,8 @@ class Scheduler:
             task["agent"] or "claude", wt, sess, task["permission_mode"],
             model=att["model"] or task["model"],
             resume_session=att["resume_session"],
-            env={**credentials.base_agent_env(), **db.unj(project["env_json"])})
+            env={**credentials.base_agent_env(), **db.unj(project["env_json"])},
+            **launch_kw)
         r = await ex.run(cmd, timeout=60)
         if not r.ok:
             raise ExecutorError(f"tmux launch failed: {r.stderr.strip()}")
@@ -206,21 +186,7 @@ class Scheduler:
         await inside.run(f"git checkout -b {branch}", cwd=workdir, timeout=60)
         await worktree.add_excludes(inside, workdir)
 
-        rt = claude_runner.runtime_dir(workdir)
-        prompt = att["prompt"] or task["prompt"] or task["title"]
-        if task["created_by"] != "reviewer-gate":
-            prompt += AGENT_TASK_FOOTER
-        await inside.write_file(f"{rt}/prompt.md", prompt.encode())
-        await inside.write_file(f"{rt}/adk.py", (config.HOOKS_DIR / "adk.py").read_bytes())
-        await inside.write_file(f"{rt}/env",
-                                f"ADK_URL={config.BASE_URL}\nADK_TOKEN={att['token']}\n".encode())
-        if task["permission_mode"] == "default":
-            await inside.write_file(f"{rt}/hook.py",
-                                    (config.HOOKS_DIR / "hook.py").read_bytes())
-            await inside.write_file(f"{rt}/settings.json", db.j(
-                claude_runner.hook_settings(config.BASE_URL, att["token"])).encode())
-        await inside.run(f"rm -f {rt}/exit_code {rt}/events.jsonl {rt}/stderr.log",
-                         timeout=20)
+        launch_kw = await _stage_runtime(inside, workdir, att, ctx)
         # provision current auth into the container via its own executor (mock-safe)
         await credentials.provision(inside, {"kind": "pct", "name": f"sandbox-{vmid}"})
         sess = f"adk-{att['id']}"
@@ -228,7 +194,8 @@ class Scheduler:
                                     task["permission_mode"],
                                     model=att["model"] or task["model"], sandbox=True,
                                     env={**credentials.base_agent_env(),
-                                         **db.unj(project["env_json"])})
+                                         **db.unj(project["env_json"])},
+                                    **launch_kw)
         r = await inside.run(cmd, timeout=60)
         if not r.ok:
             await sandbox.destroy(host, vmid)
@@ -472,6 +439,82 @@ class Scheduler:
                 db.update("attempts", att["id"], {"worktree_path": ""})
         db.update("attempts", att["id"], {"status": "cancelled", "finished_at": db.now()})
         _set_task_status(att["task_id"], "cancelled")
+
+
+async def _stage_runtime(ex: Executor, workdir: str, att: dict, ctx: dict) -> dict:
+    """Write everything the agent reads at startup; return agent launch kwargs.
+
+    Shared by the worktree and sandbox paths. They drifted before — sandbox runs
+    silently skipped project memory — and a context or permission feature that
+    lands on only one of them shows up as nothing but worse output.
+    """
+    task, project, target = ctx["task"], ctx["project"], ctx["target"]
+    rt = claude_runner.runtime_dir(workdir)
+    is_reviewer = task["created_by"] == "reviewer-gate"
+
+    prompt = att["prompt"] or task["prompt"] or task["title"]
+    notes = db.query("SELECT note FROM memories WHERE project_id=? "
+                     "ORDER BY id DESC LIMIT 12", (project["id"],))
+    if notes and not is_reviewer:
+        prompt = build_notes_prefix([n["note"] for n in notes]) + prompt
+    if not is_reviewer:
+        prompt += AGENT_TASK_FOOTER
+
+    # context bundle: target-wide files first (host conventions), then the
+    # project's own. Staged from the CONTROL PLANE's filesystem, so a remote
+    # target gets exactly what a local one does.
+    patterns = (db.unj(target.get("context_json"), []) +
+                db.unj(project.get("context_json"), []))
+    files, skipped = context.collect(patterns)
+    for name, _src, data in files:
+        await ex.write_file(f"{rt}/{context.SUBDIR}/{name}", data)
+    if files:
+        await ex.write_file(f"{rt}/{context.SUBDIR}/{context.INDEX_NAME}",
+                            context.index_markdown(files, skipped).encode())
+    if skipped:
+        log.warning("attempt %s: context not staged: %s", att["id"], "; ".join(skipped))
+    prompt = context.prompt_prefix(files, skipped) + prompt
+
+    await ex.write_file(f"{rt}/prompt.md", prompt.encode())
+    # task-filing kit: lets the agent put follow-up cards on the board
+    await ex.write_file(f"{rt}/adk.py", (config.HOOKS_DIR / "adk.py").read_bytes())
+    await ex.write_file(f"{rt}/env",
+                        f"ADK_URL={config.BASE_URL}\nADK_TOKEN={att['token']}\n".encode())
+
+    # settings.json is written for EVERY permission mode, not just the gated one:
+    # headless has no prompt, so a tool the rules don't grant is denied outright
+    # and the operator never learns why. Rules are how acceptEdits gets Bash.
+    gated = task["permission_mode"] == "default"
+    if gated:
+        await ex.write_file(f"{rt}/hook.py", (config.HOOKS_DIR / "hook.py").read_bytes())
+    settings = claude_runner.build_settings(
+        config.BASE_URL, att["token"], gated=gated,
+        permissions=db.unj(project.get("permissions_json"), {}),
+        matcher=project.get("gate_matcher") or claude_runner.DEFAULT_GATE_MATCHER)
+    await ex.write_file(f"{rt}/settings.json", db.j(settings).encode())
+
+    # per-project MCP: the host user's config is absent on ssh/pct/sandbox targets,
+    # so without this a remote agent has strictly fewer tools than a local one
+    mcp = db.unj(project.get("mcp_json"), {})
+    mcp_rel = ""
+    if mcp:
+        payload = mcp if "mcpServers" in mcp else {"mcpServers": mcp}
+        await ex.write_file(f"{rt}/mcp.json", db.j(payload).encode())
+        mcp_rel = claude_runner.MCP_REL
+
+    # reused worktrees (follow-ups, reviewer gate) carry the PREVIOUS attempt's
+    # runtime files — a stale exit_code would finalize this attempt instantly
+    await ex.run(f"rm -f {rt}/exit_code {rt}/events.jsonl {rt}/stderr.log", timeout=20)
+
+    if target.get("memory_dir") and (task["agent"] or "claude") == "claude":
+        r = await ex.run(
+            claude_runner.memory_link_command(workdir, target["memory_dir"]), timeout=30)
+        if not r.ok:   # degrades the agent's knowledge, never worth failing the run
+            log.warning("attempt %s: memory link failed: %s", att["id"],
+                        (r.stderr or r.stdout).strip()[:200])
+
+    return {"settings_path": claude_runner.SETTINGS_REL, "mcp_config": mcp_rel,
+            "strict_mcp": bool(project.get("strict_mcp"))}
 
 
 def build_notes_prefix(notes: list[str]) -> str:

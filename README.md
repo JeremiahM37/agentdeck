@@ -100,6 +100,9 @@ reachability, `git`, `tmux`, `python3`, and your agent's CLI.
 - **Control loop** — hook-gated approvals with web-push + Discord/ntfy sinks, an
   always-allow policy engine, follow-ups, auto-verify, reviewer gates, A/B parallel
   attempts, agents that file their own task cards, and shared project memory.
+- **Context parity** — staged context files, per-project MCP servers, and
+  permission rules, so an agent on a remote target knows and can do what one on
+  your own machine does ([docs/context-parity.md](docs/context-parity.md)).
 - **Ops** — worktree janitor, cost stats, task templates, one-click ttyd terminal
   attach, and an **MCP server** so any MCP client can file and steer tasks.
 
@@ -122,7 +125,7 @@ curl -X POST .../api/projects -d '{
 ## Tests
 
 ```bash
-.venv/bin/pytest      # 154 hermetic tests — unit + API + Playwright e2e (mock executor)
+.venv/bin/pytest      # 184 hermetic tests — unit + API + Playwright e2e (mock executor)
 ```
 
 ## Layout

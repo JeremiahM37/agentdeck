@@ -18,6 +18,8 @@ CREATE TABLE IF NOT EXISTS targets(
   key_path TEXT DEFAULT '', workroot TEXT DEFAULT '',
   max_concurrent INTEGER DEFAULT 4, sandbox INTEGER DEFAULT 0,
   status TEXT DEFAULT 'unknown', info_json TEXT DEFAULT '{}',
+  context_json TEXT DEFAULT '[]',              -- control-plane paths staged into every worktree
+  memory_dir TEXT DEFAULT '',                  -- opt-in shared Claude Code memory store
   created_at REAL
 );
 CREATE TABLE IF NOT EXISTS projects(
@@ -27,6 +29,11 @@ CREATE TABLE IF NOT EXISTS projects(
   workroot_override TEXT DEFAULT '', policy_json TEXT DEFAULT '{}',
   verify_cmd TEXT DEFAULT '', keep_worktrees INTEGER DEFAULT 0,
   review_gate INTEGER DEFAULT 0, env_json TEXT DEFAULT '{}',
+  context_json TEXT DEFAULT '[]',              -- extra staged context, on top of the target's
+  mcp_json TEXT DEFAULT '{}',                  -- MCP servers handed to the agent
+  strict_mcp INTEGER DEFAULT 0,                -- ignore host MCP config entirely
+  permissions_json TEXT DEFAULT '{}',          -- permissions block for .agentdeck/settings.json
+  gate_matcher TEXT DEFAULT '',                -- PreToolUse matcher in gated mode ('' = all tools)
   created_at REAL
 );
 CREATE TABLE IF NOT EXISTS tasks(
@@ -101,6 +108,13 @@ def init(path: Path | None = None) -> None:
         "ALTER TABLE attempts ADD COLUMN model TEXT DEFAULT ''",
         "ALTER TABLE attempts ADD COLUMN sandbox_vmid TEXT DEFAULT ''",
         "ALTER TABLE projects ADD COLUMN env_json TEXT DEFAULT '{}'",
+        "ALTER TABLE targets ADD COLUMN context_json TEXT DEFAULT '[]'",
+        "ALTER TABLE targets ADD COLUMN memory_dir TEXT DEFAULT ''",
+        "ALTER TABLE projects ADD COLUMN context_json TEXT DEFAULT '[]'",
+        "ALTER TABLE projects ADD COLUMN mcp_json TEXT DEFAULT '{}'",
+        "ALTER TABLE projects ADD COLUMN strict_mcp INTEGER DEFAULT 0",
+        "ALTER TABLE projects ADD COLUMN permissions_json TEXT DEFAULT '{}'",
+        "ALTER TABLE projects ADD COLUMN gate_matcher TEXT DEFAULT ''",
     ):
         try:
             _conn.execute(mig)
