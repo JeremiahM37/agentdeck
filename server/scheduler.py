@@ -134,7 +134,7 @@ class Scheduler:
         launch_kw = await _stage_runtime(ex, wt, att, ctx)
 
         # push CURRENT auth so the agent never runs on a rotated-out credential copy
-        await credentials.provision(ex, target)
+        await credentials.provision(ex, target, task["agent"] or "claude")
 
         sess = f"adk-{att['id']}"
         cmd = agents.launch_command(
@@ -188,7 +188,8 @@ class Scheduler:
 
         launch_kw = await _stage_runtime(inside, workdir, att, ctx)
         # provision current auth into the container via its own executor (mock-safe)
-        await credentials.provision(inside, {"kind": "pct", "name": f"sandbox-{vmid}"})
+        await credentials.provision(inside, {"kind": "pct", "name": f"sandbox-{vmid}"},
+                                    task["agent"] or "claude")
         sess = f"adk-{att['id']}"
         cmd = agents.launch_command(task["agent"] or "claude", workdir, sess,
                                     task["permission_mode"],

@@ -1,5 +1,5 @@
 /* agentdeck service worker — offline shell + push */
-const CACHE = "agentdeck-v3";
+const CACHE = "agentdeck-v4";
 const SHELL = ["/", "/style.css", "/app.js", "/icon.svg", "/manifest.webmanifest"];
 
 self.addEventListener("install", (e) => {

@@ -19,7 +19,9 @@ class TaskIn(BaseModel):
     prompt: str = ""
     priority: int = Field(2, ge=0, le=4)
     labels: list[str] = []
-    agent: str = Field("claude", pattern="^(claude|codex|gemini)$")
+    # unset means "use the project's default_agent" — the toggle lives on the
+    # project so quick-dispatch and templates inherit it too
+    agent: str | None = Field(None, pattern="^(claude|codex|gemini)$")
     model: str = ""
     permission_mode: str = Field("acceptEdits",
                                  pattern="^(default|acceptEdits|plan|bypassPermissions)$")
@@ -93,14 +95,17 @@ def get_task(task_id: int):
 
 @router.post("/tasks", status_code=201)
 def create_task(t: TaskIn):
-    if not db.one("SELECT id FROM projects WHERE id=?", (t.project_id,)):
+    project = db.one("SELECT * FROM projects WHERE id=?", (t.project_id,))
+    if not project:
         raise HTTPException(400, "no such project")
     from ..agents import GATED_CAPABLE
-    if t.permission_mode == "default" and t.agent not in GATED_CAPABLE:
+    agent = t.agent or project.get("default_agent") or "claude"
+    if t.permission_mode == "default" and agent not in GATED_CAPABLE:
         raise HTTPException(400,
-                            f"agent {t.agent!r} does not support gated approvals; "
+                            f"agent {agent!r} does not support gated approvals; "
                             "use acceptEdits/plan")
     data = t.model_dump()
+    data["agent"] = agent
     data["labels_json"] = db.j(data.pop("labels"))
     tid = db.insert("tasks", {**data, "status": "backlog",
                               "created_at": db.now(), "updated_at": db.now()})

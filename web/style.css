@@ -320,6 +320,17 @@ input.f:focus, textarea.f:focus, select.f:focus {
 }
 textarea.f { min-height: 110px; resize: vertical; }
 
+/* segmented agent toggle */
+.seg { display: flex; gap: 0; padding: 0; border: 1px solid var(--line2);
+  border-radius: 2px; overflow: hidden; background: var(--panel); }
+.seg button {
+  flex: 1; background: none; border: 0; border-right: 1px solid var(--line2);
+  color: var(--ink-dim); padding: 11px 6px; font: 13px var(--mono); cursor: pointer;
+}
+.seg button:last-child { border-right: 0; }
+.seg button.on { background: var(--phos-dim); color: var(--phos); }
+.subhint { margin-top: 6px; color: var(--amber); font: 11px var(--mono); }
+
 /* toasts */
 #toasts { position: fixed; z-index: 80; left: 12px; right: 12px;
   bottom: calc(var(--tabbar-h) + 10px); display: flex; flex-direction: column; gap: 6px; }

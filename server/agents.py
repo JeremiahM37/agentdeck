@@ -10,11 +10,24 @@ so adapters only build the inner command and normalize output lines.
 import json
 import shlex
 
-from . import claude_runner
+from . import claude_runner, config
 
 AGENTS = ("claude", "codex", "gemini")
 # which agents support the hook-gated 'default' permission mode
 GATED_CAPABLE = {"claude"}
+
+# agentdeck's permission modes → codex sandbox policy (codex >= 0.140; the older
+# --full-auto was removed upstream). codex has no PreToolUse hook, so the gated
+# 'default' mode stays claude-only and is rejected before dispatch.
+CODEX_SANDBOX = {
+    "plan": ["--sandbox", "read-only"],
+    "acceptEdits": ["--sandbox", "workspace-write"],
+    "bypassPermissions": ["--dangerously-bypass-approvals-and-sandbox"],
+}
+
+# banner codex prints to stdout before its JSONL; not an event, not worth a
+# 'raw' card on the timeline
+NOISE_LINES = ("Reading additional input from stdin...",)
 
 
 def env_prefix(env: dict | None, sandbox: bool = False) -> str:
@@ -54,25 +67,23 @@ def launch_command(agent: str, worktree: str, tmux_session: str,
     # context bundle still reaches them through the prompt prefix
     rt = claude_runner.runtime_dir(worktree)
     if agent == "codex":
-        parts = ["codex", "exec", "--json"]
+        parts = [config.CODEX_BIN, "exec", "--json"]
         if model:
             parts += ["-m", model]
-        if permission_mode == "plan":
-            parts += ["--sandbox", "read-only"]
-        elif permission_mode == "bypassPermissions":
-            parts += ["--dangerously-bypass-approvals-and-sandbox"]
-        else:   # acceptEdits
-            parts += ["--full-auto"]
+        parts += CODEX_SANDBOX[permission_mode]
         parts.append('"$(cat .agentdeck/prompt.md)"')
     elif agent == "gemini":
-        parts = ["gemini", "-p", '"$(cat .agentdeck/prompt.md)"']
+        parts = [config.GEMINI_BIN, "-p", '"$(cat .agentdeck/prompt.md)"']
         if model:
             parts += ["-m", model]
         if permission_mode in ("acceptEdits", "bypassPermissions"):
             parts.append("--yolo")
     else:
         raise ValueError(f"unknown agent {agent!r}")
-    inner = (f"cd {worktree} && {prefix}{' '.join(parts)} "
+    # both read stdin even with the prompt passed as an argument, and a tmux pane's
+    # stdin never EOFs — without this the agent waits forever on "Reading additional
+    # input from stdin" and the attempt looks hung
+    inner = (f"cd {worktree} && {prefix}{' '.join(parts)} < /dev/null "
              f"> {rt}/events.jsonl 2> {rt}/stderr.log; echo $? > {rt}/exit_code")
     return f"tmux new-session -d -s {tmux_session} {shlex.quote(inner)}"
 
@@ -92,24 +103,34 @@ def _codex_normalize(raw: dict) -> list[dict]:
     if t == "thread.started":
         return [{"type": "init", "payload": {
             "session_id": raw.get("thread_id", ""), "model": "codex", "tools": []}}]
-    if t == "item.completed":
+    # item.started is what makes the timeline live: codex emits it when a command
+    # begins, so the card shows the work in flight instead of only after it lands
+    if t in ("item.started", "item.completed"):
         item = raw.get("item") or {}
         it = item.get("type", "")
-        if it == "agent_message" and item.get("text", "").strip():
-            return [{"type": "text", "payload": {"text": item["text"]}}]
+        started = t == "item.started"
         if it == "command_execution":
-            return [{"type": "tool_use", "payload": {
-                "id": item.get("id", ""), "name": "Bash",
-                "input": {"command": item.get("command", "")}}},
-                {"type": "tool_result", "payload": {
-                    "tool_use_id": item.get("id", ""),
-                    "content": str(item.get("aggregated_output", ""))[:2000],
-                    "is_error": item.get("exit_code", 0) != 0}}]
+            if started:
+                return [{"type": "tool_use", "payload": {
+                    "id": item.get("id", ""), "name": "Bash",
+                    "input": {"command": item.get("command", "")}}}]
+            return [{"type": "tool_result", "payload": {
+                "tool_use_id": item.get("id", ""),
+                "content": str(item.get("aggregated_output", ""))[:2000],
+                "is_error": (item.get("exit_code") or 0) != 0}}]
         if it == "file_change":
             files = ", ".join(c.get("path", "?") for c in item.get("changes", []))
-            return [{"type": "tool_use", "payload": {
-                "id": item.get("id", ""), "name": "Edit", "input": {"file_path": files}}}]
-        if it == "reasoning":
+            if started:
+                return [{"type": "tool_use", "payload": {
+                    "id": item.get("id", ""), "name": "Edit",
+                    "input": {"file_path": files}}}]
+            return [{"type": "tool_result", "payload": {
+                "tool_use_id": item.get("id", ""), "content": f"changed: {files}",
+                "is_error": item.get("status") == "failed"}}]
+        if it == "agent_message" and not started:
+            text = item.get("text", "")
+            return [{"type": "text", "payload": {"text": text}}] if text.strip() else []
+        if it in ("reasoning", "agent_message", "todo_list"):
             return []
     if t == "turn.completed":
         usage = raw.get("usage") or {}
@@ -130,7 +151,7 @@ def _parse_jsonl(buf: str, normalize) -> tuple[list[dict], str]:
     events = []
     for line in complete.split("\n"):
         line = line.strip()
-        if not line:
+        if not line or line in NOISE_LINES:
             continue
         try:
             events.extend(normalize(json.loads(line)))

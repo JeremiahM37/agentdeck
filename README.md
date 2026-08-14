@@ -12,7 +12,7 @@ and hands you a reviewable diff.
 ![license](https://img.shields.io/badge/license-MIT-blue)
 ![python](https://img.shields.io/badge/python-3.12%2B-3776ab)
 ![docker](https://img.shields.io/badge/docker-ready-2496ed)
-![tests](https://img.shields.io/badge/tests-154%20passing-2ea44f)
+![tests](https://img.shields.io/badge/tests-202%20passing-2ea44f)
 ![PWA](https://img.shields.io/badge/PWA-mobile--first-19c37d)
 
 ![AgentDeck board](docs/screenshots/board.png)
@@ -94,9 +94,10 @@ reachability, `git`, `tmux`, `python3`, and your agent's CLI.
 - **Targets** — `local` and `ssh` cover any machine; Proxmox users also get
   `pct` (no SSH needed) and `sandbox` (ephemeral container: clone → run →
   capture → destroy). Deep credentials probe included.
-- **Agents** — adapters for Claude Code, Codex, and Gemini; a small seam for
-  adding more; **any Anthropic-compatible endpoint** (local models via
-  `ANTHROPIC_BASE_URL`).
+- **Agents** — Claude Code and Codex are both first-class, switched with a
+  per-task toggle (default per project); Gemini is experimental, and a small seam
+  makes adding more easy. Plus **any Anthropic-compatible endpoint** (local
+  models via `ANTHROPIC_BASE_URL`). See [docs/agents.md](docs/agents.md).
 - **Control loop** — hook-gated approvals with web-push + Discord/ntfy sinks, an
   always-allow policy engine, follow-ups, auto-verify, reviewer gates, A/B parallel
   attempts, agents that file their own task cards, and shared project memory.
@@ -125,7 +126,7 @@ curl -X POST .../api/projects -d '{
 ## Tests
 
 ```bash
-.venv/bin/pytest      # 184 hermetic tests — unit + API + Playwright e2e (mock executor)
+.venv/bin/pytest      # 202 hermetic tests — unit + API + Playwright e2e (mock executor)
 ```
 
 ## Layout

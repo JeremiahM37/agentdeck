@@ -43,6 +43,11 @@ WEB_DIR = ROOT / "web"
 HOOKS_DIR = ROOT / "hooks"
 
 CLAUDE_BIN = os.environ.get("AGENTDECK_CLAUDE_BIN", "claude")
+# Agent binaries often live in ~/.local/bin, which a systemd unit's PATH does not
+# include — set these when a probe reports an agent as missing that you know is
+# installed (e.g. AGENTDECK_CODEX_BIN=/home/you/.local/bin/codex).
+CODEX_BIN = os.environ.get("AGENTDECK_CODEX_BIN", "codex")
+GEMINI_BIN = os.environ.get("AGENTDECK_GEMINI_BIN", "gemini")
 
 # Rotation-proof agent auth. When set, injected as ANTHROPIC_API_KEY into every
 # agent launch and no OAuth credentials are pushed to targets. When empty,

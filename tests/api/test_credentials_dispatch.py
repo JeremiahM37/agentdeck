@@ -8,8 +8,8 @@ def test_dispatch_provisions_credentials(seeded, monkeypatch):
     never runs on a rotated-out copy (the recurring lxc-101 401)."""
     calls = []
 
-    async def spy(ex, target):
-        calls.append(target["name"])
+    async def spy(ex, target, agent="claude"):
+        calls.append((target["name"], agent))
     monkeypatch.setattr(credentials, "provision", spy)
 
     c, pid = seeded["client"], seeded["project_id"]
@@ -19,6 +19,9 @@ def test_dispatch_provisions_credentials(seeded, monkeypatch):
     wait_for(lambda: c.get(f"/api/tasks/{t['id']}").json()["status"] == "review",
              msg="review")
     assert calls, "credentials.provision was not called before launch"
+    # the agent must be threaded through — codex tokens rotate too, and pushing
+    # claude creds for a codex run leaves it unauthenticated
+    assert calls[0][1] == "claude"
 
 
 def test_api_key_injected_into_launch(seeded, monkeypatch):

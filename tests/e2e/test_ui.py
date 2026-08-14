@@ -457,7 +457,7 @@ def test_fable_dispatch_requires_confirmation(page, server):
     page.goto(server)
     page.click("#fab")
     page.fill("#f-title", "Fable guarded task")
-    page.select_option("#f-model", "fable")
+    page.fill("#f-model", "fable")   # datalist input: any agent's model names
     # dismiss the confirm → the dialog mentions Fable and nothing is created
     seen = []
     page.once("dialog", lambda d: (seen.append(d.message), d.dismiss()))
@@ -470,6 +470,38 @@ def test_fable_dispatch_requires_confirmation(page, server):
     page.once("dialog", lambda d: d.accept())
     page.click("#f-go")
     expect(page.locator(".card", has_text="Fable guarded task")).to_be_visible(timeout=10000)
+
+
+def test_agent_toggle_reshapes_the_form(page, server):
+    """Switching to codex must disable gated mode and hide the A/B row — both are
+    Claude-only, and letting them be picked produces a dispatch that fails later
+    for reasons the operator can't see."""
+    page.goto(server)
+    page.click("#fab")
+    expect(page.locator("#f-agent button.on")).to_have_text("Claude Code")
+
+    page.click("#f-agent button[data-agent='codex']")
+    expect(page.locator("#f-agent button.on")).to_have_text("Codex")
+    assert page.eval_on_selector("#f-agent", "e => e.dataset.value") == "codex"
+    assert page.eval_on_selector(
+        "#f-perm option[value='default']", "e => e.disabled") is True
+    expect(page.locator("#f-ab-row")).to_be_hidden()
+
+    page.click("#f-agent button[data-agent='claude']")
+    assert page.eval_on_selector(
+        "#f-perm option[value='default']", "e => e.disabled") is False
+    expect(page.locator("#f-ab-row")).to_be_visible()
+
+
+def test_codex_task_dispatches_from_the_toggle(page, server):
+    page.goto(server)
+    page.click("#fab")
+    page.fill("#f-title", "Codex toggle task")
+    page.click("#f-agent button[data-agent='codex']")
+    page.click("#f-save")
+    card = page.locator(".card", has_text="Codex toggle task")
+    expect(card).to_be_visible(timeout=10000)
+    expect(card.locator(".chip", has_text="codex")).to_be_visible()
 
 
 def test_pwa_assets(page, server):

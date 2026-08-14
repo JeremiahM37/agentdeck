@@ -1,5 +1,6 @@
 /* agentdeck PWA — vanilla ES module, no build step */
 const $ = (s, el = document) => el.querySelector(s);
+const $$ = (s, el = document) => [...el.querySelectorAll(s)];
 const COLUMNS = ["backlog", "queued", "running", "review", "done", "failed"];
 const state = {
   tab: "board", tasks: [], projects: [], targets: [], approvals: [],
@@ -651,19 +652,23 @@ function renderNewTask(sheet) {
       <option value="bypassPermissions">Bypass — sandboxed targets only</option>
     </select>
     <label class="f">Agent</label>
-    <select class="f" id="f-agent">
-      <option value="claude" selected>Claude Code</option>
-      <option value="codex">Codex CLI (experimental)</option>
-      <option value="gemini">Gemini CLI (experimental)</option>
-    </select>
+    <div class="seg f" id="f-agent" data-value="claude">
+      <button type="button" data-agent="claude" class="on">Claude Code</button>
+      <button type="button" data-agent="codex">Codex</button>
+      <button type="button" data-agent="gemini">Gemini</button>
+    </div>
+    <div class="subhint" id="f-agent-hint"></div>
     <label class="f">Model</label>
-    <select class="f" id="f-model">
-      <option value="">default</option><option>fable</option><option>opus</option><option>sonnet</option><option>haiku</option>
-    </select>
-    <label class="f">A/B second attempt (parallel, compare diffs)</label>
-    <select class="f" id="f-modelb">
-      <option value="">off</option><option>fable</option><option>opus</option><option>sonnet</option><option>haiku</option>
-    </select>
+    <input class="f" id="f-model" list="adk-models" placeholder="default" autocomplete="off">
+    <datalist id="adk-models">
+      <option>fable</option><option>opus</option><option>sonnet</option><option>haiku</option>
+    </datalist>
+    <div id="f-ab-row">
+      <label class="f">A/B second attempt (parallel, compare diffs)</label>
+      <select class="f" id="f-modelb">
+        <option value="">off</option><option>fable</option><option>opus</option><option>sonnet</option><option>haiku</option>
+      </select>
+    </div>
     <label class="f">Priority</label>
     <select class="f" id="f-prio">
       <option value="1">low</option><option value="2" selected>normal</option><option value="3">high</option>
@@ -674,6 +679,49 @@ function renderNewTask(sheet) {
     </div>`;
   $(".x", sheet).onclick = closeSheet;
   attachMic($("#f-mic"), $("#f-prompt"));
+
+  // agent toggle. Only claude supports gated approvals and the claude model
+  // aliases, so switching agents has to reshape the rest of the form — and say
+  // so, rather than letting a dispatch fail later for reasons that look random.
+  const agentBox = $("#f-agent");
+  const syncAgent = () => {
+    const agent = agentBox.dataset.value;
+    $$("button", agentBox).forEach((b) =>
+      b.classList.toggle("on", b.dataset.agent === agent));
+    const claude = agent === "claude";
+    const gated = $("#f-perm").querySelector('option[value="default"]');
+    gated.disabled = !claude;
+    gated.textContent = claude
+      ? "Gated — ask me before running anything (push)"
+      : "Gated — Claude Code only";
+    if (!claude && $("#f-perm").value === "default") $("#f-perm").value = "acceptEdits";
+    $("#f-ab-row").style.display = claude ? "" : "none";
+    if (!claude) $("#f-modelb").value = "";
+    $("#adk-models").innerHTML = claude
+      ? ["fable", "opus", "sonnet", "haiku"].map((m) => `<option>${m}</option>`).join("")
+      : "";
+    // probe truth beats optimism: say when the target has no such binary
+    const proj = state.projects.find((p) => p.id === +$("#f-project").value);
+    const tgt = state.targets.find((t) => t.id === proj?.target_id);
+    let info = {};
+    try { info = JSON.parse(tgt?.info_json || "{}"); } catch {}
+    const missing = tgt && info[agent] === null;
+    $("#f-agent-hint").textContent = missing
+      ? `⚠ ${agent} not detected on ${tgt.name} — probe the target, or set `
+        + `AGENTDECK_${agent.toUpperCase()}_BIN if it lives outside the service PATH`
+      : "";
+  };
+  $$("button", agentBox).forEach((b) => {
+    b.onclick = () => { agentBox.dataset.value = b.dataset.agent; syncAgent(); };
+  });
+  $("#f-project").addEventListener("change", () => {
+    const proj = state.projects.find((p) => p.id === +$("#f-project").value);
+    agentBox.dataset.value = proj?.default_agent || "claude";
+    syncAgent();
+  });
+  agentBox.dataset.value =
+    state.projects.find((p) => p.id === +$("#f-project").value)?.default_agent || "claude";
+  syncAgent();
   api("/templates").then((tpls) => {
     const sel = $("#f-template");
     tpls.forEach((t, i) => {
@@ -694,7 +742,7 @@ function renderNewTask(sheet) {
     project_id: +$("#f-project").value,
     title: $("#f-title").value.trim(),
     prompt: $("#f-prompt").value.trim(),
-    agent: $("#f-agent").value,
+    agent: $("#f-agent").dataset.value,
     permission_mode: $("#f-perm").value,
     model: $("#f-model").value,
     priority: +$("#f-prio").value,

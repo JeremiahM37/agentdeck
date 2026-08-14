@@ -108,8 +108,7 @@ def test_empty_settings_is_empty():
 
 def test_project_slug_matches_claude_layout():
     # verified against the running CLI: every non-alphanumeric collapses to '-'
-    assert project_slug("/home/admin/projects/x/.wt/task1-a1") == \
-        "-home-admin-projects-x--wt-task1-a1"
+    assert project_slug("/srv/repos/x/.wt/task1-a1") == "-srv-repos-x--wt-task1-a1"
     assert project_slug("/tmp/slug_test.d/a_b") == "-tmp-slug-test-d-a-b"
 
 

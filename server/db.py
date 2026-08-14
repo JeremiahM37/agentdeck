@@ -34,6 +34,7 @@ CREATE TABLE IF NOT EXISTS projects(
   strict_mcp INTEGER DEFAULT 0,                -- ignore host MCP config entirely
   permissions_json TEXT DEFAULT '{}',          -- permissions block for .agentdeck/settings.json
   gate_matcher TEXT DEFAULT '',                -- PreToolUse matcher in gated mode ('' = all tools)
+  default_agent TEXT DEFAULT 'claude',         -- agent used by tasks that don't pick one
   created_at REAL
 );
 CREATE TABLE IF NOT EXISTS tasks(
@@ -115,6 +116,7 @@ def init(path: Path | None = None) -> None:
         "ALTER TABLE projects ADD COLUMN strict_mcp INTEGER DEFAULT 0",
         "ALTER TABLE projects ADD COLUMN permissions_json TEXT DEFAULT '{}'",
         "ALTER TABLE projects ADD COLUMN gate_matcher TEXT DEFAULT ''",
+        "ALTER TABLE projects ADD COLUMN default_agent TEXT DEFAULT 'claude'",
     ):
         try:
             _conn.execute(mig)

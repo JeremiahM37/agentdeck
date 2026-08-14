@@ -116,6 +116,7 @@ class ProjectIn(BaseModel):
     strict_mcp: bool = False           # ignore the host's own MCP config
     permissions: dict = {}             # allow/deny/ask rules, e.g. {"allow": ["Bash(pytest*)"]}
     gate_matcher: str = ""             # PreToolUse matcher in gated mode ('' = all tools)
+    default_agent: str = Field("claude", pattern="^(claude|codex|gemini)$")
 
 
 def _project_columns(data: dict) -> dict:
@@ -165,6 +166,7 @@ class ProjectPatch(BaseModel):
     strict_mcp: bool | None = None
     permissions: dict | None = None
     gate_matcher: str | None = None
+    default_agent: str | None = Field(None, pattern="^(claude|codex|gemini)$")
 
 
 @router.patch("/projects/{project_id}")
