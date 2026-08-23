@@ -436,6 +436,8 @@ async function renderTargets() {
     };
     list.appendChild(el);
   }
+  for (const p of state.projects) list.appendChild(projectCard(p));
+
   const statsCard = document.createElement("div");
   statsCard.className = "rowcard";
   statsCard.innerHTML = '<h3>Spend</h3><div class="sub">loading…</div>';
@@ -484,6 +486,54 @@ async function renderTargets() {
 }
 
 /* ---------- task sheet ---------- */
+/** One project's capability, stated from the server's resolved view.
+
+    A dispatched agent is headless: it cannot be asked for permission, so a tool
+    that is not granted is denied with no prompt and no error the operator sees.
+    'parity' grants what a terminal session has — Bash with pipes, the MCP servers
+    the target can actually reach, and the shared memory store. */
+function projectCard(p) {
+  const el = document.createElement("div");
+  el.className = "rowcard";
+  el.innerHTML = `
+    <h3>${esc(p.name)}</h3>
+    <div class="sub">${esc(p.target_name)} · ${esc(p.target_kind)} · ${esc(p.repo_path)}</div>
+    <label class="f">Agent capability</label>
+    <select class="f cap-sel">
+      <option value="restricted">restricted — only rules you set</option>
+      <option value="parity">parity — same tools as your terminal</option>
+    </select>
+    <div class="sub cap-info">checking…</div>
+`;
+  const sel = $(".cap-sel", el);
+  const info = $(".cap-info", el);
+  sel.value = p.capability_profile || "restricted";
+
+  const paint = (c) => {
+    const bits = [];
+    bits.push(c.mcp_servers.length
+      ? `MCP: ${c.mcp_servers.join(", ")}` : "MCP: none reachable");
+    bits.push(c.memory_dir ? "memory: shared" : "memory: none");
+    if (c.allow.includes("Bash")) bits.push("bash: unrestricted");
+    info.innerHTML = esc(bits.join(" · ")) +
+      (c.notes.length ? c.notes.map((n) => `<div class="cap-note">⚠ ${esc(n)}</div>`).join("") : "");
+  };
+  const load = () => api(`/projects/${p.id}/capability`).then(paint)
+    .catch(() => { info.textContent = "capability unavailable"; });
+  load();
+
+  sel.onchange = async () => {
+    try {
+      await api(`/projects/${p.id}`, { method: "PATCH",
+        body: { capability_profile: sel.value } });
+      p.capability_profile = sel.value;
+      toast(`${p.name}: ${sel.value}`);
+      load();
+    } catch (e) { toast(e.message, true); sel.value = p.capability_profile || "restricted"; }
+  };
+  return el;
+}
+
 async function openTaskSheet(id) {
   state.sheet = { kind: "task", id };
   state.taskEvents = [];
@@ -735,6 +785,7 @@ function renderNewTask(sheet) {
     <label class="f">Project</label>
     <select class="f" id="f-project">${state.projects.map((p) =>
       `<option value="${p.id}">${esc(p.name)} — ⌁ ${esc(p.target_name)}</option>`).join("")}</select>
+    <div class="subhint" id="f-cap-hint"></div>
     <label class="f">Title</label>
     <input class="f" id="f-title" placeholder="Add /health endpoint">
     <label class="f">Prompt — what should the agent do? <button id="f-mic" style="float:right;background:none;border:1px solid var(--line2);border-radius:2px;cursor:pointer">🎤</button></label>
@@ -809,11 +860,29 @@ function renderNewTask(sheet) {
   $$("button", agentBox).forEach((b) => {
     b.onclick = () => { agentBox.dataset.value = b.dataset.agent; syncAgent(); };
   });
+  // what the agent will actually be able to do, before you spend a dispatch on it
+  const syncCapability = () => {
+    const el = $("#f-cap-hint");
+    const id = +$("#f-project").value;
+    if (!el || !id) return;
+    el.textContent = "checking capability…";
+    api(`/projects/${id}/capability`).then((c) => {
+      if (+$("#f-project").value !== id) return;   // a later pick already won
+      const have = [c.mcp_servers.length ? `MCP ${c.mcp_servers.join(", ")}` : "no MCP",
+                    c.memory_dir ? "shared memory" : "no memory"];
+      el.innerHTML = `<b>${esc(c.profile)}</b> · ${esc(have.join(" · "))}` +
+        (c.profile === "restricted"
+          ? '<div class="cap-note">⚠ restricted: tools it was not granted are '
+            + 'denied with no prompt. Set parity on the Targets tab.</div>' : "");
+    }).catch(() => { el.textContent = ""; });
+  };
   $("#f-project").addEventListener("change", () => {
     const proj = state.projects.find((p) => p.id === +$("#f-project").value);
     agentBox.dataset.value = proj?.default_agent || "claude";
     syncAgent();
+    syncCapability();
   });
+  syncCapability();
   const initialProj = state.projects.find((p) => p.id === +$("#f-project").value);
   agentBox.dataset.value = initialProj?.default_agent || "claude";
   syncAgent();

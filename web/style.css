@@ -205,6 +205,8 @@ main { padding: 10px 0 calc(var(--tabbar-h) + 76px); min-height: 60vh; }
 .colchip.on { color: var(--ink); border-color: var(--phos); background: var(--panel); }
 .colchip.on b { color: var(--phos); }
 
+.cap-note { color: var(--amber); margin-top: 4px; font-size: 11px; line-height: 1.45; }
+
 .diffhead {
   display: flex; align-items: center; gap: 10px; margin: 6px 0 10px;
   color: var(--ink-dim); font-size: 11px;
@@ -216,6 +218,7 @@ main { padding: 10px 0 calc(var(--tabbar-h) + 76px); min-height: 60vh; }
 }
 .wrapbtn.on { border-color: var(--phos); color: var(--phos); }
 .wrapped .dcode > div { white-space: pre-wrap; overflow-wrap: anywhere; }
+select.f { min-height: 42px; }
 
 .card {
   background: var(--panel); border: 1px solid var(--line); border-left-width: 3px;

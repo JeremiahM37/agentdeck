@@ -224,10 +224,43 @@ test_approval_flow_from_phone = pytest.mark.parametrize(
 def test_targets_tab_probe(page, server):
     page.goto(server)
     page.click(".tab[data-tab='targets']")
-    row = page.locator(".rowcard", has_text="lxc-101-project-env")
+    # scope by heading: project cards name their target too, so a bare has_text
+    # matches both the target card and every project pointed at it
+    row = page.locator(".rowcard").filter(
+        has=page.locator("h3", has_text="lxc-101-project-env"))
     expect(row).to_be_visible()
     row.locator("button:has-text('Probe')").click()
     expect(row.locator(".sub", has_text="claude")).to_be_visible(timeout=10000)
+
+
+def test_targets_tab_shows_project_capability(page, server):
+    """The parity settings had no UI at all — they could only be set by curl."""
+    page.goto(server)
+    page.click(".tab[data-tab='targets']")
+    card = page.locator(".rowcard").filter(has=page.locator("h3", has_text="demo-app"))
+    expect(card).to_be_visible()
+    expect(card.locator(".cap-sel")).to_have_value("restricted")
+    card.locator(".cap-sel").select_option("parity")
+    expect(card.locator(".cap-info")).to_contain_text("bash: unrestricted",
+                                                     timeout=10000)
+    # leave the shared server as we found it
+    card.locator(".cap-sel").select_option("restricted")
+    expect(card.locator(".cap-info")).to_contain_text("⚠", timeout=10000)
+
+
+@pytest.mark.parametrize("page", [PHONE], indirect=True, ids=["phone"])
+def test_new_task_sheet_states_the_agent_capability(page, server):
+    """You should know the agent will be crippled BEFORE spending a dispatch."""
+    # pin the profile and the picked project: the e2e server is shared, so
+    # another test's toggle would otherwise decide what this one asserts
+    pid = page.request.get(f"{server}/api/projects").json()[0]["id"]
+    page.request.patch(f"{server}/api/projects/{pid}",
+                       data={"capability_profile": "restricted"})
+    page.goto(server)
+    page.click("#fab")
+    page.select_option("#f-project", str(pid))
+    expect(page.locator("#f-cap-hint")).to_contain_text("restricted", timeout=10000)
+    expect(page.locator("#f-cap-hint .cap-note")).to_contain_text("denied with no prompt")
 
 
 def test_quickbar_instant_dispatch(page, server):
