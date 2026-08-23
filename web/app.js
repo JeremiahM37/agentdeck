@@ -7,7 +7,19 @@ const state = {
   sheet: null,            // {kind:'task', id} | {kind:'new'} | null
   taskES: null, taskEvents: [], taskDiff: null, diffOpen: false,
   deckPanes: new Map(),   // taskId -> {el, es}: persisted deck panes/streams
+  mobileCol: null,        // phone: which status column is showing (null = auto)
+  mobileColPinned: false, // ...and whether the user chose it themselves
+  showAllDone: false,     // phone: finished lists are capped until asked
+  diffWrap: localStorage.getItem("adk-diffwrap") === "1",
 };
+
+// rotating a phone or dragging a desktop window across the breakpoint has to
+// rebuild the board — the two layouts are different DOM, not just different CSS
+let _wasPhone = null;
+addEventListener("resize", () => {
+  const now = !window.matchMedia("(min-width: 1024px)").matches;
+  if (now !== _wasPhone) { _wasPhone = now; if (state.tab === "board") renderColumns(); }
+});
 
 /* ---------- api ---------- */
 function authToken() { return localStorage.getItem("adk-token") || ""; }
@@ -173,51 +185,119 @@ function renderBoard() {
   renderColumns();
 }
 
+/* ---------- board columns ----------
+   Desktop keeps the kanban. A phone cannot use one: six columns at 86vw is
+   ~2100px of sideways scrolling, so the app opened on an empty BACKLOG with the
+   only actionable card three swipes away — and the scroll-to-the-busy-column
+   nudge latched after its first run, while every re-render reset scrollLeft to 0.
+   Narrow screens now get ONE column plus a status strip, ordered by what wants a
+   decision first. Same data, same actions, no horizontal scrolling. */
+const MOBILE_ORDER = ["review", "running", "queued", "backlog", "failed", "done"];
+const COL_LABEL = { review: "needs you", running: "running", queued: "queued",
+                    backlog: "backlog", failed: "failed", done: "done" };
+const DONE_PAGE = 15;   // 40+ finished nightly-smoke cards is a DOM full of noise
+
+function isPhone() { return !window.matchMedia("(min-width: 1024px)").matches; }
+
+function visibleTasks() {
+  const f = (state.filter || "").trim().toLowerCase();
+  return f ? state.tasks.filter((t) =>
+    `${t.title} ${t.project_name} ${t.target_name}`.toLowerCase().includes(f))
+    : state.tasks;
+}
+
+function attachDrop(c, col) {
+  c.ondragover = (e) => { e.preventDefault(); c.classList.add("dropok"); };
+  c.ondragleave = () => c.classList.remove("dropok");
+  c.ondrop = async (e) => {
+    e.preventDefault(); c.classList.remove("dropok");
+    const data = e.dataTransfer.getData("text/adk-task");
+    if (!data) return;
+    const { id, status } = JSON.parse(data);
+    try {
+      if (col === "queued" && ["backlog", "failed", "cancelled"].includes(status))
+        await api(`/tasks/${id}/dispatch`, { method: "POST", body: {} });
+      else if (col === "done" && status === "review")
+        await api(`/tasks/${id}/complete`, { method: "POST" });
+      else if (col === "cancelled" || (col === "backlog" && status === "backlog")) return;
+      else return toast(`${status} → ${col}: not a thing. Drag to queued (dispatch) or done (complete).`, true);
+      refreshTasks();
+    } catch (err) { toast(err.message, true); }
+  };
+}
+
+/** Fill a .col-body with cards, capping long finished lists behind a reveal. */
+function fillColumn(body, col, items) {
+  if (!items.length) { body.innerHTML = '<div class="col-empty">— empty —</div>'; return; }
+  const cap = col === "done" && !state.showAllDone ? DONE_PAGE : items.length;
+  items.slice(0, cap).forEach((t) => {
+    try { body.appendChild(card(t)); }   // one bad card must never blank the board
+    catch (err) { console.error("card render failed", t?.id, err); }
+  });
+  if (items.length > cap) {
+    const more = document.createElement("button");
+    more.className = "col-more";
+    more.textContent = `show ${items.length - cap} more`;
+    more.onclick = () => { state.showAllDone = true; renderColumns(); };
+    body.appendChild(more);
+  }
+}
+
 function renderColumns() {
   const board = $("#board");
   if (!board) return;
   board.innerHTML = "";
-  const f = (state.filter || "").trim().toLowerCase();
-  const visible = f ? state.tasks.filter((t) =>
-    `${t.title} ${t.project_name} ${t.target_name}`.toLowerCase().includes(f))
-    : state.tasks;
+  const visible = visibleTasks();
+  const byCol = Object.fromEntries(
+    COLUMNS.map((c) => [c, visible.filter((t) => t.status === c)]));
+
+  if (isPhone()) return renderPhoneBoard(board, byCol);
+
+  board.classList.remove("phone");
   for (const col of COLUMNS) {
-    const items = visible.filter((t) => t.status === col);
     const c = document.createElement("div");
     c.className = `col s-${col}`;
     c.innerHTML = `
-      <div class="col-head"><span class="dot"></span>${col}<span class="cnt">${items.length}</span></div>
+      <div class="col-head"><span class="dot"></span>${col}<span class="cnt">${byCol[col].length}</span></div>
       <div class="col-body"></div>`;
-    c.ondragover = (e) => { e.preventDefault(); c.classList.add("dropok"); };
-    c.ondragleave = () => c.classList.remove("dropok");
-    c.ondrop = async (e) => {
-      e.preventDefault(); c.classList.remove("dropok");
-      const data = e.dataTransfer.getData("text/adk-task");
-      if (!data) return;
-      const { id, status } = JSON.parse(data);
-      try {
-        if (col === "queued" && ["backlog", "failed", "cancelled"].includes(status))
-          await api(`/tasks/${id}/dispatch`, { method: "POST", body: {} });
-        else if (col === "done" && status === "review")
-          await api(`/tasks/${id}/complete`, { method: "POST" });
-        else if (col === "cancelled" || (col === "backlog" && status === "backlog")) return;
-        else return toast(`${status} → ${col}: not a thing. Drag to queued (dispatch) or done (complete).`, true);
-        refreshTasks();
-      } catch (err) { toast(err.message, true); }
-    };
-    const body = $(".col-body", c);
-    if (!items.length) body.innerHTML = '<div class="col-empty">— empty —</div>';
-    items.forEach((t) => {
-      try { body.appendChild(card(t)); }   // one bad card must never blank the board
-      catch (err) { console.error("card render failed", t?.id, err); }
-    });
+    attachDrop(c, col);
+    fillColumn($(".col-body", c), col, byCol[col]);
     board.appendChild(c);
   }
-  // phone: land on the first column that has work, not an empty backlog
-  if (!renderBoard._scrolled && board.scrollWidth > board.clientWidth) {
-    const busy = [...board.children].find((c) => c.querySelector(".card"));
-    if (busy) { board.scrollLeft = busy.offsetLeft - 14; renderBoard._scrolled = true; }
+}
+
+/** One column at a time, chosen by a status strip. */
+function renderPhoneBoard(board, byCol) {
+  board.classList.add("phone");
+  // auto-focus the most urgent non-empty status until the user picks one, and
+  // fall back to auto if their pick empties out — never strand them on nothing
+  let col = state.mobileCol;
+  if (!col || (!byCol[col].length && !state.mobileColPinned))
+    col = MOBILE_ORDER.find((c) => byCol[c].length) || "backlog";
+  state.mobileCol = col;
+
+  const strip = document.createElement("div");
+  strip.className = "colstrip";
+  for (const c of MOBILE_ORDER) {
+    const b = document.createElement("button");
+    b.className = `colchip s-${c}${c === col ? " on" : ""}`;
+    b.innerHTML = `<span class="dot"></span>${COL_LABEL[c]}<b>${byCol[c].length}</b>`;
+    b.onclick = () => {
+      state.mobileCol = c; state.mobileColPinned = true; state.showAllDone = false;
+      renderColumns();
+    };
+    strip.appendChild(b);
   }
+  board.appendChild(strip);
+
+  const wrap = document.createElement("div");
+  wrap.className = `col s-${col} solo`;
+  wrap.innerHTML = '<div class="col-body"></div>';
+  attachDrop(wrap, col);
+  fillColumn($(".col-body", wrap), col, byCol[col]);
+  board.appendChild(wrap);
+  strip.querySelector(".colchip.on")?.scrollIntoView(
+    { inline: "center", block: "nearest", behavior: "instant" });
 }
 
 /* ---------- deck view (desktop multi-pane cockpit) ---------- */
@@ -605,10 +685,25 @@ function renderDiff(body) {
   const d = state.taskDiff;
   const stats = d.stats || [];
   const head = document.createElement("div");
-  head.className = "sub";
-  head.style.cssText = "margin:6px 0 10px;color:var(--ink-dim);font-size:11px";
-  head.textContent = `attempt #${d.attempt_n} · ${stats.length} file(s) changed`;
+  head.className = "diffhead";
+  head.innerHTML = `<span>attempt #${d.attempt_n} · ${stats.length} file(s) changed</span>`;
+  // reviewing on a phone means prose and long lines run off the right edge with
+  // no way back; wrapping is the difference between readable and unreadable there
+  const wrapBtn = document.createElement("button");
+  wrapBtn.className = "wrapbtn";
+  const paintWrap = () => {
+    wrapBtn.textContent = state.diffWrap ? "⏎ wrap: on" : "⏎ wrap: off";
+    wrapBtn.classList.toggle("on", !!state.diffWrap);
+    body.classList.toggle("wrapped", !!state.diffWrap);
+  };
+  wrapBtn.onclick = () => {
+    state.diffWrap = !state.diffWrap;
+    localStorage.setItem("adk-diffwrap", state.diffWrap ? "1" : "");
+    paintWrap();
+  };
+  head.appendChild(wrapBtn);
   body.appendChild(head);
+  paintWrap();
   for (const f of d.files || []) {
     const st = stats.find((s) => s.path === f.path) || {};
     const det = document.createElement("details");
@@ -719,8 +814,8 @@ function renderNewTask(sheet) {
     agentBox.dataset.value = proj?.default_agent || "claude";
     syncAgent();
   });
-  agentBox.dataset.value =
-    state.projects.find((p) => p.id === +$("#f-project").value)?.default_agent || "claude";
+  const initialProj = state.projects.find((p) => p.id === +$("#f-project").value);
+  agentBox.dataset.value = initialProj?.default_agent || "claude";
   syncAgent();
   api("/templates").then((tpls) => {
     const sel = $("#f-template");

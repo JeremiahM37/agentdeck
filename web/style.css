@@ -174,6 +174,48 @@ main { padding: 10px 0 calc(var(--tabbar-h) + 76px); min-height: 60vh; }
 .col-head .cnt { margin-left: auto; color: var(--ink-faint); font-family: var(--mono); }
 .col-body { overflow-y: auto; padding: 9px; display: flex; flex-direction: column; gap: 8px; }
 .col-empty { color: var(--ink-faint); font-size: 11px; text-align: center; padding: 18px 0 22px; }
+.col-more {
+  background: none; border: 1px dashed var(--line2); color: var(--ink-dim);
+  border-radius: var(--rad); padding: 9px; cursor: pointer;
+  font: 11px var(--mono); letter-spacing: .08em;
+}
+.col-more:active { border-color: var(--phos); color: var(--phos); }
+
+/* phone board: one column, chosen from a status strip. Six columns side by side
+   made the board ~2100px wide on a 390px screen and buried the live work. */
+#board.phone { flex-direction: column; overflow-x: hidden; scroll-snap-type: none; gap: 10px; }
+#board.phone .col.solo {
+  flex: 1 1 auto; max-width: none; width: 100%;
+  max-height: calc(100dvh - var(--tabbar-h) - 168px);
+}
+.colstrip {
+  display: flex; gap: 7px; overflow-x: auto; padding-bottom: 2px;
+  scrollbar-width: none; -webkit-overflow-scrolling: touch;
+}
+.colstrip::-webkit-scrollbar { display: none; }
+.colchip {
+  flex: 0 0 auto; display: flex; align-items: center; gap: 6px;
+  background: var(--bg2); border: 1px solid var(--line); color: var(--ink-dim);
+  border-radius: 999px; padding: 8px 13px; cursor: pointer;
+  font: 600 11px var(--disp); letter-spacing: .12em; text-transform: uppercase;
+  min-height: 38px;   /* a touch target you can actually hit */
+}
+.colchip .dot { width: 7px; height: 7px; border-radius: 50%; }
+.colchip b { font-family: var(--mono); font-weight: 500; color: var(--ink-faint); }
+.colchip.on { color: var(--ink); border-color: var(--phos); background: var(--panel); }
+.colchip.on b { color: var(--phos); }
+
+.diffhead {
+  display: flex; align-items: center; gap: 10px; margin: 6px 0 10px;
+  color: var(--ink-dim); font-size: 11px;
+}
+.wrapbtn {
+  margin-left: auto; background: none; border: 1px solid var(--line2);
+  color: var(--ink-dim); border-radius: 2px; padding: 6px 10px; cursor: pointer;
+  font: 10px var(--mono); letter-spacing: .06em; min-height: 32px;
+}
+.wrapbtn.on { border-color: var(--phos); color: var(--phos); }
+.wrapped .dcode > div { white-space: pre-wrap; overflow-wrap: anywhere; }
 
 .card {
   background: var(--panel); border: 1px solid var(--line); border-left-width: 3px;
@@ -208,7 +250,7 @@ main { padding: 10px 0 calc(var(--tabbar-h) + 76px); min-height: 60vh; }
 .s-failed   { --sc: var(--red); }
 .s-cancelled{ --sc: var(--ink-faint); }
 .card { border-left-color: var(--sc); }
-.col-head .dot { background: var(--sc); box-shadow: 0 0 6px var(--sc); }
+.col-head .dot, .colchip .dot { background: var(--sc); box-shadow: 0 0 6px var(--sc); }
 
 /* ---------- lists (approvals/targets) ---------- */
 .list { padding: 4px 14px; display: flex; flex-direction: column; gap: 10px; }

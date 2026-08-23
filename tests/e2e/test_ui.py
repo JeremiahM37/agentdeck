@@ -141,8 +141,6 @@ def _new_task(page, title, prompt="fix it", perm=None):
     page.click("#f-go")
 
 
-@pytest.mark.parametrize("page", [DESKTOP, PHONE], indirect=True,
-                         ids=["desktop", "phone"])
 def test_board_renders(page, server):
     page.goto(server)
     expect(page.locator(".brand h1")).to_contain_text("AGENT")
@@ -152,6 +150,28 @@ def test_board_renders(page, server):
         expect(page.locator(f".col.s-{name}")).to_be_visible()
     expect(page.locator("#fab")).to_be_visible()
     expect(page.locator("#conn-label")).to_have_text("LIVE", timeout=10000)
+
+
+@pytest.mark.parametrize("page", [PHONE], indirect=True, ids=["phone"])
+def test_phone_board_is_one_column_with_a_status_strip(page, server):
+    """Six 86vw columns meant ~2100px of sideways scrolling on a 390px screen."""
+    page.goto(server)
+    expect(page.locator("#conn-label")).to_have_text("LIVE", timeout=10000)
+    expect(page.locator(".colstrip .colchip")).to_have_count(6)
+    expect(page.locator(".col")).to_have_count(1)
+    assert page.evaluate("document.body.scrollWidth <= window.innerWidth"), \
+        "the board must not scroll sideways on a phone"
+
+
+@pytest.mark.parametrize("page", [PHONE], indirect=True, ids=["phone"])
+def test_phone_lands_on_work_that_wants_a_decision(page, server):
+    """It used to open on an empty BACKLOG with the live card three swipes away."""
+    page.goto(server)
+    expect(page.locator("#conn-label")).to_have_text("LIVE", timeout=10000)
+    _new_task(page, "PHONE focus", "add health endpoint")
+    expect(page.locator(".col.s-review .card", has_text="PHONE focus")) \
+        .to_be_visible(timeout=20000)
+    expect(page.locator(".colchip.s-review.on")).to_be_visible()
 
 
 def test_full_flow_dispatch_review_diff_done(page, server):
