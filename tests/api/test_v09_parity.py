@@ -281,3 +281,37 @@ def test_explicit_deny_beats_the_profile(client, monkeypatch):
     assert "Bash" not in perms["allow"], "profile re-granted something the operator denied"
     assert "Bash" in perms["deny"]
 
+
+# ---- default permission mode -------------------------------------------------
+# A project whose blast radius is infrastructure should gate by default, or a
+# quick-dispatch from the phone silently runs unattended with full parity.
+
+def test_task_inherits_the_projects_default_permission_mode(client):
+    tid = client.get("/api/targets").json()[0]["id"]
+    p = client.post("/api/projects", json={
+        "name": "infra", "target_id": tid, "repo_path": "/mock/infra",
+        "default_permission_mode": "default"}).json()
+
+    t = client.post("/api/tasks", json={"project_id": p["id"], "title": "no mode given"}).json()
+
+    assert t["permission_mode"] == "default"
+
+
+def test_explicit_permission_mode_still_wins(client):
+    tid = client.get("/api/targets").json()[0]["id"]
+    p = client.post("/api/projects", json={
+        "name": "infra2", "target_id": tid, "repo_path": "/mock/infra2",
+        "default_permission_mode": "default"}).json()
+
+    t = client.post("/api/tasks", json={"project_id": p["id"], "title": "explicit",
+                                        "permission_mode": "plan"}).json()
+
+    assert t["permission_mode"] == "plan"
+
+
+def test_no_project_default_keeps_accept_edits(seeded):
+    """Existing installs must not start gating tasks that never gated before."""
+    c = seeded["client"]
+    t = c.post("/api/tasks", json={"project_id": seeded["project_id"],
+                                   "title": "unchanged"}).json()
+    assert t["permission_mode"] == "acceptEdits"

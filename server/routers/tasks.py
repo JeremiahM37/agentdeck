@@ -23,8 +23,11 @@ class TaskIn(BaseModel):
     # project so quick-dispatch and templates inherit it too
     agent: str | None = Field(None, pattern="^(claude|codex|gemini)$")
     model: str = ""
-    permission_mode: str = Field("acceptEdits",
-                                 pattern="^(default|acceptEdits|plan|bypassPermissions)$")
+    # unset means "use the project's default_permission_mode", falling back to
+    # acceptEdits — same inheritance the agent toggle uses, so quick-dispatch and
+    # templates pick up a project's gating instead of silently bypassing it
+    permission_mode: str | None = Field(
+        None, pattern="^(default|acceptEdits|plan|bypassPermissions)$")
     base_branch: str = ""
 
 
@@ -100,12 +103,15 @@ def create_task(t: TaskIn):
         raise HTTPException(400, "no such project")
     from ..agents import GATED_CAPABLE
     agent = t.agent or project.get("default_agent") or "claude"
-    if t.permission_mode == "default" and agent not in GATED_CAPABLE:
+    mode = (t.permission_mode or project.get("default_permission_mode")
+            or "acceptEdits")
+    if mode == "default" and agent not in GATED_CAPABLE:
         raise HTTPException(400,
                             f"agent {agent!r} does not support gated approvals; "
                             "use acceptEdits/plan")
     data = t.model_dump()
     data["agent"] = agent
+    data["permission_mode"] = mode
     data["labels_json"] = db.j(data.pop("labels"))
     tid = db.insert("tasks", {**data, "status": "backlog",
                               "created_at": db.now(), "updated_at": db.now()})

@@ -120,6 +120,11 @@ class ProjectIn(BaseModel):
     # 'parity' grants the tools, MCP servers and memory dir a terminal session has;
     # 'restricted' keeps the old behaviour where only explicit rules are granted
     capability_profile: str = Field("restricted", pattern="^(restricted|parity)$")
+    # '' = use the task default (acceptEdits). Set 'default' to make every
+    # dispatch on this project stop for approval — the right setting when the
+    # project's blast radius is infrastructure rather than a code diff.
+    default_permission_mode: str = Field(
+        "", pattern="^(|default|acceptEdits|plan|bypassPermissions)$")
 
 
 def _project_columns(data: dict) -> dict:
@@ -171,6 +176,8 @@ class ProjectPatch(BaseModel):
     gate_matcher: str | None = None
     default_agent: str | None = Field(None, pattern="^(claude|codex|gemini)$")
     capability_profile: str | None = Field(None, pattern="^(restricted|parity)$")
+    default_permission_mode: str | None = Field(
+        None, pattern="^(|default|acceptEdits|plan|bypassPermissions)$")
 
 
 @router.patch("/projects/{project_id}")

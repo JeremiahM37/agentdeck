@@ -504,10 +504,30 @@ function projectCard(p) {
       <option value="parity">parity — same tools as your terminal</option>
     </select>
     <div class="sub cap-info">checking…</div>
-`;
+    <label class="f">Default permission mode</label>
+    <select class="f perm-sel">
+      <option value="">— task default (accept edits) —</option>
+      <option value="default">Gated — approve every tool call</option>
+      <option value="acceptEdits">Accept edits</option>
+      <option value="plan">Plan only</option>
+      <option value="bypassPermissions">Bypass — sandboxed targets only</option>
+    </select>`;
   const sel = $(".cap-sel", el);
   const info = $(".cap-info", el);
   sel.value = p.capability_profile || "restricted";
+  const permSel = $(".perm-sel", el);
+  permSel.value = p.default_permission_mode || "";
+  permSel.onchange = async () => {
+    try {
+      await api(`/projects/${p.id}`, { method: "PATCH",
+        body: { default_permission_mode: permSel.value } });
+      p.default_permission_mode = permSel.value;
+      toast(`${p.name}: ${permSel.value || "task default"}`);
+    } catch (e) {
+      toast(e.message, true);
+      permSel.value = p.default_permission_mode || "";
+    }
+  };
 
   const paint = (c) => {
     const bits = [];
@@ -879,12 +899,15 @@ function renderNewTask(sheet) {
   $("#f-project").addEventListener("change", () => {
     const proj = state.projects.find((p) => p.id === +$("#f-project").value);
     agentBox.dataset.value = proj?.default_agent || "claude";
+    if (proj?.default_permission_mode) $("#f-perm").value = proj.default_permission_mode;
     syncAgent();
     syncCapability();
   });
   syncCapability();
   const initialProj = state.projects.find((p) => p.id === +$("#f-project").value);
   agentBox.dataset.value = initialProj?.default_agent || "claude";
+  if (initialProj?.default_permission_mode)
+    $("#f-perm").value = initialProj.default_permission_mode;
   syncAgent();
   api("/templates").then((tpls) => {
     const sel = $("#f-template");
