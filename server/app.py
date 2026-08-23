@@ -61,7 +61,22 @@ def create_app() -> FastAPI:
 
     @app.get("/")
     def index():
-        return FileResponse(config.WEB_DIR / "index.html")
+        return FileResponse(config.WEB_DIR / "index.html",
+                            headers={"Cache-Control": "no-cache"})
 
-    app.mount("/", StaticFiles(directory=config.WEB_DIR), name="web")
+    class FreshStatics(StaticFiles):
+        """Serve the app shell with must-revalidate semantics.
+
+        This is a self-hosted app that updates in place: with the default
+        heuristic caching a phone keeps running the previous app.js and
+        style.css after a deploy, which looks exactly like the change not
+        working. 'no-cache' still allows a 304 against the ETag, so the cost is
+        one conditional request per asset, not a re-download.
+        """
+        def file_response(self, *args, **kwargs):
+            resp = super().file_response(*args, **kwargs)
+            resp.headers.setdefault("Cache-Control", "no-cache")
+            return resp
+
+    app.mount("/", FreshStatics(directory=config.WEB_DIR), name="web")
     return app
