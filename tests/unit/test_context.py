@@ -112,13 +112,27 @@ def test_project_slug_matches_claude_layout():
     assert project_slug("/tmp/slug_test.d/a_b") == "-tmp-slug-test-d-a-b"
 
 
-def test_memory_link_command_targets_only_the_link_path():
+def test_memory_link_command_keys_on_the_git_main_worktree():
+    """Memory follows the main worktree, not cwd — the cwd slug is never linked.
+
+    Verified against the CLI: a session started inside a linked worktree reports
+    the PARENT repo's slug as its memory dir, so linking the worktree slug (what
+    this used to do) produced a symlink nothing ever opened.
+    """
     cmd = memory_link_command("/wt/task1-a1", "/store/memory")
-    assert '"$HOME/.claude/projects/-wt-task1-a1/memory"' in cmd
+    assert "--git-common-dir" in cmd, "main worktree must be resolved, not guessed"
+    assert "-wt-task1-a1/memory" not in cmd, "cwd slug is the wrong key"
     assert "ln -sfn /store/memory" in cmd
-    # the only thing it may delete is the link path itself, and only if not a symlink
+    assert "$HOME/.claude/projects/$slug" in cmd
+
+
+def test_memory_link_command_never_destroys_real_memories():
+    """The link path can be a repo the operator also uses interactively."""
+    cmd = memory_link_command("/wt/task1-a1", "/store/memory")
+    assert "refusing to replace non-empty memory dir" in cmd
+    # deletion is reachable only through the emptiness check
     assert cmd.count("rm -rf") == 1
-    assert "[ -L" in cmd
+    assert 'ls -A "$link"' in cmd
 
 
 def test_memory_link_command_quotes_hostile_paths():

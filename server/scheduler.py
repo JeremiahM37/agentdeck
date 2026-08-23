@@ -442,6 +442,26 @@ class Scheduler:
         _set_task_status(att["task_id"], "cancelled")
 
 
+# Target kinds whose agent process runs on the control plane host, as the control
+# plane user — the only ones that inherit that user's MCP servers. 'sandbox' does
+# host-side pct work locally but runs the agent inside the container, so it is out.
+HOST_LOCAL_KINDS = ("local", "mock")
+
+
+def _effective_mcp_servers(project: dict, target: dict, mcp: dict) -> list[str]:
+    """Server names this attempt can actually reach, so parity can grant them.
+
+    A local agent runs as the control plane user and inherits that user's MCP
+    servers; a remote one only ever has what the project ships in `mcp`. Granting
+    a name the agent does not have is harmless, but claiming it would be a lie —
+    so remote targets get exactly the project's own servers and nothing more.
+    """
+    names = list((mcp.get("mcpServers") or mcp).keys()) if mcp else []
+    if target["kind"] in HOST_LOCAL_KINDS and not project.get("strict_mcp"):
+        names += claude_runner.host_mcp_servers()
+    return names
+
+
 async def _stage_runtime(ex: Executor, workdir: str, att: dict, ctx: dict) -> dict:
     """Write everything the agent reads at startup; return agent launch kwargs.
 
@@ -482,18 +502,6 @@ async def _stage_runtime(ex: Executor, workdir: str, att: dict, ctx: dict) -> di
     await ex.write_file(f"{rt}/env",
                         f"ADK_URL={config.BASE_URL}\nADK_TOKEN={att['token']}\n".encode())
 
-    # settings.json is written for EVERY permission mode, not just the gated one:
-    # headless has no prompt, so a tool the rules don't grant is denied outright
-    # and the operator never learns why. Rules are how acceptEdits gets Bash.
-    gated = task["permission_mode"] == "default"
-    if gated:
-        await ex.write_file(f"{rt}/hook.py", (config.HOOKS_DIR / "hook.py").read_bytes())
-    settings = claude_runner.build_settings(
-        config.BASE_URL, att["token"], gated=gated,
-        permissions=db.unj(project.get("permissions_json"), {}),
-        matcher=project.get("gate_matcher") or claude_runner.DEFAULT_GATE_MATCHER)
-    await ex.write_file(f"{rt}/settings.json", db.j(settings).encode())
-
     # per-project MCP: the host user's config is absent on ssh/pct/sandbox targets,
     # so without this a remote agent has strictly fewer tools than a local one
     mcp = db.unj(project.get("mcp_json"), {})
@@ -502,6 +510,22 @@ async def _stage_runtime(ex: Executor, workdir: str, att: dict, ctx: dict) -> di
         payload = mcp if "mcpServers" in mcp else {"mcpServers": mcp}
         await ex.write_file(f"{rt}/mcp.json", db.j(payload).encode())
         mcp_rel = claude_runner.MCP_REL
+
+    # settings.json is written for EVERY permission mode, not just the gated one:
+    # headless has no prompt, so a tool the rules don't grant is denied outright
+    # and the operator never learns why. Rules are how acceptEdits gets Bash.
+    gated = task["permission_mode"] == "default"
+    if gated:
+        await ex.write_file(f"{rt}/hook.py", (config.HOOKS_DIR / "hook.py").read_bytes())
+    memory_dir = target.get("memory_dir") or ""
+    settings = claude_runner.build_settings(
+        config.BASE_URL, att["token"], gated=gated,
+        permissions=db.unj(project.get("permissions_json"), {}),
+        matcher=project.get("gate_matcher") or claude_runner.DEFAULT_GATE_MATCHER,
+        profile=project.get("capability_profile") or "restricted",
+        mcp_servers=_effective_mcp_servers(project, target, mcp),
+        memory_dir=memory_dir if (task["agent"] or "claude") == "claude" else "")
+    await ex.write_file(f"{rt}/settings.json", db.j(settings).encode())
 
     # reused worktrees (follow-ups, reviewer gate) carry the PREVIOUS attempt's
     # runtime files — a stale exit_code would finalize this attempt instantly

@@ -117,6 +117,9 @@ class ProjectIn(BaseModel):
     permissions: dict = {}             # allow/deny/ask rules, e.g. {"allow": ["Bash(pytest*)"]}
     gate_matcher: str = ""             # PreToolUse matcher in gated mode ('' = all tools)
     default_agent: str = Field("claude", pattern="^(claude|codex|gemini)$")
+    # 'parity' grants the tools, MCP servers and memory dir a terminal session has;
+    # 'restricted' keeps the old behaviour where only explicit rules are granted
+    capability_profile: str = Field("restricted", pattern="^(restricted|parity)$")
 
 
 def _project_columns(data: dict) -> dict:
@@ -167,6 +170,7 @@ class ProjectPatch(BaseModel):
     permissions: dict | None = None
     gate_matcher: str | None = None
     default_agent: str | None = Field(None, pattern="^(claude|codex|gemini)$")
+    capability_profile: str | None = Field(None, pattern="^(restricted|parity)$")
 
 
 @router.patch("/projects/{project_id}")
@@ -178,6 +182,44 @@ def patch_project(project_id: int, p: ProjectPatch):
     if data:
         db.update("projects", project_id, data)
     return db.one("SELECT * FROM projects WHERE id=?", (project_id,))
+
+
+@router.get("/projects/{project_id}/capability")
+def project_capability(project_id: int):
+    """What this project's agents can ACTUALLY do — resolved, not requested.
+
+    The UI states facts with this instead of inferring them from config: which
+    MCP servers are reachable depends on the target kind, and a memory store is
+    only usable if the sandbox was also opened for it.
+    """
+    proj = db.one("SELECT * FROM projects WHERE id=?", (project_id,))
+    if not proj:
+        raise HTTPException(404, "no such project")
+    target = db.one("SELECT * FROM targets WHERE id=?", (proj["target_id"],))
+    from ..scheduler import _effective_mcp_servers
+    mcp = db.unj(proj.get("mcp_json"), {})
+    servers = _effective_mcp_servers(proj, target, mcp)
+    settings = claude_runner.build_settings(
+        permissions=db.unj(proj.get("permissions_json"), {}),
+        profile=proj.get("capability_profile") or "restricted",
+        mcp_servers=servers, memory_dir=target.get("memory_dir") or "")
+    perms = settings.get("permissions", {})
+    notes = []
+    if not (proj.get("capability_profile") or "restricted") == "parity":
+        notes.append("restricted: only rules you set explicitly are granted — "
+                     "headless denies everything else without asking")
+    if target["kind"] not in ("local", "mock") and not mcp:
+        notes.append(f"{target['kind']} target has no MCP servers; the host's own "
+                     "are not portable (local binaries, secrets in env)")
+    if not target.get("memory_dir"):
+        notes.append("no memory store on this target — agents start memory-blind")
+    return {"profile": proj.get("capability_profile") or "restricted",
+            "target_kind": target["kind"], "mcp_servers": servers,
+            "memory_dir": target.get("memory_dir") or "",
+            "allow": perms.get("allow", []),
+            "deny": perms.get("deny", []),
+            "additional_directories": perms.get("additionalDirectories", []),
+            "notes": notes}
 
 
 @router.get("/projects/{project_id}/notes")

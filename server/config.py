@@ -42,6 +42,12 @@ VAPID_CLAIMS_EMAIL = os.environ.get("AGENTDECK_VAPID_EMAIL", "admin@example.com"
 WEB_DIR = ROOT / "web"
 HOOKS_DIR = ROOT / "hooks"
 
+# The control plane user's own Claude Code config. Read only to learn which MCP
+# servers a LOCAL-target agent already inherits, so the parity profile can grant
+# permission to call them. Never copied anywhere — it holds live credentials.
+HOST_CLAUDE_CONFIG = os.environ.get(
+    "AGENTDECK_HOST_CLAUDE_CONFIG", str(Path.home() / ".claude.json"))
+
 CLAUDE_BIN = os.environ.get("AGENTDECK_CLAUDE_BIN", "claude")
 # Agent binaries often live in ~/.local/bin, which a systemd unit's PATH does not
 # include — set these when a probe reports an agent as missing that you know is

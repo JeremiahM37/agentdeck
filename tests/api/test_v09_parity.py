@@ -179,7 +179,9 @@ def test_memory_dir_links_the_attempt_session(client):
 
     link = next(c for c in _mock().cmd_log if "ln -sfn" in c)
     assert "/store/memory" in link
-    assert ".claude/projects/" in link and link.endswith('/memory"')
+    # keyed to the git main worktree, resolved on the target — not the cwd slug
+    assert "--git-common-dir" in link
+    assert '$HOME/.claude/projects/$slug' in link
 
 
 def test_no_memory_dir_touches_nothing(seeded):
@@ -215,3 +217,67 @@ def test_sandbox_dispatch_gets_the_same_context_and_memory(client, tmp_path,
     assert _staged("/.agentdeck/context/CLAUDE.md") == b"sandbox needs this too"
     settings = db.unj(_staged("/.agentdeck/settings.json").decode())
     assert settings["permissions"]["allow"] == ["Bash(ls*)"]
+
+
+# ---- capability parity -------------------------------------------------------
+# A dispatched agent used to be handed a memory store it could not read and MCP
+# servers it could not call. Both failed silently: the run just came back worse.
+
+def test_memory_dir_is_reachable_not_just_linked(client):
+    """Linking a store outside the worktree is useless unless the sandbox allows it."""
+    tid = client.get("/api/targets").json()[0]["id"]
+    client.patch(f"/api/targets/{tid}", json={"memory_dir": "/store/memory"})
+    p = client.post("/api/projects", json={"name": "memreach", "target_id": tid,
+                                           "repo_path": "/mock/memreach"}).json()
+
+    _run_task(client, p["id"])
+
+    settings = db.unj(_staged("/.agentdeck/settings.json").decode(), {})
+    assert "/store/memory" in settings["permissions"]["additionalDirectories"]
+
+
+def test_parity_profile_grants_bash_and_host_mcp_servers(client, monkeypatch):
+    from server import claude_runner
+    monkeypatch.setattr(claude_runner, "host_mcp_servers", lambda: ["grimoire", "homelab"])
+    tid = client.get("/api/targets").json()[0]["id"]
+    p = client.post("/api/projects", json={"name": "par", "target_id": tid,
+                                           "repo_path": "/mock/par",
+                                           "capability_profile": "parity"}).json()
+
+    _run_task(client, p["id"])
+
+    allow = db.unj(_staged("/.agentdeck/settings.json").decode(), {})["permissions"]["allow"]
+    # bare Bash, not Bash(...): a prefix rule makes the CLI split compound
+    # commands and refuse the parts it cannot match
+    assert "Bash" in allow
+    assert "mcp__grimoire" in allow and "mcp__homelab" in allow
+
+
+def test_restricted_profile_stays_empty(client, monkeypatch):
+    """The default must not silently widen an existing install's permissions."""
+    from server import claude_runner
+    monkeypatch.setattr(claude_runner, "host_mcp_servers", lambda: ["grimoire"])
+    seeded_tid = client.get("/api/targets").json()[0]["id"]
+    p = client.post("/api/projects", json={"name": "restr", "target_id": seeded_tid,
+                                           "repo_path": "/mock/restr"}).json()
+
+    _run_task(client, p["id"])
+
+    assert db.unj(_staged("/.agentdeck/settings.json").decode(), {}) == {}
+
+
+def test_explicit_deny_beats_the_profile(client, monkeypatch):
+    from server import claude_runner
+    monkeypatch.setattr(claude_runner, "host_mcp_servers", lambda: ["grimoire"])
+    tid = client.get("/api/targets").json()[0]["id"]
+    p = client.post("/api/projects", json={
+        "name": "deny", "target_id": tid, "repo_path": "/mock/deny",
+        "capability_profile": "parity",
+        "permissions": {"deny": ["Bash"]}}).json()
+
+    _run_task(client, p["id"])
+
+    perms = db.unj(_staged("/.agentdeck/settings.json").decode(), {})["permissions"]
+    assert "Bash" not in perms["allow"], "profile re-granted something the operator denied"
+    assert "Bash" in perms["deny"]
+

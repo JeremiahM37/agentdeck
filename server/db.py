@@ -117,6 +117,7 @@ def init(path: Path | None = None) -> None:
         "ALTER TABLE projects ADD COLUMN permissions_json TEXT DEFAULT '{}'",
         "ALTER TABLE projects ADD COLUMN gate_matcher TEXT DEFAULT ''",
         "ALTER TABLE projects ADD COLUMN default_agent TEXT DEFAULT 'claude'",
+        "ALTER TABLE projects ADD COLUMN capability_profile TEXT DEFAULT 'restricted'",
     ):
         try:
             _conn.execute(mig)

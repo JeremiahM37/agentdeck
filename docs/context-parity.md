@@ -105,10 +105,24 @@ curl -X PATCH .../api/targets/1 \
 ```
 
 At dispatch, agentdeck symlinks that attempt's session memory directory at your
-store.
+store, and adds the store to `additionalDirectories` so the agent may actually
+read it — the filesystem sandbox refuses paths outside the worktree, so without
+that the store is linked and then unreadable.
+
+Memory is keyed to the git **main worktree**, not to cwd. Sessions are keyed by
+cwd, so the two diverge inside a worktree: a session running in
+`repo/.agentdeck-worktrees/task9-a1` writes its transcript under that slug but
+reads memory from `repo`'s. Verified by running the CLI inside a linked worktree
+under `/tmp` and asking it for its own memory path. agentdeck resolves the main
+worktree on the target (`git rev-parse --git-common-dir`) rather than guessing,
+so worktrees, plain clones and sandbox checkouts all agree.
+
+Because that path can be a repo you also use interactively, a **non-empty** real
+directory at the link location is left alone and the attempt logs a warning
+rather than replacing it.
 
 > **Caveat.** There is no CLI flag for this, so it works by mirroring Claude
-> Code's internal `~/.claude/projects/<slugified-cwd>/memory` layout. That is not
+> Code's internal `~/.claude/projects/<slug>/memory` layout. That is not
 > a public API and could change in a future release — which is why it is off
 > unless you set it. A failed link logs a warning and never fails the run.
 >
@@ -116,3 +130,49 @@ store.
 > similar job through a supported path: agents call
 > `python3 .agentdeck/adk.py add-note "..."` and the notes are prepended to every
 > later prompt on that project.
+
+
+## Capability profiles — the one setting that does all of it
+
+Everything above is a dial. `capability_profile` is the preset, because the
+defaults are not neutral: **headless `claude -p` has no prompt, so a tool nothing
+granted is denied silently.** An agent dispatched with no rules cannot pipe a
+shell command, cannot read a path outside its worktree, and cannot call a single
+MCP tool — it just returns worse work and says nothing about why.
+
+```bash
+curl -X PATCH .../api/projects/3 -d '{"capability_profile":"parity"}'
+```
+
+| profile | what an agent gets |
+|---|---|
+| `restricted` (default) | only the rules you write yourself — unchanged behaviour |
+| `parity` | the tools a terminal session has, the MCP servers this target can reach, and the shared memory store |
+
+`parity` grants `Bash` bare rather than as prefix rules. A rule like
+`Bash(git*)` makes Claude Code split compound commands and refuse the parts it
+cannot match, so `ls | head` dies with *"This Bash command contains multiple
+operations"* — which reads as the agent being broken rather than unpermitted.
+
+Your explicit `permissions` still layer on top, and an explicit `deny` always
+beats the profile, so a profile can never quietly re-grant something you refused.
+
+### What parity does NOT do
+
+It never copies your MCP server definitions to another machine. Those point at
+local binaries and commonly carry live credentials in their `env` blocks, so on
+`ssh`/`pct`/`sandbox` targets parity grants exactly the servers the project
+ships in its own `mcp` config and nothing more. A local-target agent runs as the
+control plane user and already inherits that user's servers — parity only gives
+it permission to call them.
+
+### Seeing what an agent actually has
+
+```bash
+curl .../api/projects/3/capability
+```
+
+Returns the resolved view — profile, reachable MCP servers, memory store,
+granted tools — plus `notes` naming each gap it found, so a remote target with
+no MCP says so instead of looking configured. The Targets tab renders the same
+thing per project with a profile picker.
