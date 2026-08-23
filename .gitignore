@@ -19,3 +19,6 @@ smoke-repo/
 # secrets — config is via environment only
 *.env
 !deploy/*.example.env
+
+# screenshots written by the `verify` suite
+.verify-artifacts/
