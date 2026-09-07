@@ -94,7 +94,7 @@ func TestTerminalAttachEndpoint(t *testing.T) {
 	// proving a terminal emulator works
 	h.App.Terminals.LookPath = func(string) (string, error) { return "/usr/bin/ttyd", nil }
 	var gotArgv []string
-	h.App.Terminals.Spawn = func(port int, argv []string) (*exec.Cmd, error) {
+	h.App.Terminals.Spawn = func(port int, basePath string, argv []string) (*exec.Cmd, error) {
 		gotArgv = argv
 		return exec.Command("true"), nil
 	}

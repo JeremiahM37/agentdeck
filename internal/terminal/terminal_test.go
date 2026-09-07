@@ -19,7 +19,7 @@ func fakeManager(t *testing.T) (*Manager, func() []int) {
 	m.LookPath = func(string) (string, error) { return "/usr/bin/ttyd", nil }
 	var mu sync.Mutex
 	var ports []int
-	m.Spawn = func(port int, argv []string) (*exec.Cmd, error) {
+	m.Spawn = func(port int, basePath string, argv []string) (*exec.Cmd, error) {
 		mu.Lock()
 		ports = append(ports, port)
 		mu.Unlock()
@@ -258,5 +258,51 @@ func TestAttachFailsClearlyWithoutTTYD(t *testing.T) {
 	_, err := m.Attach(context.Background(), Attachment{Key: "attempt:1"}, target("local"))
 	if err == nil || !strings.Contains(err.Error(), "ttyd is not installed") {
 		t.Errorf("expected a clear missing-ttyd error, got %v", err)
+	}
+}
+
+// A shell is the same machinery as an agent attach, pointed at a directory. It
+// has to be a tmux session too, or closing the tab loses whatever you were
+// halfway through.
+func TestShellAttachOpensAPersistentSessionInTheRepo(t *testing.T) {
+	att := Attachment{Key: "project:12", TmuxSession: "adk-sh12", Workdir: "/srv/code"}
+	for name, tc := range map[string]struct {
+		target *store.Target
+		want   string
+	}{
+		"local": {&store.Target{Kind: "local"},
+			"tmux new-session -A -s adk-sh12 -c /srv/code"},
+		"pct": {&store.Target{Kind: "pct", Host: "104"},
+			"sudo pct exec 104 -- tmux new-session -A -s adk-sh12 -c /srv/code"},
+		"ssh": {&store.Target{Kind: "ssh", Host: "192.0.2.14", User: "claude"},
+			"ssh -tt -o StrictHostKeyChecking=accept-new claude@192.0.2.14 " +
+				"tmux new-session -A -s adk-sh12 -c /srv/code"},
+	} {
+		got, err := AttachArgv(att, tc.target)
+		if err != nil {
+			t.Errorf("%s: %v", name, err)
+			continue
+		}
+		if strings.Join(got, " ") != tc.want {
+			t.Errorf("%s:\n got %v\nwant %s", name, got, tc.want)
+		}
+	}
+	// -A is what makes it the SAME shell when you come back
+	got, _ := AttachArgv(att, &store.Target{Kind: "local"})
+	if !strings.Contains(strings.Join(got, " "), "new-session -A") {
+		t.Error("reopening a shell must return to the existing one, not start over")
+	}
+}
+
+// An agent attach must not accidentally become a shell, or reopening a session
+// would create a new tmux session beside the agent instead of joining it.
+func TestAnAgentAttachIsStillAnAttach(t *testing.T) {
+	att := Attachment{Key: "session:3", TmuxSession: "adk-s3"}
+	if att.IsShell() {
+		t.Fatal("an attachment with no workdir is not a shell")
+	}
+	got, _ := AttachArgv(att, &store.Target{Kind: "local"})
+	if strings.Join(got, " ") != "tmux attach -t adk-s3" {
+		t.Errorf("got %v", got)
 	}
 }

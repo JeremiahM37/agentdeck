@@ -1194,6 +1194,15 @@ function projectsCard() {
         ${u.open_tasks ? '<span class="chip warn">active</span>' : ""}`;
       $(".pjname", row).textContent = p.name;
       $(".pjpath", row).textContent = p.repo_path || "";
+      if (!selecting) {
+        const sh = document.createElement("button");
+        sh.className = "b";
+        sh.textContent = "⌨";
+        sh.title = `Open a shell in ${p.repo_path || "this project"}`;
+        sh.style.cssText = "flex:0 0 auto;padding:5px 9px";
+        sh.onclick = (ev) => { ev.stopPropagation(); openProjectShell(p); };
+        row.appendChild(sh);
+      }
       if (selecting) {
         const cb = $(".pjbox", row);
         cb.checked = chosen.has(p.id);
@@ -1285,9 +1294,24 @@ async function deleteProjects(ids, usage, done) {
   else toast(`Deleted ${ok} project${ok === 1 ? "" : "s"}`);
 }
 
+// A way into the machine where the code actually lives — read a file, fix one
+// line, check what a command prints — without asking an agent to do it.
+async function openProjectShell(p) {
+  try {
+    const r = await api(`/projects/${p.id}/terminal`, { method: "POST" });
+    window.open(r.url, "_blank");
+  } catch (e) { toast(e.message, true); }
+}
+
 // the single-project editor, reached by tapping a row
 function openProjectEditor(p) {
   const card = projectCard(p);
+  const shell = document.createElement("button");
+  shell.className = "b";
+  shell.textContent = "⌨ Shell here";
+  shell.onclick = () => openProjectShell(p);
+  ($(".btnrow", card) || card).appendChild(shell);
+
   const del = document.createElement("button");
   del.className = "b no";
   del.textContent = "Delete project";

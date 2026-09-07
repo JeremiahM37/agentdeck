@@ -11,6 +11,7 @@ import (
 	"net"
 	"os/exec"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -35,33 +36,44 @@ const (
 //     desktop, and ttyd's own "reconnect" had nothing to reconnect to. A tmux
 //     session is multi-client by design — that is most of the point of it — so
 //     the terminal in front of it has to be too.
-func TTYDArgs(port int, argv []string) []string {
+func TTYDArgs(port int, basePath string, argv []string) []string {
 	return append([]string{
 		"-p", strconv.Itoa(port), "-i", "lo", "-W",
-		"-b", BasePath(port)}, argv...)
+		"-b", basePath}, argv...)
 }
 
 // BasePath is where a terminal is mounted on the control plane's own origin.
+//
 // Same-origin matters: the browser may have reached agentdeck through nginx, a
 // tailnet name or an IP, and only the control plane knows where ttyd actually
 // runs. Building the URL from the browser's hostname pointed the terminal at
 // whichever machine served the page — the reverse proxy, usually, which runs no
 // ttyd at all and simply refused the connection.
-func BasePath(port int) string { return "/term/" + strconv.Itoa(port) }
+//
+// It names the ATTACHMENT, not the port. A port is where a terminal happens to
+// be right now: it changes when the process is retired to free the range, and
+// every one of them dies when the control plane restarts. A page holding a port
+// URL is then pointed at nothing forever — which is what made ttyd's own
+// "reconnect" loop without ever succeeding. Named by attachment, the URL stays
+// valid and the terminal behind it is respawned on demand.
+func (a Attachment) BasePath() string {
+	kind, id, ok := strings.Cut(a.Key, ":")
+	if !ok {
+		return "/term/" + a.Key
+	}
+	return "/term/" + kind + "/" + id
+}
 
-// Owns reports whether a port is one this manager actually spawned. The proxy
-// asks before forwarding, so /term/<port> cannot be pointed at an arbitrary
-// local service.
-func (m *Manager) Owns(port int) bool {
+// PortFor returns the live terminal for an attachment, if there is one.
+func (m *Manager) PortFor(key string) (int, bool) {
 	m.reap()
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	for _, s := range m.procs {
-		if s.port == port && s.cmd != nil {
-			return true
-		}
+	s, ok := m.procs[key]
+	if !ok || s.cmd == nil {
+		return 0, false
 	}
-	return false
+	return s.port, true
 }
 
 // ErrNoPorts means every terminal port in the range is taken.
@@ -78,7 +90,15 @@ type Attachment struct {
 	// SandboxVMID is set when the tmux session lives inside an ephemeral
 	// container rather than on the target itself.
 	SandboxVMID string
+	// Workdir turns this into a plain shell in a directory rather than an attach
+	// to an existing agent session — a way into the machine where the code
+	// actually lives, to read something or make a change by hand. It is still a
+	// tmux session, so it survives a closed tab and comes back where you left it.
+	Workdir string
 }
+
+// IsShell reports whether this attachment is a shell rather than an agent.
+func (a Attachment) IsShell() bool { return a.Workdir != "" }
 
 // Manager tracks one ttyd per attachment.
 type Manager struct {
@@ -86,7 +106,7 @@ type Manager struct {
 	procs map[string]*session
 
 	// Spawn is the process launcher. Tests replace it; production shells out.
-	Spawn func(port int, argv []string) (*exec.Cmd, error)
+	Spawn func(port int, basePath string, argv []string) (*exec.Cmd, error)
 	// LookPath reports whether ttyd is installed. Tests override it.
 	LookPath func(string) (string, error)
 }
@@ -102,8 +122,8 @@ func NewManager() *Manager {
 	return &Manager{
 		procs:    map[string]*session{},
 		LookPath: exec.LookPath,
-		Spawn: func(port int, argv []string) (*exec.Cmd, error) {
-			cmd := exec.Command("ttyd", TTYDArgs(port, argv)...)
+		Spawn: func(port int, basePath string, argv []string) (*exec.Cmd, error) {
+			cmd := exec.Command("ttyd", TTYDArgs(port, basePath, argv)...)
 			if err := cmd.Start(); err != nil {
 				return nil, err
 			}
@@ -119,14 +139,21 @@ func NewManager() *Manager {
 // hand the operator a shell on the wrong machine.
 func AttachArgv(a Attachment, target *store.Target) ([]string, error) {
 	sess := a.TmuxSession
+	// `new-session -A` attaches if it is already there and creates it otherwise,
+	// so reopening a shell returns to the same one with its history and whatever
+	// was half-typed, rather than starting over in a fresh directory.
+	inner := []string{"tmux", "attach", "-t", sess}
+	if a.IsShell() {
+		inner = []string{"tmux", "new-session", "-A", "-s", sess, "-c", a.Workdir}
+	}
 	switch {
 	case target.Kind == "sandbox":
 		if a.SandboxVMID == "" {
 			return nil, errors.New("sandbox attachment has no container id — its sandbox is gone")
 		}
-		return []string{"sudo", "pct", "exec", a.SandboxVMID, "--", "tmux", "attach", "-t", sess}, nil
+		return append([]string{"sudo", "pct", "exec", a.SandboxVMID, "--"}, inner...), nil
 	case target.Kind == "pct":
-		return []string{"sudo", "pct", "exec", target.Host, "--", "tmux", "attach", "-t", sess}, nil
+		return append([]string{"sudo", "pct", "exec", target.Host, "--"}, inner...), nil
 	case target.Kind == "ssh":
 		argv := []string{"ssh", "-tt", "-o", "StrictHostKeyChecking=accept-new"}
 		if target.KeyPath != "" {
@@ -136,9 +163,9 @@ func AttachArgv(a Attachment, target *store.Target) ([]string, error) {
 		if user == "" {
 			user = "root"
 		}
-		return append(argv, user+"@"+target.Host, "tmux", "attach", "-t", sess), nil
+		return append(append(argv, user+"@"+target.Host), inner...), nil
 	default:
-		return []string{"tmux", "attach", "-t", sess}, nil
+		return inner, nil
 	}
 }
 
@@ -171,7 +198,7 @@ func (m *Manager) Attach(ctx context.Context, a Attachment, target *store.Target
 	m.procs[a.Key] = &session{port: port, started: time.Now()} // reserved, not yet running
 	m.mu.Unlock()
 
-	cmd, err := m.Spawn(port, argv)
+	cmd, err := m.Spawn(port, a.BasePath(), argv)
 	if err != nil {
 		m.release(a.Key)
 		return 0, fmt.Errorf("ttyd failed to start: %w", err)

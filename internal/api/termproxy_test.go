@@ -12,7 +12,9 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -25,7 +27,7 @@ import (
 func TestAttachReturnsASameOriginURL(t *testing.T) {
 	h := newHarness(t)
 	h.App.Terminals.LookPath = func(string) (string, error) { return "/usr/bin/ttyd", nil }
-	h.App.Terminals.Spawn = func(int, []string) (*exec.Cmd, error) {
+	h.App.Terminals.Spawn = func(int, string, []string) (*exec.Cmd, error) {
 		cmd := exec.Command("sleep", "10")
 		return cmd, cmd.Start()
 	}
@@ -49,16 +51,18 @@ func TestAttachReturnsASameOriginURL(t *testing.T) {
 		if out.URL == "" {
 			t.Fatal("no url was returned; the client would have to guess the host")
 		}
-		if !strings.HasPrefix(out.URL, "/term/") {
-			t.Errorf("the url must be relative to this origin, got %q", out.URL)
+		if !strings.HasPrefix(out.URL, "/term/attempt/") {
+			t.Errorf("the url must name the attachment on this origin, got %q", out.URL)
 		}
 		for _, bad := range []string{"http://", "https://", "localhost", "127.0.0.1"} {
 			if strings.Contains(out.URL, bad) {
 				t.Errorf("url names a host (%q) — that is the bug: %q", bad, out.URL)
 			}
 		}
-		if out.URL != terminal.BasePath(out.Port)+"/" {
-			t.Errorf("url %q does not match port %d", out.URL, out.Port)
+		// naming the port is the bug: a port is where the terminal happens to be
+		// now, and it changes on eviction and on every restart
+		if strings.Contains(out.URL, fmt.Sprint(out.Port)) {
+			t.Errorf("the url names the port (%d), so it goes stale: %q", out.Port, out.URL)
 		}
 	}
 }
@@ -88,12 +92,14 @@ func TestTerminalProxyOnlyServesPortsItOwns(t *testing.T) {
 // the base path it is mounted under or the page loads blank — and a ttyd with
 // no credential must never listen on the network.
 func TestTTYDArgsMountUnderTheBasePathOnLoopback(t *testing.T) {
-	got := strings.Join(terminal.TTYDArgs(7712, []string{"tmux", "attach", "-t", "adk-1"}), " ")
+	att := terminal.Attachment{Key: "session:7", TmuxSession: "adk-s7"}
+	got := strings.Join(terminal.TTYDArgs(7712, att.BasePath(),
+		[]string{"tmux", "attach", "-t", "adk-1"}), " ")
 	for _, want := range []string{
-		"-p 7712",       // the port it was given
-		"-i lo",         // an unauthenticated shell stays off the network
-		"-b /term/7712", // or its assets 404 under the proxy
-		"-W",            // the operator can type
+		"-p 7712",            // the port it was given
+		"-i lo",              // an unauthenticated shell stays off the network
+		"-b /term/session/7", // the attachment, not the port
+		"-W",                 // the operator can type
 		"tmux attach -t adk-1",
 	} {
 		if !strings.Contains(got, want) {
@@ -101,7 +107,7 @@ func TestTTYDArgsMountUnderTheBasePathOnLoopback(t *testing.T) {
 		}
 	}
 	// the base path must match what the proxy actually serves
-	if !strings.Contains(got, "-b "+terminal.BasePath(7712)) {
+	if !strings.Contains(got, "-b "+att.BasePath()) {
 		t.Errorf("base path disagrees with the proxy's route: %s", got)
 	}
 	// --once accepts a single client and exits when it disconnects, which made a
@@ -283,4 +289,183 @@ func dialTerminalWS(rawURL string) (net.Conn, error) {
 	}
 	conn.SetReadDeadline(time.Time{})
 	return conn, nil
+}
+
+// This is the "reconnect does nothing" loop. A terminal dies for ordinary
+// reasons — the control plane restarts, or the port range fills and the oldest
+// is retired — and a tab holding a URL that named the port was pointed at
+// nothing for good. ttyd's own reconnect retried it forever and could never
+// succeed, so the only way out was closing the tab and attaching again.
+func TestAStaleTerminalTabHealsItself(t *testing.T) {
+	if _, err := exec.LookPath("ttyd"); err != nil {
+		t.Skip("ttyd is not installed")
+	}
+	if _, err := exec.LookPath("tmux"); err != nil {
+		t.Skip("tmux is not installed")
+	}
+	r := newInteractiveRig(t)
+	sess := r.launchSession(map[string]any{"agent": "claude", "scratch": true, "name": "stale tab"})
+	r.waitForLog(sess.Workdir, "argv:", 10*time.Second)
+	t.Cleanup(func() { r.app.Terminals.Shutdown() })
+
+	code, body := r.do("POST", fmt.Sprintf("/api/sessions/%d/terminal", sess.ID), map[string]any{})
+	if code != 200 {
+		t.Fatalf("attach: %d %s", code, body)
+	}
+	var out struct {
+		Port int    `json:"port"`
+		URL  string `json:"url"`
+	}
+	json.Unmarshal(body, &out)
+
+	page := func() int {
+		resp, err := http.Get(r.url + out.URL)
+		if err != nil {
+			return 0
+		}
+		defer resp.Body.Close()
+		return resp.StatusCode
+	}
+	deadline := time.Now().Add(10 * time.Second)
+	for page() != 200 && time.Now().Before(deadline) {
+		time.Sleep(100 * time.Millisecond)
+	}
+	if page() != 200 {
+		t.Fatal("the terminal never came up")
+	}
+
+	// every terminal dies when the control plane restarts — this is that
+	r.app.Terminals.Shutdown()
+
+	// the tab is still open and retries the same URL, which must now work
+	if got := page(); got != 200 {
+		t.Fatalf("a reconnect after the terminal died returned %d — this is the "+
+			"loop where hitting enter does nothing", got)
+	}
+	// and it is a genuinely new terminal, on the same tmux session
+	code, body = r.do("POST", fmt.Sprintf("/api/sessions/%d/terminal", sess.ID), map[string]any{})
+	var again struct {
+		URL string `json:"url"`
+	}
+	json.Unmarshal(body, &again)
+	if again.URL != out.URL {
+		t.Errorf("the URL changed across a restart (%q -> %q); an open tab would "+
+			"still be pointing at the old one", out.URL, again.URL)
+	}
+}
+
+// A shell into the project is for the times you just want to look at the thing
+// yourself. It has to be a real shell in the real directory — this writes a file
+// through it and checks the file is there.
+func TestAProjectShellIsARealShellInTheRepo(t *testing.T) {
+	if _, err := exec.LookPath("ttyd"); err != nil {
+		t.Skip("ttyd is not installed")
+	}
+	if _, err := exec.LookPath("tmux"); err != nil {
+		t.Skip("tmux is not installed")
+	}
+	r := newRealRig(t)
+	t.Cleanup(func() {
+		r.app.Terminals.Shutdown()
+		exec.Command("tmux", "kill-session", "-t", fmt.Sprintf("adk-sh%d", r.project)).Run()
+	})
+
+	code, body := r.do("POST", fmt.Sprintf("/api/projects/%d/terminal", r.project), map[string]any{})
+	if code != 200 {
+		t.Fatalf("opening a shell: %d %s", code, body)
+	}
+	var out struct {
+		URL  string `json:"url"`
+		Tmux string `json:"tmux_session"`
+	}
+	json.Unmarshal(body, &out)
+	if out.URL != fmt.Sprintf("/term/project/%d/", r.project) {
+		t.Errorf("url: %q", out.URL)
+	}
+
+	// the page is served on this origin, like every other terminal
+	deadline := time.Now().Add(10 * time.Second)
+	var status int
+	for time.Now().Before(deadline) {
+		if resp, err := http.Get(r.url + out.URL); err == nil {
+			status = resp.StatusCode
+			resp.Body.Close()
+			if status == 200 {
+				break
+			}
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	if status != 200 {
+		t.Fatalf("the shell page returned %d", status)
+	}
+
+	// ttyd starts the command only after the client's opening frame, not when
+	// the page loads — so the shell begins the moment you actually open the tab
+	client, err := dialTerminalWS(r.url + out.URL + "ws")
+	if err != nil {
+		t.Fatalf("could not open the shell: %v", err)
+	}
+	defer client.Close()
+	if err := sendWSText(client, `{"AuthToken":"","columns":120,"rows":40}`); err != nil {
+		t.Fatalf("opening frame: %v", err)
+	}
+
+	// and it is a real shell, in the project's directory
+	for time.Now().Before(deadline) {
+		if exec.Command("tmux", "has-session", "-t", out.Tmux).Run() == nil {
+			break
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	if exec.Command("tmux", "has-session", "-t", out.Tmux).Run() != nil {
+		t.Fatalf("no tmux session %q was created", out.Tmux)
+	}
+	marker := "written-by-hand.txt"
+	if err := exec.Command("tmux", "send-keys", "-t", out.Tmux,
+		"printf hello > "+marker, "Enter").Run(); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(r.repo, marker)
+	for time.Now().Before(deadline) {
+		if _, err := os.Stat(path); err == nil {
+			break
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("a command typed in the shell did not run in the project's directory: %v", err)
+	}
+	if string(raw) != "hello" {
+		t.Errorf("file contents: %q", raw)
+	}
+
+	// reopening returns to the SAME shell rather than starting a new one
+	code, body = r.do("POST", fmt.Sprintf("/api/projects/%d/terminal", r.project), map[string]any{})
+	var again struct {
+		Tmux string `json:"tmux_session"`
+	}
+	json.Unmarshal(body, &again)
+	if again.Tmux != out.Tmux {
+		t.Errorf("reopening made a different shell: %q vs %q", again.Tmux, out.Tmux)
+	}
+}
+
+// sendWSText writes one masked client text frame, which is the minimum needed to
+// make ttyd start its command.
+func sendWSText(conn net.Conn, payload string) error {
+	body := []byte(payload)
+	frame := []byte{0x81} // FIN + text
+	if len(body) > 125 {
+		return fmt.Errorf("this helper only sends short frames")
+	}
+	frame = append(frame, byte(0x80|len(body))) // MASK + length
+	mask := []byte{0x12, 0x34, 0x56, 0x78}
+	frame = append(frame, mask...)
+	for i, b := range body {
+		frame = append(frame, b^mask[i%4])
+	}
+	_, err := conn.Write(frame)
+	return err
 }

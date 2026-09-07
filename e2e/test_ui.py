@@ -789,3 +789,27 @@ def test_project_list_is_usable_on_a_phone(page, server):
     box = row.bounding_box()
     assert box["x"] + box["width"] <= PHONE["width"] + 1, box
     assert box["height"] >= 30, f"rows are only {box['height']}px — hard to tap"
+
+
+def test_a_shell_into_the_project_is_one_click(page, server):
+    """Sometimes you just want to look at the code yourself — read a file, fix
+    one line — without asking an agent to do it."""
+    page.goto(server)
+    page.click(".tab[data-tab='targets']")
+    expect(page.locator("#pj-list")).to_be_visible(timeout=10000)
+
+    row = page.locator(".pjrow").first
+    shell_btn = row.locator("button")
+    expect(shell_btn).to_be_visible()
+
+    page.evaluate("window.__opened = []; window.open = (u) => { window.__opened.push(u); return null; };")
+    shell_btn.click()
+    page.wait_for_timeout(3000)
+
+    opened = [u for u in page.evaluate("window.__opened || []") if u]
+    assert opened, "the shell button opened nothing"
+    assert opened[0].startswith("/term/project/"), \
+        f"a shell must be same-origin and name the project: {opened[0]!r}"
+
+    # opening the shell must not have navigated away from the board
+    expect(page.locator("#pj-list")).to_be_visible()

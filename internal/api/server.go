@@ -72,6 +72,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("PATCH /api/projects/{id}", s.patchProject)
 	mux.HandleFunc("DELETE /api/projects/{id}", s.deleteProject)
 	mux.HandleFunc("GET /api/projects/usage", s.projectsUsage)
+	mux.HandleFunc("POST /api/projects/{id}/terminal", s.projectTerminal)
 	mux.HandleFunc("GET /api/projects/import/scan", s.scanProjects)
 	mux.HandleFunc("POST /api/projects/import", s.importProjects)
 	mux.HandleFunc("GET /api/projects/{id}/capability", s.projectCapability)
@@ -122,8 +123,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/sessions/{id}/promote", s.promoteSession)
 
 	// ---- attached terminals (proxied on this origin; see termproxy.go) ----
-	mux.HandleFunc("/term/{port}", s.termProxy)
-	mux.HandleFunc("/term/{port}/", s.termProxy)
+	mux.HandleFunc("/term/{kind}/{id}", s.termProxy)
+	mux.HandleFunc("/term/{kind}/{id}/", s.termProxy)
 	mux.HandleFunc("GET /api/projects/{id}/wraps", s.projectWraps)
 	mux.HandleFunc("GET /api/projects/{id}/brief", s.previewBrief)
 

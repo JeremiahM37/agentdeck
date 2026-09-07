@@ -385,7 +385,8 @@ func (s *Server) attachSession(w http.ResponseWriter, r *http.Request) {
 	}
 	// url is what the UI opens: same-origin, so it works through nginx, over the
 	// tailnet, and on a phone. port stays for older clients and for debugging.
-	writeJSON(w, 200, map[string]any{"port": port, "url": terminalURL(port),
+	writeJSON(w, 200, map[string]any{"port": port,
+		"url":          fmt.Sprintf("/term/session/%d/", row.ID),
 		"tmux_session": row.TmuxSession})
 }
 

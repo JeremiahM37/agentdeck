@@ -564,3 +564,30 @@ func (s *Server) projectsUsage(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, 200, out)
 }
+
+// projectTerminal opens a plain shell where the project's code lives.
+//
+// The board is for steering agents, but sometimes you just need to look at the
+// thing yourself — read a file, fix one line, check what a command actually
+// prints. This is the same terminal machinery an agent session uses, pointed at
+// a shell instead: a tmux session per project, so closing the tab and coming
+// back returns you to it rather than starting over.
+func (s *Server) projectTerminal(w http.ResponseWriter, r *http.Request) {
+	id, err := pathID(r, "id")
+	if err != nil {
+		httpError(w, 404, "no such project")
+		return
+	}
+	att, target, err := s.resolveAttachment("project", fmt.Sprint(id))
+	if err != nil {
+		httpError(w, 404, "%s", err.Error())
+		return
+	}
+	port, err := s.Terminals.Attach(r.Context(), att, target)
+	if err != nil {
+		httpError(w, 503, "%s", err.Error())
+		return
+	}
+	writeJSON(w, 200, map[string]any{"port": port,
+		"url": fmt.Sprintf("/term/project/%d/", id), "tmux_session": att.TmuxSession})
+}

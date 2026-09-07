@@ -108,7 +108,7 @@ func TestSessionAttachOpensATerminal(t *testing.T) {
 	h := newHarness(t)
 	h.App.Terminals.LookPath = func(string) (string, error) { return "/usr/bin/ttyd", nil }
 	var argv []string
-	h.App.Terminals.Spawn = func(port int, a []string) (*exec.Cmd, error) {
+	h.App.Terminals.Spawn = func(port int, basePath string, a []string) (*exec.Cmd, error) {
 		argv = a
 		return exec.Command("true"), nil
 	}

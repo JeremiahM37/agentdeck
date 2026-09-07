@@ -6,59 +6,121 @@ import (
 	"net/http/httputil"
 	"net/url"
 	"strconv"
-	"strings"
 
+	"github.com/JeremiahM37/agentdeck/internal/sessions"
+	"github.com/JeremiahM37/agentdeck/internal/store"
 	"github.com/JeremiahM37/agentdeck/internal/terminal"
 )
 
 // termProxy serves an attached terminal on agentdeck's own origin.
 //
-// ttyd runs on the control plane, on loopback, on a port from a small range.
-// The browser, however, may have reached agentdeck through the nginx vhost, a
-// tailnet hostname, or a bare IP — and it used to build the terminal's URL from
-// whatever hostname it happened to be using. On any path that is not the
-// control plane itself that named the wrong machine (the reverse proxy, which
-// runs no ttyd) and the tab simply refused to connect.
+// The URL names the attachment ("/term/session/24"), never the port. ttyd runs
+// on the control plane, on loopback, on a port from a small range — and that
+// port is not stable: a terminal is retired when the range fills, and every one
+// of them dies when this service restarts. A page holding a port URL is then
+// pointed at nothing for good, which is exactly what left ttyd's own reconnect
+// retrying forever with no way to succeed.
 //
-// Proxying it here means one origin for everything: no second port to expose,
-// no mixed-content block when the page is https, and no unauthenticated shell
-// listening on the network.
+// So the terminal is resolved, and respawned if it is gone, on every request.
+// Reconnecting from a stale tab therefore just works: it lands on a fresh ttyd
+// attached to the same tmux session, which is still exactly where it was.
 func (s *Server) termProxy(w http.ResponseWriter, r *http.Request) {
-	port, err := strconv.Atoi(r.PathValue("port"))
+	kind, id := r.PathValue("kind"), r.PathValue("id")
+	att, target, err := s.resolveAttachment(kind, id)
 	if err != nil {
-		http.NotFound(w, r)
+		http.Error(w, err.Error(), http.StatusNotFound)
 		return
 	}
-	// only ports this process actually spawned, so the prefix cannot be aimed at
-	// some other service listening on loopback
-	if port < terminal.PortLo || port > terminal.PortHi || !s.Terminals.Owns(port) {
-		http.Error(w, "no terminal is attached on that port", http.StatusNotFound)
+	// Attach reuses a live terminal for this attachment and starts one when
+	// there is none, so a reconnect after a restart heals itself
+	port, err := s.Terminals.Attach(r.Context(), att, target)
+	if err != nil {
+		s.Log.Info("terminal could not be started", "attachment", att.Key, "err", err)
+		http.Error(w, err.Error(), http.StatusServiceUnavailable)
 		return
 	}
-	target, _ := url.Parse(fmt.Sprintf("http://127.0.0.1:%d", port))
+
+	target2, _ := url.Parse(fmt.Sprintf("http://127.0.0.1:%d", port))
 	proxy := &httputil.ReverseProxy{
 		// ttyd is mounted with --base-path, so it expects the prefix to arrive
 		// intact; the path is passed through rather than stripped.
 		Director: func(req *http.Request) {
-			req.URL.Scheme = target.Scheme
-			req.URL.Host = target.Host
-			req.Host = target.Host
+			req.URL.Scheme = target2.Scheme
+			req.URL.Host = target2.Host
+			req.Host = target2.Host
 		},
-		// a terminal closing is ordinary, not an error worth a 502 page
 		ErrorHandler: func(w http.ResponseWriter, _ *http.Request, err error) {
-			s.Log.Info("terminal proxy ended", "port", port, "err", err)
+			s.Log.Info("terminal proxy ended", "attachment", att.Key, "err", err)
 			http.Error(w, "the terminal has closed", http.StatusGone)
 		},
 	}
-	// ReverseProxy carries the websocket upgrade through on its own; it only
-	// needs the hop-by-hop headers left alone, which it does when Upgrade is set
+	// ReverseProxy carries the websocket upgrade through on its own
 	proxy.ServeHTTP(w, r)
 }
 
-// terminalURL is the path the UI opens for an attached terminal. Relative on
-// purpose: whatever origin reached agentdeck is the origin that works.
-func terminalURL(port int) string { return terminal.BasePath(port) + "/" }
-
-// stripTrailing keeps /term/7710 and /term/7710/ equivalent, because a user who
-// types the first should not get a blank page.
-func normalizeTermPath(p string) string { return strings.TrimSuffix(p, "/") }
+// resolveAttachment turns a URL like /term/session/24 into the tmux session it
+// names, refusing anything that is not a live session or attempt of this board.
+func (s *Server) resolveAttachment(kind, rawID string) (terminal.Attachment, *store.Target, error) {
+	id, err := strconv.ParseInt(rawID, 10, 64)
+	if err != nil || id <= 0 {
+		return terminal.Attachment{}, nil, fmt.Errorf("not a terminal")
+	}
+	switch kind {
+	case "session":
+		row, err := s.DB.Session(id)
+		if err != nil {
+			return terminal.Attachment{}, nil, fmt.Errorf("no such session")
+		}
+		if row.Status == sessions.StatusDead {
+			return terminal.Attachment{}, nil, fmt.Errorf("this session has ended")
+		}
+		target, err := s.DB.Target(row.TargetID)
+		if err != nil {
+			return terminal.Attachment{}, nil, err
+		}
+		return terminal.Attachment{
+			Key:         fmt.Sprintf("session:%d", row.ID),
+			TmuxSession: row.TmuxSession,
+		}, target, nil
+	case "project":
+		// a plain shell where the project's code lives, for reading something or
+		// making a change by hand without asking an agent to do it
+		proj, err := s.DB.Project(id)
+		if err != nil {
+			return terminal.Attachment{}, nil, fmt.Errorf("no such project")
+		}
+		if proj.RepoPath == "" {
+			return terminal.Attachment{}, nil, fmt.Errorf("this project has no directory")
+		}
+		target, err := s.DB.Target(proj.TargetID)
+		if err != nil {
+			return terminal.Attachment{}, nil, err
+		}
+		return terminal.Attachment{
+			Key:         fmt.Sprintf("project:%d", proj.ID),
+			TmuxSession: fmt.Sprintf("adk-sh%d", proj.ID),
+			Workdir:     proj.RepoPath,
+		}, target, nil
+	case "attempt":
+		att, err := s.DB.Attempt(id)
+		if err != nil {
+			return terminal.Attachment{}, nil, fmt.Errorf("no such attempt")
+		}
+		if att.TmuxSession == "" {
+			return terminal.Attachment{}, nil, fmt.Errorf("no running tmux session to attach")
+		}
+		proj, err := s.DB.ProjectForAttempt(att.ID)
+		if err != nil {
+			return terminal.Attachment{}, nil, err
+		}
+		target, err := s.DB.Target(proj.TargetID)
+		if err != nil {
+			return terminal.Attachment{}, nil, err
+		}
+		return terminal.Attachment{
+			Key:         fmt.Sprintf("attempt:%d", att.ID),
+			TmuxSession: att.TmuxSession, SandboxVMID: att.SandboxVMID,
+		}, target, nil
+	}
+	return terminal.Attachment{}, nil, fmt.Errorf("not a terminal")
+}
