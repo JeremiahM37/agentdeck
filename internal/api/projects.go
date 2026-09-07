@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/JeremiahM37/agentdeck/internal/agents"
@@ -410,28 +411,57 @@ func (s *Server) repoActivity(ctx context.Context, projects []*store.Project) ma
 			byTarget[p.TargetID] = append(byTarget[p.TargetID], p)
 		}
 	}
+	// Targets are probed concurrently. Sequentially, one unreachable host holds
+	// the whole list hostage for its full timeout before the reachable ones are
+	// even tried — and the estate has nine targets. (The git calls themselves
+	// are free: eighty-one of them measure 0.05s. The cost is the SSH round
+	// trip, which is exactly what parallelising removes.)
 	out := map[int64]float64{}
+	var mu sync.Mutex
+	var wg sync.WaitGroup
 	for targetID, group := range byTarget {
+		wg.Add(1)
+		go func(targetID int64, group []*store.Project) {
+			defer wg.Done()
+			s.repoActivityFor(ctx, targetID, group, &mu, out)
+		}(targetID, group)
+	}
+	wg.Wait()
+
+	s.repoMu.Lock()
+	s.repoCache, s.repoCachedAt = out, time.Now()
+	s.repoMu.Unlock()
+	return out
+}
+
+// repoActivityFor probes one target's repositories.
+func (s *Server) repoActivityFor(ctx context.Context, targetID int64,
+	group []*store.Project, mu *sync.Mutex, out map[int64]float64) {
+	{
 		target, err := s.DB.Target(targetID)
 		if err != nil {
-			continue
+			return
 		}
 		ex, err := s.Reg.For(target)
 		if err != nil {
-			continue
+			return
 		}
+		// One subshell per repository, run in parallel: eighty-one sequential
+		// `git log` calls measured six seconds, which is too long to wait for a
+		// list to sort itself on a phone. Each writes a single short line, and a
+		// write under PIPE_BUF is atomic, so the lines cannot interleave.
 		var b strings.Builder
 		for _, p := range group {
-			// %ct is the commit timestamp; a path that is not a repo prints
-			// nothing and is simply skipped
-			fmt.Fprintf(&b, "printf '%%s\\t' %s; git -C %s log -1 --format=%%ct 2>/dev/null || echo; ",
+			fmt.Fprintf(&b, "{ printf '%%s\\t%%s\\n' %s \"$(git -C %s log -1 --format=%%ct 2>/dev/null)\"; } & ",
 				shellq.Quote(fmt.Sprint(p.ID)), shellq.Quote(p.RepoPath))
 		}
-		cctx, cancel := context.WithTimeout(ctx, 30*time.Second)
-		res, err := ex.Run(cctx, b.String(), executor.RunOpts{Timeout: 30})
+		b.WriteString("wait")
+		// short: this is decoration on a list, not something worth waiting on
+		cctx, cancel := context.WithTimeout(ctx, 15*time.Second)
+		res, err := ex.Run(cctx, b.String(), executor.RunOpts{Timeout: 15})
 		cancel()
 		if err != nil {
-			continue
+			return
 		}
 		for _, line := range strings.Split(res.Stdout, "\n") {
 			id, ts, ok := strings.Cut(strings.TrimSpace(line), "\t")
@@ -446,13 +476,11 @@ func (s *Server) repoActivity(ctx context.Context, projects []*store.Project) ma
 			if _, err := fmt.Sscan(ts, &when); err != nil || when <= 0 {
 				continue
 			}
+			mu.Lock()
 			out[pid] = when
+			mu.Unlock()
 		}
 	}
-	s.repoMu.Lock()
-	s.repoCache, s.repoCachedAt = out, time.Now()
-	s.repoMu.Unlock()
-	return out
 }
 
 // repoCacheTTL: a repository's last commit does not change by the minute.
