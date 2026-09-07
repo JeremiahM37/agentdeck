@@ -441,6 +441,23 @@ function sessionCard(s) {
     <div class="spane"></div>
     <div class="btnrow"></div>`;
   $(".nm", el).textContent = s.name;
+  // an agent's working directory is often a scratch dir, so which project it
+  // belongs to is a judgement only you can make — and one you can change later
+  const projSel = document.createElement("select");
+  projSel.className = "f sess-proj";
+  projSel.style.cssText = "width:auto;min-width:130px;padding:5px 8px;font-size:11.5px";
+  projSel.innerHTML = `<option value="">— unassigned —</option>` +
+    state.projects.map((p) =>
+      `<option value="${p.id}">${esc(p.name)}</option>`).join("");
+  projSel.value = s.project_id ? String(s.project_id) : "";
+  projSel.onchange = async () => {
+    try {
+      await api(`/sessions/${s.id}`, { method: "PATCH",
+        body: { project_id: projSel.value ? +projSel.value : null } });
+      refreshSessions();
+    } catch (e) { toast(e.message, true); }
+  };
+  $(".smeta", el).appendChild(projSel);
   $(".spane", el).textContent = s.pane_tail || "";
 
   const row = $(".btnrow", el);
@@ -1408,8 +1425,34 @@ function snippet(input) {
 }
 function safeParse(s) { try { return JSON.parse(s || "{}"); } catch { return {}; } }
 
-function switchTab(tab) {
+/* ---------- hash routing ----------
+   The address bar is an interface. Notification sinks send "/#task/12" and the
+   phone opens the embedded board at "/#sessions"; before this, both landed on
+   whatever tab happened to be default and the link may as well not have existed. */
+const TABS = ["board", "sessions", "deck", "approvals", "targets"];
+
+function applyHash() {
+  const raw = decodeURIComponent(location.hash.replace(/^#/, ""));
+  if (!raw) return false;
+  const [kind, id] = raw.split("/");
+  if (TABS.includes(kind)) { switchTab(kind, { fromHash: true }); return true; }
+  if (kind === "task" && id) {
+    switchTab("board", { fromHash: true });
+    openTaskSheet(+id);
+    return true;
+  }
+  if (kind === "session" && id) {
+    switchTab("sessions", { fromHash: true });
+    return true;
+  }
+  return false;
+}
+addEventListener("hashchange", applyHash);
+
+function switchTab(tab, opts = {}) {
   state.tab = tab;
+  // replaceState, not a new entry: flipping tabs should not fill the back stack
+  if (!opts.fromHash) history.replaceState(null, "", "#" + tab);
   if (tab !== "deck") closeDeckStreams();
   $$(".tab").forEach((b) => b.classList.toggle("on", b.dataset.tab === tab));
   if (tab === "board") renderBoard();
@@ -1438,7 +1481,7 @@ if ("serviceWorker" in navigator) navigator.serviceWorker.register("/sw.js");
 (async function boot() {
   connectSSE();
   await Promise.all([refreshMeta(), refreshTasks(), refreshApprovals(), refreshSessions()]);
-  renderBoard();
+  if (!applyHash()) renderBoard();
   setInterval(refreshTasks, 30000);   // safety net if SSE hiccups
   // sessions carry a live idle clock, so the list is re-rendered on a cadence
   // even when nothing changed — "quiet for 40 minutes" is the number you act on

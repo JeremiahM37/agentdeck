@@ -313,6 +313,9 @@ durable unit is the PROJECT, not the conversation.
   wrap (where we are / next / decisions / gotchas / state) to a file while it
   still has the context; the wrap is stored, pushed into project memory and into
   the memory provider, and a fresh session starts primed with it.
+- **Deep links.** The hash is an interface: `#sessions`, `#board`, `#task/12`.
+  The notification sinks had been sending `/#task/N` since v0.2 and nothing read
+  it — the phone's embedded board now opens straight to the view you asked for.
 - **Memory is a seam, not a dependency** (`internal/memory`). Grimoire is the
   first-class provider; `none` is the default and fully supported. agentdeck owns
   operational state; a memory store owns semantic state.

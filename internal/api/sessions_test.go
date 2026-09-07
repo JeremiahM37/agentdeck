@@ -391,3 +391,58 @@ func TestDeleteKillsASessionAgentdeckStarted(t *testing.T) {
 		t.Error("status after delete")
 	}
 }
+
+// Which project a session belongs to is a judgement the operator makes after the
+// fact: an agent's working directory is frequently a scratch dir that matches
+// nothing, so adoption must not be the last word.
+func TestSessionCanBeReassignedToAProject(t *testing.T) {
+	h := newHarness(t)
+	sess := h.post("/api/sessions/adopt", obj{
+		"target_id": h.firstTargetID(), "tmux_session": "legacy-claude",
+		"workdir": "/some/scratch/dir"}, 201)
+	if sess["project_id"] != nil {
+		t.Fatalf("a scratch dir should match no project: %v", sess["project_id"])
+	}
+	pid := h.seededProjectID()
+	var moved obj
+	h.decode("PATCH", fmt.Sprintf("/api/sessions/%d", sess.id()),
+		obj{"project_id": pid, "name": "renamed"}, 200, &moved)
+	if int64(moved.num("project_id")) != pid || moved.str("name") != "renamed" {
+		t.Fatalf("patched: %v", moved)
+	}
+	if moved.str("project_name") == "" {
+		t.Error("the view should carry the project's name for grouping")
+	}
+	// and it can be un-assigned again
+	var cleared obj
+	h.decode("PATCH", fmt.Sprintf("/api/sessions/%d", sess.id()),
+		obj{"project_id": nil}, 200, &cleared)
+	if cleared["project_id"] != nil {
+		t.Errorf("expected unassigned, got %v", cleared["project_id"])
+	}
+	if code := h.status("PATCH", fmt.Sprintf("/api/sessions/%d", sess.id()),
+		obj{"project_id": 9999}); code != 400 {
+		t.Errorf("unknown project: %d", code)
+	}
+}
+
+// The dashboard tile leads with "how many agents are waiting for me", so those
+// counts have to be flat fields that never disappear.
+func TestHealthCarriesSessionCounts(t *testing.T) {
+	h := newHarness(t)
+	before := h.get("/api/health")
+	for _, f := range []string{"sessions", "sessions_waiting"} {
+		if _, ok := before[f].(float64); !ok {
+			t.Fatalf("%s missing or not a number: %v", f, before[f])
+		}
+	}
+	sess := h.session(obj{"project_id": h.seededProjectID()})
+	h.waitSessionStatus(sess.id(), "waiting", "idle", "running")
+	if h.get("/api/health").num("sessions") != 1 {
+		t.Errorf("sessions: %v", h.get("/api/health")["sessions"])
+	}
+	h.waitUntil("the waiting count to reflect a session at its prompt", func() bool {
+		return h.get("/api/health").num("sessions_waiting") >= 1 ||
+			h.sessionByID(sess.id()).str("status") != "waiting"
+	})
+}

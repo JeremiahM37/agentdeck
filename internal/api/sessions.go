@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -136,6 +137,66 @@ func (s *Server) projectBrief(ctx context.Context, proj *store.Project) string {
 			strings.TrimSpace(wraps[0].Summary))
 	}
 	return strings.Join(parts, "\n\n")
+}
+
+type sessionPatch struct {
+	// ProjectID reassigns a session. Raw, because "move it to project 4",
+	// "unassign it" (an explicit null) and "leave it alone" (absent) are three
+	// different requests, and a *int64 collapses the last two — an agent's
+	// working directory is often a scratch dir, so which project it belongs to
+	// is a judgement only the operator can make, including "none".
+	ProjectID json.RawMessage `json:"project_id"`
+	Name      *string         `json:"name"`
+	Model     *string         `json:"model"`
+}
+
+func (s *Server) patchSession(w http.ResponseWriter, r *http.Request) {
+	row, ok := s.sessionParam(w, r)
+	if !ok {
+		return
+	}
+	var p sessionPatch
+	if err := decodeBody(r, &p); err != nil {
+		httpError(w, 422, "%s", err.Error())
+		return
+	}
+	fields := map[string]any{}
+	if len(p.ProjectID) > 0 {
+		if string(p.ProjectID) == "null" {
+			fields["project_id"] = nil
+		} else {
+			var id int64
+			if err := json.Unmarshal(p.ProjectID, &id); err != nil {
+				httpError(w, 422, "project_id must be a number or null")
+				return
+			}
+			if _, err := s.DB.Project(id); err != nil {
+				httpError(w, 400, "no such project")
+				return
+			}
+			fields["project_id"] = id
+		}
+	}
+	if p.Name != nil && strings.TrimSpace(*p.Name) != "" {
+		fields["name"] = strings.TrimSpace(*p.Name)
+	}
+	if p.Model != nil {
+		fields["model"] = *p.Model
+	}
+	if len(fields) > 0 {
+		fields["updated_at"] = store.Now()
+		if err := s.DB.Update("sessions", row.ID, fields); err != nil {
+			respondErr(w, err)
+			return
+		}
+	}
+	fresh, err := s.DB.Session(row.ID)
+	if err != nil {
+		respondErr(w, err)
+		return
+	}
+	s.Bus.Publish("board", "session", fresh)
+	writeJSON(w, 200, s.sessionView(fresh))
 }
 
 type sendIn struct {

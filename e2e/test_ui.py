@@ -504,3 +504,38 @@ def test_adopted_session_offers_release_not_just_kill(page, server):
     # released, not killed: discovery finds the terminal again
     page.click("#sess-discover")
     expect(page.locator(".cand", has_text="legacy-claude").first).to_be_visible(timeout=15000)
+
+
+# ---- deep links --------------------------------------------------------------
+# The address bar is an interface: notification sinks send "/#task/12", and the
+# phone opens the embedded board at "/#sessions".
+
+def test_hash_opens_the_named_tab(page, server):
+    page.goto(server + "/#sessions")
+    expect(page.locator("#sess-new")).to_be_visible(timeout=10000)
+    expect(page.locator(".tab[data-tab='sessions']")).to_have_class(__import__("re").compile("on"))
+
+    page.goto(server + "/#targets")
+    expect(page.locator("#imp-root")).to_be_visible(timeout=10000)
+
+
+def test_hash_opens_a_task_sheet(page, server):
+    """This is the link every 'Ready for review' notification carries."""
+    page.goto(server)
+    _new_task(page, "Deep linked task", "do it")
+    card = page.locator(".card", has_text="Deep linked task")
+    expect(card).to_be_visible(timeout=15000)
+    task_id = page.evaluate("""async () => {
+      const ts = await (await fetch('/api/tasks')).json();
+      return ts.find(t => t.title === 'Deep linked task').id;
+    }""")
+    page.goto(f"{server}/#task/{task_id}")
+    expect(page.locator("#sheet")).to_be_visible(timeout=10000)
+    expect(page.locator("#sheet h2")).to_have_text("Deep linked task")
+
+
+def test_switching_tabs_updates_the_hash(page, server):
+    page.goto(server)
+    page.click(".tab[data-tab='sessions']")
+    page.wait_for_timeout(400)
+    assert page.evaluate("location.hash") == "#sessions"

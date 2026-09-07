@@ -2,6 +2,7 @@ package api
 
 import (
 	"net/http"
+	"strings"
 
 	"github.com/JeremiahM37/agentdeck/internal/agents"
 	"github.com/JeremiahM37/agentdeck/internal/scheduler"
@@ -108,6 +109,10 @@ func (s *Server) createProject(w http.ResponseWriter, r *http.Request) {
 }
 
 type projectPatch struct {
+	// Name is patchable because import derives it from the directory, and a
+	// directory name is not always the project's name — /opt/docker is "the
+	// compose stack", not "docker".
+	Name                  *string         `json:"name"`
 	VerifyCmd             *string         `json:"verify_cmd"`
 	DefaultBaseBranch     *string         `json:"default_base_branch"`
 	KeepWorktrees         *bool           `json:"keep_worktrees"`
@@ -153,6 +158,9 @@ func (s *Server) patchProject(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	fields := map[string]any{}
+	if p.Name != nil && strings.TrimSpace(*p.Name) != "" {
+		fields["name"] = strings.TrimSpace(*p.Name)
+	}
 	setStr(fields, "verify_cmd", p.VerifyCmd)
 	setStr(fields, "default_base_branch", p.DefaultBaseBranch)
 	setStr(fields, "gate_matcher", p.GateMatcher)

@@ -89,3 +89,21 @@ func TestProjectNotesEndpoint(t *testing.T) {
 		t.Fatalf("a new project has no notes: %v", got)
 	}
 }
+
+// Import derives a project's name from its directory, and a directory name is
+// not always the project's name — /opt/docker is "the compose stack".
+func TestProjectCanBeRenamed(t *testing.T) {
+	h := newHarness(t)
+	p := h.project("docker", nil)
+	var renamed obj
+	h.decode("PATCH", fmt.Sprintf("/api/projects/%d", p.id()),
+		obj{"name": "docker-stack"}, 200, &renamed)
+	if renamed.str("name") != "docker-stack" {
+		t.Fatalf("renamed: %v", renamed)
+	}
+	// an empty name is ignored rather than blanking the card
+	h.decode("PATCH", fmt.Sprintf("/api/projects/%d", p.id()), obj{"name": "  "}, 200, &renamed)
+	if renamed.str("name") != "docker-stack" {
+		t.Errorf("an empty rename should be a no-op: %v", renamed)
+	}
+}

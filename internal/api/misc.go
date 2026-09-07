@@ -26,9 +26,21 @@ func (s *Server) health(w http.ResponseWriter, r *http.Request) {
 		rows.Close()
 	}
 	pending, _ := s.DB.Count("approvals", "status='pending'")
+	// sessions are the other half of the board, and "how many agents are sitting
+	// waiting for me" is the number a dashboard tile should lead with
+	live, waiting := 0, 0
+	if rows, err := s.DB.Sessions(false); err == nil {
+		for _, row := range rows {
+			live++
+			if row.Status == "waiting" {
+				waiting++
+			}
+		}
+	}
 	writeJSON(w, 200, map[string]any{
 		"ok": true, "mock": s.Cfg.Mock, "version": version.Version,
-		"tasks": counts,
+		"tasks":    counts,
+		"sessions": live, "sessions_waiting": waiting,
 		// flat, always-present counts so dashboard widgets (the Homepage
 		// customapi tile) can map fields that never disappear when a column
 		// empties out
