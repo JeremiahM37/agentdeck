@@ -472,6 +472,8 @@ function sessionCard(s) {
     act("Say…", "", () => sendToSession(s));
     if (s.status === "running") act("⎋ Interrupt", "warn", () => sendKey(s, "escape"));
     act("⇥ Handoff", "", () => handoffSession(s));
+    // work that started in a blank room: name it once you know what it is
+    if (!s.project_id) act("⇑ Make a project", "ok", () => promoteSession(s));
   }
   // Adoption is non-destructive, so letting go has to be too. An agent you
   // started yourself is released — agentdeck stops watching, the terminal keeps
@@ -527,6 +529,27 @@ async function sendKey(s, key) {
   try { await api(`/sessions/${s.id}/send`, { method: "POST", body: { key } }); }
   catch (e) { toast(e.message, true); }
 }
+// promoteSession turns a blank room into a project. Nothing moves: the directory
+// the agent has been working in becomes the project's repository, so the
+// conversation carries straight on in the same tmux session.
+async function promoteSession(s) {
+  const dir = (s.workdir || "").split("/").filter(Boolean).pop() || "";
+  const suggested = dir.replace(/-\d{8}-[A-Za-z0-9]{6}$/, "");
+  const name = prompt(
+    `Make this a project.\n\n${s.workdir}\n\n` +
+    "It stays exactly where it is — the directory becomes the project's repo and " +
+    "this session keeps running. Name it:", suggested || s.name);
+  if (name === null) return;
+  try {
+    const out = await api(`/sessions/${s.id}/promote`, { method: "POST",
+      body: { name: name.trim(), wrap: true } });
+    toast(`"${out.project.name}" is a project now — you can dispatch tasks to it`);
+    // the projects list has changed, and the session card's project picker and
+    // the task board both read from it
+    await Promise.all([refreshMeta(), refreshSessions()]);
+  } catch (e) { toast(e.message, true); }
+}
+
 async function handoffSession(s) {
   const successor = confirm(
     `Ask ${s.name} to write a handoff for the next session?\n\n` +
@@ -590,8 +613,11 @@ function renderNewSession(sheet) {
       An interactive agent you attach to and work with — not a dispatched task.
     </div>
     <label class="f">Project</label>
-    <select class="f" id="ns-project">${state.projects.map((p) =>
+    <select class="f" id="ns-project">
+      <option value="">▢ Blank room — no project yet</option>
+      ${state.projects.map((p) =>
       `<option value="${p.id}">${esc(p.name)} — ${esc(p.target_name)}</option>`).join("")}</select>
+    <div class="subhint" id="ns-proj-hint"></div>
     <label class="f">Name</label>
     <input class="f" id="ns-name" placeholder="what you're working on">
     <label class="f">Agent</label>
@@ -634,6 +660,27 @@ function renderNewSession(sheet) {
     if (a && !a.resume_args) bits.push("cannot resume its own history");
     $("#ns-agent-hint").textContent = bits.join(" · ");
   }
+  // a blank room is for work that has no name yet; what it becomes is decided
+  // afterwards, from the session card
+  const projBox = $("#ns-project");
+  // the blank room is offered first because it is the option people do not know
+  // exists — but starting a session usually means starting it on a project, so
+  // that stays the selected default whenever there is one
+  if (state.projects.length) projBox.value = String(state.projects[0].id);
+  const syncProjHint = () => {
+    const blank = !projBox.value;
+    $("#ns-proj-hint").textContent = blank
+      ? "Starts the agent in a fresh throwaway directory. Turn it into a project later."
+      : "";
+    const start = $("#ns-start");
+    for (const opt of start.options) {
+      if (opt.value === "brief") opt.disabled = blank; // nothing known about it yet
+    }
+    if (blank && start.value === "brief") start.value = "fresh";
+    syncHint();
+  };
+  projBox.onchange = syncProjHint;
+
   const hint = $("#ns-hint");
   const syncHint = () => {
     const mode = $("#ns-start").value;
@@ -644,12 +691,14 @@ function renderNewSession(sheet) {
       : "";
   };
   $("#ns-start").onchange = syncHint;
-  syncHint();
+  syncProjHint();
   $("#ns-go").onclick = async () => {
     const mode = $("#ns-start").value;
     try {
+      const projectID = projBox.value ? +projBox.value : null;
       await api("/sessions", { method: "POST", body: {
-        project_id: +$("#ns-project").value,
+        project_id: projectID,
+        scratch: projectID === null,
         name: $("#ns-name").value.trim(),
         agent: agentBox.value,
         model: $("#ns-model").value.trim(),

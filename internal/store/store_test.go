@@ -1,0 +1,206 @@
+package store
+
+import (
+	"database/sql"
+	"path/filepath"
+	"testing"
+)
+
+// earlySchema is the shape the Python service created, before sessions, wraps,
+// capability profiles, command prefixes and the rest. Reproduced here rather
+// than fixtured from a real file so the test states exactly which columns an old
+// database is missing.
+const earlySchema = `
+CREATE TABLE targets(
+  id INTEGER PRIMARY KEY, name TEXT UNIQUE NOT NULL,
+  kind TEXT NOT NULL DEFAULT 'ssh',
+  host TEXT DEFAULT '', port INTEGER DEFAULT 22, user TEXT DEFAULT 'root',
+  key_path TEXT DEFAULT '', workroot TEXT DEFAULT '',
+  max_concurrent INTEGER DEFAULT 4, sandbox INTEGER DEFAULT 0,
+  status TEXT DEFAULT 'unknown', info_json TEXT DEFAULT '{}',
+  created_at REAL);
+CREATE TABLE projects(
+  id INTEGER PRIMARY KEY, name TEXT NOT NULL,
+  target_id INTEGER NOT NULL REFERENCES targets(id),
+  repo_path TEXT NOT NULL, default_base_branch TEXT DEFAULT 'main',
+  workroot_override TEXT DEFAULT '', policy_json TEXT DEFAULT '{}',
+  created_at REAL);
+CREATE TABLE tasks(
+  id INTEGER PRIMARY KEY, project_id INTEGER NOT NULL REFERENCES projects(id),
+  title TEXT NOT NULL, prompt TEXT DEFAULT '',
+  status TEXT NOT NULL DEFAULT 'backlog',
+  priority INTEGER DEFAULT 2, labels_json TEXT DEFAULT '[]',
+  agent TEXT DEFAULT 'claude', model TEXT DEFAULT '',
+  permission_mode TEXT DEFAULT 'acceptEdits', base_branch TEXT DEFAULT '',
+  created_at REAL, updated_at REAL);
+CREATE TABLE attempts(
+  id INTEGER PRIMARY KEY, task_id INTEGER NOT NULL REFERENCES tasks(id),
+  n INTEGER NOT NULL, status TEXT NOT NULL DEFAULT 'queued',
+  token TEXT NOT NULL DEFAULT '',
+  prompt TEXT DEFAULT '', resume_session TEXT DEFAULT '',
+  worktree_path TEXT DEFAULT '', branch TEXT DEFAULT '', tmux_session TEXT DEFAULT '',
+  session_id TEXT DEFAULT '', log_offset INTEGER DEFAULT 0,
+  started_at REAL, finished_at REAL, exit_code INTEGER,
+  result_json TEXT DEFAULT '{}', diff_stat_json TEXT DEFAULT '{}');
+CREATE TABLE events(
+  id INTEGER PRIMARY KEY, attempt_id INTEGER NOT NULL REFERENCES attempts(id),
+  seq INTEGER NOT NULL, ts REAL, type TEXT NOT NULL, payload_json TEXT DEFAULT '{}');
+CREATE TABLE approvals(
+  id INTEGER PRIMARY KEY, attempt_id INTEGER NOT NULL REFERENCES attempts(id),
+  tool_name TEXT NOT NULL, input_json TEXT DEFAULT '{}',
+  status TEXT NOT NULL DEFAULT 'pending',
+  decided_by TEXT DEFAULT '', note TEXT DEFAULT '',
+  created_at REAL, decided_at REAL);
+CREATE TABLE push_subscriptions(
+  id INTEGER PRIMARY KEY, endpoint TEXT UNIQUE NOT NULL, keys_json TEXT NOT NULL,
+  created_at REAL);
+CREATE TABLE settings(key TEXT PRIMARY KEY, value TEXT);
+`
+
+// The cutover claim was that an existing database opens unchanged. That is
+// load-bearing — a wrong migration on first boot loses a board — so it is worth
+// asserting against a real old schema rather than trusting the ALTER list.
+func TestOpenMigratesAPreSessionsDatabase(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "old.db")
+	raw, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := raw.Exec(earlySchema); err != nil {
+		t.Fatal(err)
+	}
+	// data the operator would not want to lose
+	if _, err := raw.Exec(`INSERT INTO targets(id,name,kind,host,created_at)
+		VALUES(1,'aiserver','local','',1)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := raw.Exec(`INSERT INTO projects(id,name,target_id,repo_path,created_at)
+		VALUES(1,'librarr',1,'/srv/librarr',1)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := raw.Exec(`INSERT INTO tasks(id,project_id,title,status,created_at,updated_at)
+		VALUES(1,1,'an old task','done',1,1)`); err != nil {
+		t.Fatal(err)
+	}
+	raw.Close()
+
+	db, err := Open(path)
+	if err != nil {
+		t.Fatalf("an existing database must open: %v", err)
+	}
+	defer db.Close()
+
+	// every row survived
+	tgt, err := db.Target(1)
+	if err != nil || tgt.Name != "aiserver" {
+		t.Fatalf("target lost: %+v %v", tgt, err)
+	}
+	proj, err := db.Project(1)
+	if err != nil || proj.RepoPath != "/srv/librarr" {
+		t.Fatalf("project lost: %+v %v", proj, err)
+	}
+	task, err := db.Task(1)
+	if err != nil || task.Title != "an old task" {
+		t.Fatalf("task lost: %+v %v", task, err)
+	}
+
+	// columns added since arrive with usable defaults, not NULLs that break a scan
+	if proj.CapabilityProfile != "restricted" {
+		t.Errorf("capability_profile default: %q", proj.CapabilityProfile)
+	}
+	if proj.MCPJSON != "{}" || proj.ContextJSON != "[]" {
+		t.Errorf("json column defaults: mcp=%q context=%q", proj.MCPJSON, proj.ContextJSON)
+	}
+	if tgt.ContextJSON != "[]" || tgt.CommandPrefix != "" {
+		t.Errorf("target defaults: context=%q prefix=%q", tgt.ContextJSON, tgt.CommandPrefix)
+	}
+
+	// and the tables that did not exist at all are usable
+	if _, err := db.Sessions(false); err != nil {
+		t.Errorf("sessions table missing after migration: %v", err)
+	}
+	if _, err := db.Wraps(1, 5); err != nil {
+		t.Errorf("session_wraps table missing after migration: %v", err)
+	}
+}
+
+// Opening the same database twice must be a no-op, not a second round of ALTERs
+// that errors out. This runs on every service start.
+func TestOpenIsIdempotent(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "twice.db")
+	for i := 0; i < 3; i++ {
+		db, err := Open(path)
+		if err != nil {
+			t.Fatalf("open %d: %v", i, err)
+		}
+		if _, err := db.InsertTarget(&Target{Name: "t", Kind: "local"}); err != nil && i == 0 {
+			t.Fatalf("insert: %v", err)
+		}
+		db.Close()
+	}
+}
+
+// diff_stat_json is '{}' until a diff is captured, and a running card that
+// assumed a list once threw and aborted the whole column render.
+func TestUnjListCoercesAnObjectToAnEmptyList(t *testing.T) {
+	if got := UnjList("{}"); got == nil || len(got) != 0 {
+		t.Fatalf("an object must coerce to an empty list, got %#v", got)
+	}
+	if got := UnjList(""); got == nil || len(got) != 0 {
+		t.Fatalf("empty must coerce to an empty list, got %#v", got)
+	}
+	if got := UnjList("not json"); got == nil || len(got) != 0 {
+		t.Fatalf("garbage must coerce to an empty list, got %#v", got)
+	}
+	if got := UnjList(`[{"path":"a.py"}]`); len(got) != 1 {
+		t.Fatalf("a real list must survive: %#v", got)
+	}
+}
+
+func TestUnjObjNeverReturnsNil(t *testing.T) {
+	for _, in := range []string{"", "[]", "garbage", "null"} {
+		if got := UnjObj(in); got == nil {
+			t.Errorf("UnjObj(%q) returned nil — every caller indexes it", in)
+		}
+	}
+	if got := UnjObj(`{"cost_usd":0.5}`); got["cost_usd"] != 0.5 {
+		t.Errorf("a real object must survive: %#v", got)
+	}
+}
+
+func TestUpdateWritesOnlyTheNamedColumns(t *testing.T) {
+	db, err := Open(filepath.Join(t.TempDir(), "u.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	tgt, _ := db.InsertTarget(&Target{Name: "t", Kind: "ssh", Host: "h", User: "root"})
+	if err := db.Update("targets", tgt.ID, map[string]any{"host": "h2"}); err != nil {
+		t.Fatal(err)
+	}
+	fresh, _ := db.Target(tgt.ID)
+	if fresh.Host != "h2" || fresh.User != "root" || fresh.Name != "t" {
+		t.Fatalf("update touched more than it was asked to: %+v", fresh)
+	}
+	// an empty update is a no-op rather than invalid SQL
+	if err := db.Update("targets", tgt.ID, map[string]any{}); err != nil {
+		t.Fatalf("empty update: %v", err)
+	}
+}
+
+func TestErrNotFoundRatherThanSQLNoRows(t *testing.T) {
+	db, _ := Open(filepath.Join(t.TempDir(), "nf.db"))
+	defer db.Close()
+	for name, err := range map[string]error{
+		"target":  second(db.Target(999)),
+		"project": second(db.Project(999)),
+		"task":    second(db.Task(999)),
+		"session": second(db.Session(999)),
+	} {
+		if err != ErrNotFound {
+			t.Errorf("%s: got %v, want ErrNotFound (callers branch on it)", name, err)
+		}
+	}
+}
+
+func second[T any](_ T, err error) error { return err }

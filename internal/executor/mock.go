@@ -44,11 +44,12 @@ const MockNumstat = "4\t1\tapp.py\n"
 //	[mock:approve-verdict] agent ends with VERDICT: APPROVE
 //	[mock:reject-verdict]  agent ends with VERDICT: REQUEST_CHANGES
 type Mock struct {
-	mu     sync.Mutex
-	fs     map[string][]byte
-	cmdLog []string
-	agents map[string]*mockAgent
-	panes  map[string]*mockPane
+	mu       sync.Mutex
+	fs       map[string][]byte
+	cmdLog   []string
+	agents   map[string]*mockAgent
+	scratchN int
+	panes    map[string]*mockPane
 
 	// Delay paces the fake agent between events.
 	Delay time.Duration
@@ -83,6 +84,15 @@ func NewMock(delay time.Duration) *Mock {
 }
 
 // CmdLog returns a copy of every command this executor was asked to run.
+// scratchDirName pulls the slug out of the scratch-creation command, so two
+// scratch sessions get two directories here exactly as they would on a real host.
+func scratchDirName(cmd string) string {
+	if m := scratchRe.FindStringSubmatch(cmd); len(m) > 1 {
+		return m[1]
+	}
+	return "scratch"
+}
+
 func (m *Mock) CmdLog() []string {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -123,6 +133,18 @@ func (m *Mock) Run(ctx context.Context, cmd string, opts RunOpts) (Result, error
 		return Result{0, "", ""}, nil
 	case strings.HasPrefix(cmd, "git clone"):
 		return Result{0, "", ""}, nil
+	case strings.Contains(cmd, "agentdeck-scratch"):
+		// a scratch directory is created by the target's own shell and its path
+		// read back from `pwd`; mktemp's uniqueness is modelled by a counter, so
+		// a test sees the same "never the same directory twice" guarantee
+		m.mu.Lock()
+		m.scratchN++
+		n := m.scratchN
+		m.mu.Unlock()
+		return Result{0, fmt.Sprintf("/mock/home/agentdeck-scratch/%s-%06d\n",
+			scratchDirName(cmd), n), ""}, nil
+	case strings.Contains(cmd, "symbolic-ref --short HEAD"):
+		return Result{0, "main\n", ""}, nil
 	case strings.HasPrefix(cmd, "rm -f "):
 		m.mu.Lock()
 		for _, tok := range strings.Fields(cmd)[2:] {
@@ -210,6 +232,7 @@ func (m *Mock) Run(ctx context.Context, cmd string, opts RunOpts) (Result, error
 	return Result{0, "", ""}, nil
 }
 
+var scratchRe = regexp.MustCompile(`mktemp -d "\$root/([^"]+)-XXXXXX"`)
 var gitDiffRe = regexp.MustCompile(`\bgit\b.*\bdiff\b`)
 
 // ReadFile reads from the fake filesystem.

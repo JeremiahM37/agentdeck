@@ -563,3 +563,47 @@ def test_any_agent_can_be_defined_and_picked(page, server):
     expect(card.locator(".chip", has_text="aider")).to_be_visible()
     # leave the shared server as we found it
     page.request.put(f"{server}/api/agents", data=[])
+
+
+def test_blank_room_session_can_be_promoted_to_a_project(page, server):
+    """A blank room is for work that has no name yet: any agent, a throwaway
+    directory, no project. Deciding what it is happens afterwards, and the
+    session keeps running through it."""
+    page.goto(server)
+    page.click(".tab[data-tab='sessions']")
+    page.click("#sess-new")
+
+    # the option people do not know exists is offered first, but a project stays
+    # the default when you have one
+    options = page.locator("#ns-project option").all_text_contents()
+    assert "Blank room" in options[0], options
+    assert page.locator("#ns-project").input_value() != "", "a project should be preselected"
+
+    page.select_option("#ns-project", "")
+    expect(page.locator("#ns-proj-hint")).to_contain_text("throwaway directory")
+    # nothing is known about a room that does not exist yet
+    assert page.locator("#ns-start option[value='brief']").is_disabled()
+
+    page.fill("#ns-name", "half an idea")
+    page.click("#ns-go")
+
+    card = page.locator(".scard", has_text="half an idea")
+    expect(card).to_be_visible(timeout=15000)
+    # it starts life unassigned, grouped apart from real projects
+    expect(page.locator(".projgroup", has_text="Unassigned")).to_be_visible(timeout=15000)
+    promote = card.locator("button", has_text="Make a project")
+    expect(promote).to_be_visible()
+
+    page.on("dialog", lambda d: d.accept("half-an-idea"))
+    promote.click()
+
+    # the work is a project now, and the conversation is still running in it
+    expect(page.locator(".projgroup", has_text="half-an-idea")).to_be_visible(timeout=15000)
+    card = page.locator(".scard", has_text="half an idea")
+    expect(card.locator("button", has_text="Attach")).to_be_visible()
+    expect(card.locator("button", has_text="Make a project")).to_have_count(0)
+
+    # and it is dispatchable: the new project is offered on the task form
+    page.click(".tab[data-tab='board']")
+    page.click("#fab")
+    expect(page.locator("#f-project")).to_contain_text("half-an-idea")

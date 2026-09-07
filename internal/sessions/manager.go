@@ -70,6 +70,11 @@ type LaunchOpts struct {
 	// Prime is typed into the session once it is up — a project briefing, or a
 	// predecessor's handoff.
 	Prime string
+	// Scratch asks for a throwaway working directory on the target instead of a
+	// project's repository: an empty room to think in. The directory is a real
+	// git repository, so whatever the work turns into can later be promoted to a
+	// project and dispatched against without moving anything.
+	Scratch bool
 }
 
 // Launch starts an interactive agent and records it.
@@ -86,12 +91,22 @@ func (m *Manager) Launch(ctx context.Context, o LaunchOpts) (*store.Session, err
 		}
 		workdir = proj.RepoPath
 	}
-	if workdir == "" {
-		return nil, fmt.Errorf("a session needs a working directory")
-	}
 	agent := o.Agent
 	if agent == "" {
 		agent = "claude"
+	}
+	if workdir == "" && o.Scratch {
+		ex, err := m.Reg.For(target)
+		if err != nil {
+			return nil, err
+		}
+		workdir, err = m.makeScratch(ctx, ex, firstNonEmpty(o.Name, agent))
+		if err != nil {
+			return nil, err
+		}
+	}
+	if workdir == "" {
+		return nil, fmt.Errorf("a session needs a working directory")
 	}
 	name := o.Name
 	if name == "" {
@@ -168,6 +183,61 @@ func (m *Manager) Launch(ctx context.Context, o LaunchOpts) (*store.Session, err
 	m.Log.Info("session launched", "session", fresh.ID, "agent", agent,
 		"target", target.Name, "workdir", workdir)
 	return fresh, nil
+}
+
+// ScratchRootEnv names the variable a target can set to move its scratch area.
+const ScratchRootEnv = "AGENTDECK_SCRATCH_ROOT"
+
+// makeScratch creates a throwaway working directory ON THE TARGET and returns
+// its absolute path.
+//
+// The path is resolved by the target's own shell rather than composed here: the
+// control plane's $HOME is not the target's, and a workdir that only exists
+// locally would launch the agent into a directory that is not there. `pwd` after
+// the `cd` is what makes the returned path real.
+func (m *Manager) makeScratch(ctx context.Context, ex executor.Executor, label string) (string, error) {
+	// mktemp, not a name we compose: two scratch sessions started in the same
+	// second would otherwise be handed the same directory and overwrite each
+	// other's work. The target's own mkdir is the only atomic claim available.
+	slug := scratchSlug(label)
+	cmd := fmt.Sprintf(
+		`root="${%s:-$HOME/agentdeck-scratch}"; mkdir -p "$root" && `+
+			`d=$(mktemp -d "$root/%s-XXXXXX") && cd "$d" && `+
+			`{ git rev-parse --git-dir >/dev/null 2>&1 || git init -q >/dev/null 2>&1; }; pwd`,
+		ScratchRootEnv, slug)
+	r, err := ex.Run(ctx, cmd, executor.RunOpts{Timeout: 30})
+	if err != nil {
+		return "", err
+	}
+	dir := strings.TrimSpace(r.Stdout)
+	if !r.OK() || dir == "" {
+		return "", executor.Errf("could not create a scratch directory: %s",
+			strings.TrimSpace(r.Stderr))
+	}
+	return dir, nil
+}
+
+// scratchSlug makes a label safe to use as a single path segment, and stamps it
+// so two scratch sessions started the same day stay apart.
+func scratchSlug(label string) string {
+	var b strings.Builder
+	for _, r := range strings.ToLower(label) {
+		switch {
+		case r >= 'a' && r <= 'z', r >= '0' && r <= '9':
+			b.WriteRune(r)
+		case r == ' ', r == '-', r == '_':
+			b.WriteRune('-')
+		}
+	}
+	slug := strings.Trim(b.String(), "-")
+	if len(slug) > 32 {
+		slug = strings.Trim(slug[:32], "-")
+	}
+	if slug == "" {
+		slug = "scratch"
+	}
+	// the date makes the directory readable; mktemp adds what makes it unique
+	return slug + "-" + time.Now().Format("20060102")
 }
 
 // primeWhenReady types an opening message once the pane has stopped changing.

@@ -72,13 +72,20 @@ func NewManager() *Manager {
 }
 
 // AttachArgv is the command a ttyd wraps, per target kind.
-func AttachArgv(a Attachment, target *store.Target) []string {
+//
+// It errors rather than falling back for a sandbox with no vmid: the default
+// branch runs tmux on the control plane itself, so a missing vmid would quietly
+// hand the operator a shell on the wrong machine.
+func AttachArgv(a Attachment, target *store.Target) ([]string, error) {
 	sess := a.TmuxSession
 	switch {
-	case target.Kind == "sandbox" && a.SandboxVMID != "":
-		return []string{"sudo", "pct", "exec", a.SandboxVMID, "--", "tmux", "attach", "-t", sess}
+	case target.Kind == "sandbox":
+		if a.SandboxVMID == "" {
+			return nil, errors.New("sandbox attachment has no container id — its sandbox is gone")
+		}
+		return []string{"sudo", "pct", "exec", a.SandboxVMID, "--", "tmux", "attach", "-t", sess}, nil
 	case target.Kind == "pct":
-		return []string{"sudo", "pct", "exec", target.Host, "--", "tmux", "attach", "-t", sess}
+		return []string{"sudo", "pct", "exec", target.Host, "--", "tmux", "attach", "-t", sess}, nil
 	case target.Kind == "ssh":
 		argv := []string{"ssh", "-tt", "-o", "StrictHostKeyChecking=accept-new"}
 		if target.KeyPath != "" {
@@ -88,32 +95,44 @@ func AttachArgv(a Attachment, target *store.Target) []string {
 		if user == "" {
 			user = "root"
 		}
-		return append(argv, user+"@"+target.Host, "tmux", "attach", "-t", sess)
+		return append(argv, user+"@"+target.Host, "tmux", "attach", "-t", sess), nil
 	default:
-		return []string{"tmux", "attach", "-t", sess}
+		return []string{"tmux", "attach", "-t", sess}, nil
 	}
 }
 
 // Attach spawns (or reuses) a ttyd for an attachment and returns its port.
 func (m *Manager) Attach(ctx context.Context, a Attachment, target *store.Target) (int, error) {
 	m.reap()
+	if _, err := m.LookPath("ttyd"); err != nil {
+		return 0, errors.New("ttyd is not installed on the control plane")
+	}
+	argv, err := AttachArgv(a, target)
+	if err != nil {
+		return 0, err
+	}
+
+	// The reservation is taken under the same lock that reads the map, so two
+	// simultaneous attaches cannot be handed the same port. Doing this in two
+	// steps is what let the board's "attach" buttons collide: both callers saw
+	// the port free, both spawned on it, and the loser's ttyd could not bind.
 	m.mu.Lock()
 	if s, ok := m.procs[a.Key]; ok {
 		port := s.port
 		m.mu.Unlock()
 		return port, nil
 	}
-	m.mu.Unlock()
-
-	if _, err := m.LookPath("ttyd"); err != nil {
-		return 0, errors.New("ttyd is not installed on the control plane")
-	}
-	port, err := m.freePort()
+	port, err := m.freePortLocked()
 	if err != nil {
+		m.mu.Unlock()
 		return 0, err
 	}
-	cmd, err := m.Spawn(port, AttachArgv(a, target))
+	m.procs[a.Key] = &session{port: port} // cmd nil: reserved, not yet running
+	m.mu.Unlock()
+
+	cmd, err := m.Spawn(port, argv)
 	if err != nil {
+		m.release(a.Key)
 		return 0, fmt.Errorf("ttyd failed to start: %w", err)
 	}
 	// give it a moment to bind — an immediate exit means the session is gone
@@ -122,6 +141,7 @@ func (m *Manager) Attach(ctx context.Context, a Attachment, target *store.Target
 	case <-time.After(300 * time.Millisecond):
 	}
 	if cmd.ProcessState != nil && cmd.ProcessState.Exited() {
+		m.release(a.Key)
 		return 0, errors.New("ttyd exited immediately")
 	}
 	m.mu.Lock()
@@ -129,6 +149,15 @@ func (m *Manager) Attach(ctx context.Context, a Attachment, target *store.Target
 	m.mu.Unlock()
 	go func() { _ = cmd.Wait() }()
 	return port, nil
+}
+
+// release drops a reservation whose ttyd never came up, returning its port.
+func (m *Manager) release(key string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if s, ok := m.procs[key]; ok && s.cmd == nil {
+		delete(m.procs, key)
+	}
 }
 
 func (m *Manager) reap() {
@@ -141,13 +170,14 @@ func (m *Manager) reap() {
 	}
 }
 
-func (m *Manager) freePort() (int, error) {
-	m.mu.Lock()
+// freePortLocked picks a port not already reserved here and not answering on
+// the loopback interface. The caller must hold m.mu, which is what makes the
+// choice and the reservation atomic.
+func (m *Manager) freePortLocked() (int, error) {
 	used := map[int]bool{}
 	for _, s := range m.procs {
 		used[s.port] = true
 	}
-	m.mu.Unlock()
 	for port := PortLo; port <= PortHi; port++ {
 		if used[port] {
 			continue

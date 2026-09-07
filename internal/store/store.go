@@ -71,12 +71,18 @@ func J(v any) string {
 
 // UnjObj parses a *_json column into an object, tolerating empty and malformed
 // values — a bad blob must degrade a card, never take down the board.
+//
+// It never returns nil, including for the literal "null", which unmarshals into
+// a nil map without erroring. Callers write into the result (the scheduler adds
+// an "error" key when finalising, and a "review" key when a reviewer gate
+// lands), and writing to a nil map panics — inside the scheduler tick, which
+// would stall every other running attempt.
 func UnjObj(s string) map[string]any {
 	out := map[string]any{}
 	if s == "" {
 		return out
 	}
-	if err := json.Unmarshal([]byte(s), &out); err != nil {
+	if err := json.Unmarshal([]byte(s), &out); err != nil || out == nil {
 		return map[string]any{}
 	}
 	return out

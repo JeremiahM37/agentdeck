@@ -121,22 +121,22 @@ func TestTerminalAttachEndpoint(t *testing.T) {
 
 func TestAttachArgvPerTargetKind(t *testing.T) {
 	att := terminal.Attachment{Key: "attempt:7", TmuxSession: "adk-7", SandboxVMID: "9001"}
-	sandbox := terminal.AttachArgv(att, &store.Target{Kind: "sandbox"})
+	sandbox, _ := terminal.AttachArgv(att, &store.Target{Kind: "sandbox"})
 	if strings.Join(sandbox, " ") != "sudo pct exec 9001 -- tmux attach -t adk-7" {
 		t.Errorf("sandbox: %v", sandbox)
 	}
-	pct := terminal.AttachArgv(terminal.Attachment{TmuxSession: "adk-7"},
+	pct, _ := terminal.AttachArgv(terminal.Attachment{TmuxSession: "adk-7"},
 		&store.Target{Kind: "pct", Host: "105"})
 	if strings.Join(pct, " ") != "sudo pct exec 105 -- tmux attach -t adk-7" {
 		t.Errorf("pct: %v", pct)
 	}
-	ssh := terminal.AttachArgv(terminal.Attachment{TmuxSession: "adk-7"},
+	ssh, _ := terminal.AttachArgv(terminal.Attachment{TmuxSession: "adk-7"},
 		&store.Target{Kind: "ssh", Host: "192.0.2.9", User: "root", KeyPath: "/k"})
 	joined := strings.Join(ssh, " ")
 	if !strings.Contains(joined, "-i /k") || !strings.Contains(joined, "root@192.0.2.9") {
 		t.Errorf("ssh: %v", ssh)
 	}
-	local := terminal.AttachArgv(terminal.Attachment{TmuxSession: "adk-7"}, &store.Target{Kind: "local"})
+	local, _ := terminal.AttachArgv(terminal.Attachment{TmuxSession: "adk-7"}, &store.Target{Kind: "local"})
 	if strings.Join(local, " ") != "tmux attach -t adk-7" {
 		t.Errorf("local: %v", local)
 	}

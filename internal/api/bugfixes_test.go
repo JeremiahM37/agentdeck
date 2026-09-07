@@ -266,3 +266,30 @@ func TestStaticAssetsRevalidate(t *testing.T) {
 		resp.Body.Close()
 	}
 }
+
+// A result_json of literal "null" unmarshals into a NIL map, and the scheduler
+// writes into that map when it finalises ("error") and when a reviewer gate
+// lands ("review"). Writing to a nil map panics — inside the tick, which would
+// stall every other running attempt on the board.
+func TestFinalizeSurvivesANullResultBlob(t *testing.T) {
+	h := newHarness(t)
+	task := h.task(h.seededProjectID(), "null result", "x [mock:slow]", nil)
+	h.post(fmt.Sprintf("/api/tasks/%d/dispatch", task.id()), obj{}, 200)
+	h.waitStatus(task.id(), "running")
+	att, err := h.App.DB.LatestAttempt(task.id())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.App.DB.Exec(`UPDATE attempts SET result_json='null' WHERE id=?`,
+		att.ID); err != nil {
+		t.Fatal(err)
+	}
+	// the tick must carry this attempt to a terminal state, not die on it
+	h.waitStatus(task.id(), "review")
+
+	// and every other attempt still runs, which is what a panicking tick breaks
+	other := h.run(h.seededProjectID(), "still works", "x", nil)
+	if other.str("status") != "review" {
+		t.Fatalf("the board stalled: %v", other.str("status"))
+	}
+}

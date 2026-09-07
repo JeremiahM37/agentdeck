@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"path"
+	"regexp"
 	"strings"
 
 	"github.com/JeremiahM37/agentdeck/internal/executor"
@@ -75,6 +77,9 @@ type sessionIn struct {
 	// Brief prepends what the memory provider knows about the project, so a
 	// fresh session starts with the project's knowledge rather than a blank slate.
 	Brief bool `json:"brief"`
+	// Scratch starts the agent in a fresh throwaway directory instead of a
+	// project — an empty room. What it becomes is decided later, by promoting it.
+	Scratch bool `json:"scratch"`
 }
 
 func (s *Server) createSession(w http.ResponseWriter, r *http.Request) {
@@ -98,6 +103,19 @@ func (s *Server) createSession(w http.ResponseWriter, r *http.Request) {
 		}
 		in.TargetID = proj.TargetID
 	}
+	// a session needs somewhere to work: a project's repository, a directory you
+	// name, or an explicit blank room. Saying none of the three is a mistake,
+	// and it is clearer to say so here than to fail later at launch.
+	if in.ProjectID == nil && in.Workdir == "" && !in.Scratch {
+		httpError(w, 400, "a session needs a project, a workdir, or scratch:true for a blank room")
+		return
+	}
+	if in.TargetID == 0 {
+		// "open a blank session with codex" names no project and no host, and
+		// almost always means here — so default to the control plane itself,
+		// falling back to the only target when there is just one.
+		in.TargetID = s.defaultTargetID()
+	}
 	if in.TargetID == 0 {
 		httpError(w, 400, "a session needs a project or a target")
 		return
@@ -117,7 +135,7 @@ func (s *Server) createSession(w http.ResponseWriter, r *http.Request) {
 	sess, err := s.Sessions.Launch(r.Context(), sessions.LaunchOpts{
 		ProjectID: in.ProjectID, TargetID: in.TargetID, Name: in.Name,
 		Agent: in.Agent, Model: in.Model, Workdir: in.Workdir,
-		Resume: in.Resume, Prime: prime,
+		Resume: in.Resume, Prime: prime, Scratch: in.Scratch,
 		// a project's env is how a session reaches a local model, exactly as it
 		// is for a dispatched task
 		Env: s.Sessions.ProjectEnv(in.ProjectID),
@@ -552,4 +570,177 @@ func (s *Server) putAgents(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, 200, s.agentSpecs())
+}
+
+// defaultTargetID picks where a session with no project and no named host should
+// run. Returns 0 when the answer is genuinely ambiguous, so the caller asks.
+func (s *Server) defaultTargetID() int64 {
+	targets, err := s.DB.Targets()
+	if err != nil || len(targets) == 0 {
+		return 0
+	}
+	if len(targets) == 1 {
+		return targets[0].ID
+	}
+	for _, t := range targets {
+		// mock mode pretends every target is this machine, so the demo board can
+		// open a blank session without first asking where "here" is
+		if t.Kind == "local" || (s.Cfg.Mock && t.Kind == "mock") {
+			return t.ID
+		}
+	}
+	// several remote hosts and no local one: which machine is a real question,
+	// so let the caller answer it rather than guessing
+	return 0
+}
+
+// ---- promoting a scratch session into a project ------------------------
+
+type promoteIn struct {
+	// ProjectID adopts the session into a project that already exists. When it
+	// is absent a new project is created from where the session has been working.
+	ProjectID *int64 `json:"project_id"`
+	Name      string `json:"name"`
+	RepoPath  string `json:"repo_path"`
+	// Wrap asks the agent to write down the state of the work as it is promoted,
+	// so the new project starts with a record of what happened in the scratch
+	// session rather than an empty history.
+	Wrap bool `json:"wrap"`
+}
+
+// promoteSession turns work that started in a blank room into a project.
+//
+// The point of a scratch session is that you do not have to decide what it is
+// before you start. This is where you decide afterwards: the directory the agent
+// has been working in becomes the project's repository, so nothing moves and the
+// conversation carries straight on.
+func (s *Server) promoteSession(w http.ResponseWriter, r *http.Request) {
+	sess, ok := s.sessionParam(w, r)
+	if !ok {
+		return
+	}
+	var in promoteIn
+	if err := decodeBody(r, &in); err != nil {
+		httpError(w, 422, "%s", err.Error())
+		return
+	}
+	if sess.ProjectID != nil && in.ProjectID == nil {
+		httpError(w, 409, "this session already belongs to a project")
+		return
+	}
+
+	project, err := s.resolvePromotionTarget(r.Context(), sess, in)
+	if err != nil {
+		respondErr(w, err)
+		return
+	}
+	if err := s.DB.Update("sessions", sess.ID, map[string]any{
+		"project_id": project.ID}); err != nil {
+		respondErr(w, err)
+		return
+	}
+	// the work so far is worth keeping even if the wrap fails, so this is
+	// deliberately after the link and its error is reported rather than fatal
+	wrapErr := ""
+	if in.Wrap {
+		if err := s.Sessions.StartHandoff(sess.ID, sessions.HandoffOpts{}); err != nil {
+			wrapErr = err.Error()
+		}
+	}
+	fresh, err := s.DB.Session(sess.ID)
+	if err != nil {
+		respondErr(w, err)
+		return
+	}
+	s.Bus.Publish("board", "session_promoted", map[string]any{
+		"session_id": sess.ID, "project_id": project.ID, "project_name": project.Name})
+	s.Log.Info("session promoted to a project", "session", sess.ID,
+		"project", project.Name, "repo", project.RepoPath)
+	writeJSON(w, 200, map[string]any{
+		"session": s.sessionView(fresh), "project": project, "wrap_error": wrapErr})
+}
+
+// resolvePromotionTarget finds or creates the project a session is promoted into.
+func (s *Server) resolvePromotionTarget(ctx context.Context, sess *store.Session,
+	in promoteIn) (*store.Project, error) {
+	if in.ProjectID != nil {
+		proj, err := s.DB.Project(*in.ProjectID)
+		if err != nil {
+			return nil, store.ErrNotFound
+		}
+		return proj, nil
+	}
+	repo := strings.TrimRight(firstNonEmptyStr(in.RepoPath, sess.Workdir), "/")
+	if repo == "" {
+		return nil, executor.Errf("this session has no working directory to make a project from")
+	}
+	// promoting twice, or promoting a second session from the same directory,
+	// must not leave two projects pointing at one repository
+	if existing, err := s.DB.Projects(); err == nil {
+		for _, p := range existing {
+			if strings.TrimRight(p.RepoPath, "/") == repo {
+				return p, nil
+			}
+		}
+	}
+	name := strings.TrimSpace(in.Name)
+	if name == "" {
+		name = projectNameFromPath(repo)
+	}
+	return s.DB.InsertProject(&store.Project{
+		Name: name, TargetID: sess.TargetID, RepoPath: repo,
+		DefaultBaseBranch: s.repoBranch(ctx, sess.TargetID, repo),
+		DefaultAgent:      sess.Agent, KeepWorktrees: 3,
+	})
+}
+
+// repoBranch asks the repository what branch it is actually on.
+//
+// Assuming "main" is wrong often enough to matter: `git init` still produces
+// `master` on a default install, and a promoted project whose base branch does
+// not exist cannot create a worktree, so its very first dispatch fails with
+// "invalid reference".
+func (s *Server) repoBranch(ctx context.Context, targetID int64, repo string) string {
+	const fallback = "main"
+	target, err := s.DB.Target(targetID)
+	if err != nil {
+		return fallback
+	}
+	ex, err := s.Reg.For(target)
+	if err != nil {
+		return fallback
+	}
+	r, err := ex.Run(ctx, fmt.Sprintf("git -C %s symbolic-ref --short HEAD",
+		shellq.Quote(repo)), executor.RunOpts{Timeout: 20})
+	if err != nil || !r.OK() {
+		return fallback
+	}
+	if branch := strings.TrimSpace(r.Stdout); branch != "" {
+		return branch
+	}
+	return fallback
+}
+
+// scratchSuffixRe matches the date and mktemp suffix makeScratch appends.
+var scratchSuffixRe = regexp.MustCompile(`-[0-9]{8}-[A-Za-z0-9]{6}$`)
+
+// projectNameFromPath names a project after its directory, minus the timestamp a
+// scratch directory carries.
+func projectNameFromPath(repo string) string {
+	base := path.Base(repo)
+	// a scratch directory is "notes-app-20260906-a4Kd9x"; the project is "notes-app"
+	base = scratchSuffixRe.ReplaceAllString(base, "")
+	if base == "" || base == "." || base == "/" {
+		return "untitled project"
+	}
+	return base
+}
+
+func firstNonEmptyStr(vals ...string) string {
+	for _, v := range vals {
+		if v != "" {
+			return v
+		}
+	}
+	return ""
 }
