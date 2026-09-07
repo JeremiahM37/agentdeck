@@ -37,6 +37,22 @@ import (
 // this machine runs. Each rig takes a disjoint id range instead.
 var rigSeq atomic.Int64
 
+// Keep the socket path short (Unix sockets have a length limit), and own the
+// server so test cleanup cannot kill a live session with a matching name.
+func isolateTmux(t *testing.T) {
+	t.Helper()
+	dir, err := os.MkdirTemp("", "adk-tmux-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("TMUX", "")
+	t.Setenv("TMUX_TMPDIR", dir)
+	t.Cleanup(func() {
+		exec.Command("tmux", "kill-server").Run()
+		os.RemoveAll(dir)
+	})
+}
+
 func requireRealTools(t *testing.T) {
 	t.Helper()
 	for _, bin := range []string{"git", "tmux", "bash"} {
@@ -86,6 +102,7 @@ func newRealRig(t *testing.T) *realRig {
 	t.Helper()
 	requireRealTools(t)
 	dir := t.TempDir()
+	isolateTmux(t)
 
 	// a real repository with a real commit on a real branch
 	repo := filepath.Join(dir, "repo")
@@ -340,10 +357,14 @@ func TestARealDispatchRunsAnAgentInARealWorktree(t *testing.T) {
 		t.Errorf("the captured diff does not contain the agent's edit: %s", truncate(string(body), 400))
 	}
 
-	// tmux really did run, and really did clean up after itself
-	out, _ := exec.Command("tmux", "has-session", "-t", att.TmuxSession).CombinedOutput()
-	if !strings.Contains(string(out), "no ") && len(out) == 0 {
-		t.Errorf("tmux session %s is still alive after the attempt finished", att.TmuxSession)
+	// The exit-code file is written before the wrapper exits, so finalization
+	// can beat tmux noticing that exit. Require cleanup within a bounded wait.
+	deadline := time.Now().Add(3 * time.Second)
+	for exec.Command("tmux", "has-session", "-t", "="+att.TmuxSession).Run() == nil {
+		if time.Now().After(deadline) {
+			t.Fatalf("tmux session %s is still alive after the attempt finished", att.TmuxSession)
+		}
+		time.Sleep(20 * time.Millisecond)
 	}
 }
 

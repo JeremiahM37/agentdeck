@@ -52,6 +52,10 @@ func newHarness(t *testing.T, tweak ...func(*config.Config)) *harness {
 	for _, fn := range tweak {
 		fn(cfg)
 	}
+	if !cfg.Mock {
+		// Real executor tests must never inspect or affect the host tmux server.
+		isolateTmux(t)
+	}
 	// bind first so BaseURL is final before the scheduler can read it: the fake
 	// agent calls back into this very server through the staged .agentdeck/env
 	ln, err := net.Listen("tcp", "127.0.0.1:0")

@@ -18,8 +18,9 @@ jobs:
         run: go vet ./...
       - name: Build
         run: go build ./...
-      # every test is hermetic: the mock executor, a temp database per test, and
-      # no real infrastructure anywhere
+      - name: Install local integration tools
+        run: sudo apt-get update && sudo apt-get install -y tmux ttyd
+      # Real integration tests use temporary repositories and scripted agents.
       - name: Test
         run: go test ./... -count=1
 
@@ -39,6 +40,8 @@ jobs:
           python -m pip install --upgrade pip
           pip install pytest playwright
           python -m playwright install --with-deps chromium
+      - name: Install terminal tools
+        run: sudo apt-get update && sudo apt-get install -y tmux ttyd
       - name: Build the server
         run: go build -o ./agentdeck ./cmd/agentdeck
       - name: Browser end-to-end

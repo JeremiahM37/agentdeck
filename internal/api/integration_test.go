@@ -39,16 +39,19 @@ func TestGhostRunningAttemptReconciled(t *testing.T) {
 		obj{"name": "ghostq", "target_id": tgt.id(), "repo_path": "/tmp"}, 201)
 	task := h.task(p.id(), "ghost", "", nil)
 
+	// Set the task first: publishing a running attempt lets the scheduler
+	// finalize it immediately. A later task write could overwrite that result.
+	if err := h.App.DB.Update("tasks", task.id(),
+		map[string]any{"status": "running"}); err != nil {
+		t.Fatal(err)
+	}
+
 	// forge a running attempt pointing at nothing (a crash, or a manual rm)
 	att, err := h.App.DB.InsertAttempt(&store.Attempt{
 		TaskID: task.id(), N: 1, Status: "running", Token: "tok-ghost",
 		WorktreePath: "/nonexistent/wt", Branch: "adk/ghost",
 		TmuxSession: "adk-ghost-none"})
 	if err != nil {
-		t.Fatal(err)
-	}
-	if err := h.App.DB.Update("tasks", task.id(),
-		map[string]any{"status": "running"}); err != nil {
 		t.Fatal(err)
 	}
 
