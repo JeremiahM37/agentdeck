@@ -1,4 +1,5 @@
 """Browser flows: the whole operator loop, on both a phone and a desktop."""
+import time
 import pytest
 from playwright.sync_api import expect
 
@@ -105,7 +106,11 @@ def test_targets_tab_shows_project_capability(page, server):
     """The parity settings had no UI at all — they could only be set by curl."""
     page.goto(server)
     page.click(".tab[data-tab='targets']")
-    card = page.locator(".rowcard").filter(has=page.locator("h3", has_text="demo-app"))
+    # projects are a filterable list now — tapping one opens its settings
+    page.fill("#pj-search", "demo-app")
+    page.wait_for_timeout(300)
+    page.locator(".pjrow", has_text="demo-app").first.click()
+    card = page.locator("#sheet .rowcard")
     expect(card).to_be_visible()
     expect(card.locator(".cap-sel")).to_have_value("restricted")
     card.locator(".cap-sel").select_option("parity")
@@ -113,6 +118,7 @@ def test_targets_tab_shows_project_capability(page, server):
     # leave the shared server as we found it
     card.locator(".cap-sel").select_option("restricted")
     expect(card.locator(".cap-info")).to_contain_text("⚠", timeout=10000)
+    page.locator("#sheet .x").click()
 
 
 @pytest.mark.parametrize("page", [PHONE], indirect=True, ids=["phone"])
@@ -716,3 +722,70 @@ def test_yolo_toggle_fits_on_a_phone(page, server):
     box = page.locator("#ns-yolo").bounding_box()
     assert box["x"] >= 0 and box["x"] + box["width"] <= PHONE["width"] + 1, box
     assert page.evaluate("() => document.documentElement.scrollWidth") <= PHONE["width"] + 1
+
+
+def test_projects_can_be_filtered_and_deleted(page, server):
+    """Eighty-one projects is a wall. The list leads with staleness, filters by
+    name, and deletion is itemised before it happens."""
+    page.goto(server)
+    page.click(".tab[data-tab='targets']")
+    expect(page.locator("#pj-list")).to_be_visible(timeout=10000)
+    rows = page.locator(".pjrow")
+    expect(rows.first).to_be_visible(timeout=10000)
+    before = rows.count()
+    assert before >= 2, f"expected the seeded projects, saw {before}"
+
+    # filtering narrows it, and the count says so
+    page.fill("#pj-search", "demo")
+    page.wait_for_timeout(300)
+    assert page.locator(".pjrow").count() < before
+    expect(page.locator("#pj-count")).to_contain_text("/")
+    page.fill("#pj-search", "")
+    page.wait_for_timeout(300)
+
+    # tapping a row opens that project rather than deleting anything
+    rows.first.click()
+    expect(page.locator("#sheet")).to_be_visible()
+    page.locator("#sheet .x").click()
+
+    # a project with no history deletes without needing cascade
+    name = "disposable-" + str(int(time.time()))
+    pid = page.evaluate("""async (name) => {
+        const t = await (await fetch('/api/targets')).json();
+        const r = await fetch('/api/projects', {method:'POST',
+            headers:{'Content-Type':'application/json'},
+            body: JSON.stringify({name, target_id: t[0].id, repo_path: '/mock/' + name})});
+        return (await r.json()).id;
+    }""", name)
+    page.reload()
+    page.click(".tab[data-tab='targets']")
+    page.fill("#pj-search", name)
+    page.wait_for_timeout(400)
+    expect(page.locator(".pjrow", has_text=name)).to_be_visible(timeout=10000)
+
+    page.click("#pj-select")
+    page.locator(".pjrow", has_text=name).locator("input[type=checkbox]").check()
+    expect(page.locator("#pj-del")).to_contain_text("Delete 1")
+
+    # the confirmation must name what goes
+    seen = []
+    page.on("dialog", lambda d: (seen.append(d.message), d.accept()))
+    page.click("#pj-del")
+    page.wait_for_timeout(2500)
+    assert seen and name in seen[0], f"the confirmation should name the project: {seen}"
+    assert "code on disk is untouched" in seen[0], seen[0]
+
+    gone = page.evaluate(f"fetch('/api/projects/{pid}').then(r => r.status)")
+    assert gone == 404, f"the project is still there ({gone})"
+
+
+@pytest.mark.parametrize("page", [PHONE], indirect=True, ids=["phone"])
+def test_project_list_is_usable_on_a_phone(page, server):
+    page.goto(server)
+    page.click(".tab[data-tab='targets']")
+    expect(page.locator("#pj-list")).to_be_visible(timeout=10000)
+    assert page.evaluate("() => document.documentElement.scrollWidth") <= PHONE["width"] + 1
+    row = page.locator(".pjrow").first
+    box = row.bounding_box()
+    assert box["x"] + box["width"] <= PHONE["width"] + 1, box
+    assert box["height"] >= 30, f"rows are only {box['height']}px — hard to tap"

@@ -492,3 +492,104 @@ func TestAgentsReportWhetherTheyHaveAYoloMode(t *testing.T) {
 		}
 	}
 }
+
+// ---- project cleanup ---------------------------------------------------
+
+// Deleting the right project out of eighty-one needs the facts that identify a
+// dead one: what is attached, and when anything last happened.
+func TestProjectUsageIdentifiesStaleProjects(t *testing.T) {
+	h := newHarness(t)
+	busy := h.seededProjectID()
+	task := h.run(busy, "did work", "x", nil)
+	h.waitStatus(task.id(), "review")
+
+	code, body := h.request("GET", "/api/projects/usage", nil, nil)
+	if code != 200 {
+		t.Fatalf("%d %s", code, body)
+	}
+	var rows []struct {
+		ProjectID  int64   `json:"project_id"`
+		Tasks      int     `json:"tasks"`
+		OpenTasks  int     `json:"open_tasks"`
+		Sessions   int     `json:"sessions"`
+		LastActive float64 `json:"last_active_at"`
+	}
+	json.Unmarshal(body, &rows)
+
+	projects, _ := h.App.DB.Projects()
+	if len(rows) != len(projects) {
+		t.Fatalf("every project needs a row, got %d for %d projects", len(rows), len(projects))
+	}
+	var seen bool
+	for _, r := range rows {
+		if r.LastActive <= 0 {
+			t.Errorf("project %d has no last-active time, so it cannot be sorted", r.ProjectID)
+		}
+		if r.ProjectID == busy {
+			seen = true
+			if r.Tasks < 1 {
+				t.Errorf("a project with a task reports %d", r.Tasks)
+			}
+			if r.OpenTasks < 1 {
+				t.Errorf("a task in review is still open, got %d", r.OpenTasks)
+			}
+		}
+	}
+	if !seen {
+		t.Error("the busy project is missing from the usage list")
+	}
+}
+
+// History is not thrown away by accident: a project with tasks is refused
+// unless the caller says explicitly that the history goes too.
+func TestDeletingAProjectWithHistoryNeedsCascade(t *testing.T) {
+	h := newHarness(t)
+	project := h.seededProjectID()
+	task := h.run(project, "leaves history", "x", nil)
+	h.waitStatus(task.id(), "review")
+
+	code, body := h.request("DELETE", fmt.Sprintf("/api/projects/%d", project), nil, nil)
+	if code != 409 {
+		t.Fatalf("expected a refusal, got %d %s", code, body)
+	}
+	if !strings.Contains(string(body), "cascade") {
+		t.Errorf("the refusal should say how to proceed: %s", body)
+	}
+	if _, err := h.App.DB.Project(project); err != nil {
+		t.Fatal("the project was deleted despite the refusal")
+	}
+
+	// with cascade the project and everything under it goes
+	if code, body := h.request("DELETE",
+		fmt.Sprintf("/api/projects/%d?cascade=true", project), nil, nil); code != 204 {
+		t.Fatalf("cascade delete: %d %s", code, body)
+	}
+	if _, err := h.App.DB.Project(project); err == nil {
+		t.Error("the project survived a cascade delete")
+	}
+	if n, _ := h.App.DB.Count("tasks", "project_id=?", project); n != 0 {
+		t.Errorf("%d tasks were orphaned", n)
+	}
+	if n, _ := h.App.DB.Count("attempts", "task_id=?", task.id()); n != 0 {
+		t.Errorf("%d attempts were orphaned", n)
+	}
+	// and the board still works afterwards
+	if code, _ := h.request("GET", "/api/tasks", nil, nil); code != 200 {
+		t.Error("the board broke after a cascade delete")
+	}
+}
+
+// An empty project is the common case in a cleanup and must not need cascade.
+func TestDeletingAnEmptyProjectIsSimple(t *testing.T) {
+	h := newHarness(t)
+	targets, _ := h.App.DB.Targets()
+	created := h.post("/api/projects", obj{
+		"name": "abandoned", "target_id": targets[0].ID, "repo_path": "/mock/old"}, 201)
+	id := int64(created.num("id"))
+	if code, body := h.request("DELETE", fmt.Sprintf("/api/projects/%d", id), nil, nil); code != 204 {
+		t.Fatalf("%d %s", code, body)
+	}
+	if _, err := h.App.DB.Project(id); err == nil {
+		t.Error("it is still there")
+	}
+}

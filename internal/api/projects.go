@@ -292,8 +292,34 @@ func (s *Server) deleteProject(w http.ResponseWriter, r *http.Request) {
 		httpError(w, 404, "no such project")
 		return
 	}
+	// A project with history is refused unless the caller says explicitly that
+	// the history goes too. Deleting eighty-one stale projects should not be a
+	// way to silently lose the record of what was done in them.
 	if s.DB.Exists("tasks", "project_id=?", id) {
-		httpError(w, 409, "project has tasks")
+		if r.URL.Query().Get("cascade") != "true" {
+			n, _ := s.DB.Count("tasks", "project_id=?", id)
+			httpError(w, 409, "project has %d tasks — pass ?cascade=true to delete them too", n)
+			return
+		}
+		if _, err := s.DB.Exec(`DELETE FROM events WHERE attempt_id IN
+			(SELECT a.id FROM attempts a JOIN tasks t ON t.id=a.task_id WHERE t.project_id=?)`, id); err != nil {
+			respondErr(w, err)
+			return
+		}
+		for _, stmt := range []string{
+			`DELETE FROM approvals WHERE attempt_id IN
+				(SELECT a.id FROM attempts a JOIN tasks t ON t.id=a.task_id WHERE t.project_id=?)`,
+			`DELETE FROM attempts WHERE task_id IN (SELECT id FROM tasks WHERE project_id=?)`,
+			`DELETE FROM tasks WHERE project_id=?`,
+		} {
+			if _, err := s.DB.Exec(stmt, id); err != nil {
+				respondErr(w, err)
+				return
+			}
+		}
+	}
+	if _, err := s.DB.Exec(`DELETE FROM memories WHERE project_id=?`, id); err != nil {
+		respondErr(w, err)
 		return
 	}
 	// Sessions reference the project, and a foreign key made deleting one with
@@ -343,4 +369,86 @@ func nonNil(v []string) []string {
 		return []string{}
 	}
 	return v
+}
+
+// ---- project usage, for deciding what is dead --------------------------
+
+// projectUsage is what makes an old project identifiable as old. Deleting one
+// is easy; knowing which of eighty-one is no longer worked on is the hard part,
+// so the list carries the two facts that answer it: how much is attached, and
+// when anything last happened.
+type projectUsage struct {
+	ProjectID  int64   `json:"project_id"`
+	Tasks      int     `json:"tasks"`
+	OpenTasks  int     `json:"open_tasks"`
+	Sessions   int     `json:"sessions"`
+	LastActive float64 `json:"last_active_at"`
+}
+
+func (s *Server) projectsUsage(w http.ResponseWriter, r *http.Request) {
+	// one pass per table rather than a query per project: with eighty-one
+	// projects the N+1 version is eighty-one round trips to render one screen
+	usage := map[int64]*projectUsage{}
+	at := func(id int64) *projectUsage {
+		if u, ok := usage[id]; ok {
+			return u
+		}
+		u := &projectUsage{ProjectID: id}
+		usage[id] = u
+		return u
+	}
+	projects, err := s.DB.Projects()
+	if err != nil {
+		respondErr(w, err)
+		return
+	}
+	for _, p := range projects {
+		u := at(p.ID)
+		u.LastActive = p.CreatedAt // a project with nothing in it is as old as itself
+	}
+
+	rows, err := s.DB.Query(`SELECT project_id, COUNT(*),
+		SUM(CASE WHEN status IN ('queued','running','review') THEN 1 ELSE 0 END),
+		MAX(COALESCE(updated_at, created_at))
+		FROM tasks GROUP BY project_id`)
+	if err == nil {
+		for rows.Next() {
+			var id int64
+			var total, open int
+			var last float64
+			if rows.Scan(&id, &total, &open, &last) == nil {
+				u := at(id)
+				u.Tasks, u.OpenTasks = total, open
+				if last > u.LastActive {
+					u.LastActive = last
+				}
+			}
+		}
+		rows.Close()
+	}
+
+	rows, err = s.DB.Query(`SELECT project_id, COUNT(*),
+		MAX(COALESCE(last_activity_at, updated_at, created_at))
+		FROM sessions WHERE project_id IS NOT NULL GROUP BY project_id`)
+	if err == nil {
+		for rows.Next() {
+			var id int64
+			var n int
+			var last float64
+			if rows.Scan(&id, &n, &last) == nil {
+				u := at(id)
+				u.Sessions = n
+				if last > u.LastActive {
+					u.LastActive = last
+				}
+			}
+		}
+		rows.Close()
+	}
+
+	out := make([]*projectUsage, 0, len(usage))
+	for _, u := range usage {
+		out = append(out, u)
+	}
+	writeJSON(w, 200, out)
 }

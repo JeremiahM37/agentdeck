@@ -580,3 +580,18 @@ textarea.f { min-height: 118px; resize: vertical; line-height: 1.6; }
 .cand .where { font-size: 11.5px; color: var(--ink-faint); word-break: break-all; }
 .cand .grow { flex: 1; min-width: 0; }
 .badge.dim { background: var(--accent); color: #0b0a1a; }
+
+/* ---- project manager: a list you can scan, not a wall of cards ---- */
+.pjlist { max-height: 55vh; overflow-y: auto; border: 1px solid var(--line);
+  border-radius: 10px; }
+.pjrow { display: flex; align-items: center; gap: 10px; padding: 9px 11px;
+  border-bottom: 1px solid var(--line); cursor: pointer; }
+.pjrow:last-child { border-bottom: 0; }
+.pjrow:hover { background: var(--panel-2, rgba(139, 92, 246, .07)); }
+.pjrow input[type=checkbox] { width: auto; margin: 0; flex: 0 0 auto; }
+.pjmain { min-width: 0; flex: 1; }
+.pjname { font-weight: 600; font-size: 13px; overflow: hidden;
+  text-overflow: ellipsis; white-space: nowrap; }
+.pjmeta { font-size: 11px; color: var(--ink-dim); margin-top: 2px; }
+.pjpath { font-size: 10.5px; color: var(--ink-dim); opacity: .7; overflow: hidden;
+  text-overflow: ellipsis; white-space: nowrap; }

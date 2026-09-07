@@ -892,7 +892,7 @@ async function renderTargets() {
     };
     list.appendChild(el);
   }
-  for (const p of state.projects) list.appendChild(projectCard(p));
+  list.appendChild(projectsCard());
 
   list.appendChild(importCard());
 
@@ -1142,6 +1142,167 @@ function evRow(e) {
   return el;
 }
 
+/* ---------- projects: finding and removing the dead ones ---------- */
+
+// Eighty-one projects is a wall of cards. What is actually needed is finding
+// which are no longer worked on, so this leads with staleness and attachment
+// counts and keeps deletion behind an explicit, itemised confirmation.
+function projectsCard() {
+  const el = document.createElement("div");
+  el.className = "rowcard";
+  el.innerHTML = `
+    <h3>Projects <span class="chip" id="pj-count">${state.projects.length}</span></h3>
+    <div class="sub">Sorted by how long since anything happened. Tap one to edit it.</div>
+    <input class="f" id="pj-search" placeholder="filter by name or path" autocomplete="off">
+    <div class="btnrow" style="margin:8px 0">
+      <button class="b" id="pj-select">Select…</button>
+      <button class="b no" id="pj-del" hidden></button>
+      <button class="b" id="pj-cancel" hidden>Cancel</button>
+    </div>
+    <div id="pj-list" class="pjlist"></div>`;
+
+  let selecting = false;
+  const chosen = new Set();
+  const usage = {};
+
+  const draw = () => {
+    const q = ($("#pj-search", el).value || "").toLowerCase();
+    const rows = state.projects
+      .filter((p) => !q || p.name.toLowerCase().includes(q) ||
+        (p.repo_path || "").toLowerCase().includes(q))
+      .map((p) => ({ p, u: usage[p.id] || {} }))
+      .sort((a, b) => (a.u.last_active_at || 0) - (b.u.last_active_at || 0));
+
+    const box = $("#pj-list", el);
+    box.innerHTML = "";
+    for (const { p, u } of rows) {
+      const row = document.createElement("div");
+      row.className = "pjrow";
+      const bits = [];
+      if (u.tasks) bits.push(`${u.tasks} task${u.tasks === 1 ? "" : "s"}` +
+        (u.open_tasks ? ` (${u.open_tasks} open)` : ""));
+      if (u.sessions) bits.push(`${u.sessions} session${u.sessions === 1 ? "" : "s"}`);
+      const quiet = u.last_active_at
+        ? "quiet " + fmtDuration(Date.now() / 1000 - u.last_active_at) : "";
+      row.innerHTML = `
+        ${selecting ? `<input type="checkbox" class="pjbox">` : ""}
+        <div class="pjmain">
+          <div class="pjname"></div>
+          <div class="pjmeta">${esc(quiet)}${bits.length ? " · " + esc(bits.join(" · ")) : ""}</div>
+          <div class="pjpath"></div>
+        </div>
+        ${u.open_tasks ? '<span class="chip warn">active</span>' : ""}`;
+      $(".pjname", row).textContent = p.name;
+      $(".pjpath", row).textContent = p.repo_path || "";
+      if (selecting) {
+        const cb = $(".pjbox", row);
+        cb.checked = chosen.has(p.id);
+        cb.onchange = () => { cb.checked ? chosen.add(p.id) : chosen.delete(p.id); syncBar(); };
+        row.onclick = (ev) => { if (ev.target !== cb) { cb.checked = !cb.checked; cb.onchange(); } };
+      } else {
+        row.onclick = () => openProjectEditor(p);
+      }
+      box.appendChild(row);
+    }
+    $("#pj-count", el).textContent = rows.length === state.projects.length
+      ? state.projects.length : `${rows.length}/${state.projects.length}`;
+  };
+
+  const syncBar = () => {
+    const del = $("#pj-del", el);
+    del.hidden = !selecting || chosen.size === 0;
+    del.textContent = `Delete ${chosen.size}`;
+  };
+
+  $("#pj-search", el).oninput = draw;
+  $("#pj-select", el).onclick = () => {
+    selecting = !selecting;
+    chosen.clear();
+    $("#pj-select", el).textContent = selecting ? "Selecting" : "Select…";
+    $("#pj-cancel", el).hidden = !selecting;
+    syncBar(); draw();
+  };
+  $("#pj-cancel", el).onclick = () => {
+    selecting = false; chosen.clear();
+    $("#pj-select", el).textContent = "Select…";
+    $("#pj-cancel", el).hidden = true;
+    syncBar(); draw();
+  };
+  $("#pj-del", el).onclick = () => deleteProjects([...chosen], usage, () => {
+    selecting = false; chosen.clear();
+    $("#pj-select", el).textContent = "Select…";
+    $("#pj-cancel", el).hidden = true;
+    syncBar();
+  });
+
+  api("/projects/usage").then((rows) => {
+    for (const u of rows) usage[u.project_id] = u;
+    draw();
+  }).catch(draw);
+  draw();
+  return el;
+}
+
+// Deletion is itemised before it happens: the confirmation names what is being
+// removed and what history goes with it, because "delete 14 projects" is not
+// something anyone can check after the fact.
+async function deleteProjects(ids, usage, done) {
+  if (!ids.length) return;
+  const named = ids.map((id) => state.projects.find((p) => p.id === id)).filter(Boolean);
+  const withHistory = named.filter((p) => (usage[p.id] || {}).tasks);
+  const active = named.filter((p) => (usage[p.id] || {}).open_tasks);
+
+  let msg = `Delete ${named.length} project${named.length === 1 ? "" : "s"}?\n\n` +
+    named.map((p) => "  • " + p.name).join("\n") +
+    "\n\nThe project record goes. Your code on disk is untouched.";
+  if (withHistory.length) {
+    const total = withHistory.reduce((n, p) => n + usage[p.id].tasks, 0);
+    msg += `\n\n${withHistory.length} of them carry ${total} task${total === 1 ? "" : "s"}` +
+      " — that history is deleted too and cannot be recovered.";
+  }
+  if (active.length) {
+    msg += `\n\n⚠ ${active.length} still ${active.length === 1 ? "has" : "have"}` +
+      " work in flight: " + active.map((p) => p.name).join(", ");
+  }
+  if (!confirm(msg)) return;
+  if (active.length && !confirm(
+      `Really delete ${active.length} project${active.length === 1 ? "" : "s"} with ` +
+      "work still running? Those tasks are lost.")) return;
+
+  let ok = 0;
+  const failed = [];
+  for (const p of named) {
+    try {
+      await api(`/projects/${p.id}?cascade=true`, { method: "DELETE" });
+      ok++;
+    } catch (e) { failed.push(`${p.name}: ${e.message}`); }
+  }
+  done?.();
+  await refreshMeta();
+  await refreshTasks().catch(() => {});
+  renderTargets();
+  if (failed.length) toast(`Deleted ${ok}. Failed: ${failed.join("; ")}`, true);
+  else toast(`Deleted ${ok} project${ok === 1 ? "" : "s"}`);
+}
+
+// the single-project editor, reached by tapping a row
+function openProjectEditor(p) {
+  const card = projectCard(p);
+  const del = document.createElement("button");
+  del.className = "b no";
+  del.textContent = "Delete project";
+  del.onclick = () => api("/projects/usage")
+    .then((rows) => {
+      const usage = {};
+      for (const u of rows) usage[u.project_id] = u;
+      return deleteProjects([p.id], usage);
+    })
+    .catch(() => deleteProjects([p.id], {}));
+  ($(".btnrow", card) || card).appendChild(del);
+  state.sheet = { kind: "project", node: card };
+  renderSheet();
+}
+
 function renderSheet() {
   if (!state.sheet) return;
   const sheet = $("#sheet");
@@ -1149,6 +1310,13 @@ function renderSheet() {
   if (state.sheet.kind === "new") return renderNewTask(sheet);
   if (state.sheet.kind === "new-session") return renderNewSession(sheet);
   if (state.sheet.kind === "discover") return renderDiscover(sheet);
+  if (state.sheet.kind === "project") {
+    sheet.innerHTML = `<div class="sheet-grip"><i></i></div>
+      <div class="sheet-head"><h2>Project</h2><button class="x">✕</button></div>`;
+    sheet.appendChild(state.sheet.node);
+    $(".x", sheet).onclick = closeSheet;
+    return;
+  }
   const t = state.sheetTask;
   if (!t) return;
   sheet.innerHTML = `
