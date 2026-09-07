@@ -595,11 +595,8 @@ function renderNewSession(sheet) {
     <label class="f">Name</label>
     <input class="f" id="ns-name" placeholder="what you're working on">
     <label class="f">Agent</label>
-    <div class="seg f" id="ns-agent" data-value="claude">
-      <button type="button" data-agent="claude" class="on">Claude Code</button>
-      <button type="button" data-agent="codex">Codex</button>
-      <button type="button" data-agent="gemini">Gemini</button>
-    </div>
+    <select class="f" id="ns-agent"></select>
+    <div class="subhint" id="ns-agent-hint"></div>
     <label class="f">Model</label>
     <input class="f" id="ns-model" list="adk-models" placeholder="default" autocomplete="off">
     <datalist id="adk-models">
@@ -619,12 +616,24 @@ function renderNewSession(sheet) {
     </div>`;
   $(".x", sheet).onclick = closeSheet;
   const agentBox = $("#ns-agent");
-  $$("button", agentBox).forEach((b) => {
-    b.onclick = () => {
-      agentBox.dataset.value = b.dataset.agent;
-      $$("button", agentBox).forEach((x) => x.classList.toggle("on", x === b));
-    };
+  // the agent set is yours: the three built-ins plus anything you defined, so
+  // any CLI that starts in a terminal starts from here
+  api("/agents").then((specs) => {
+    agentBox.innerHTML = specs.map((a) =>
+      `<option value="${esc(a.name)}">${esc(a.name)}${a.builtin ? "" : " (custom)"}</option>`).join("");
+    agentBox.value = "claude";
+    syncAgentHint(specs);
+    agentBox.onchange = () => syncAgentHint(specs);
+  }).catch(() => {
+    agentBox.innerHTML = '<option value="claude">claude</option>';
   });
+  function syncAgentHint(specs) {
+    const a = specs.find((x) => x.name === agentBox.value);
+    const bits = [];
+    if (a && !a.model_flag) bits.push("no model switch — the Model field is ignored");
+    if (a && !a.resume_args) bits.push("cannot resume its own history");
+    $("#ns-agent-hint").textContent = bits.join(" · ");
+  }
   const hint = $("#ns-hint");
   const syncHint = () => {
     const mode = $("#ns-start").value;
@@ -642,7 +651,7 @@ function renderNewSession(sheet) {
       await api("/sessions", { method: "POST", body: {
         project_id: +$("#ns-project").value,
         name: $("#ns-name").value.trim(),
-        agent: agentBox.dataset.value,
+        agent: agentBox.value,
         model: $("#ns-model").value.trim(),
         resume: mode === "resume",
         brief: mode === "brief",

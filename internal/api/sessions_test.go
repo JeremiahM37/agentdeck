@@ -9,10 +9,12 @@ import (
 	"context"
 	"fmt"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/JeremiahM37/agentdeck/internal/executor"
+	"github.com/JeremiahM37/agentdeck/internal/store"
 )
 
 func (h *harness) session(body obj) obj {
@@ -267,11 +269,20 @@ func TestHandoffWritesAWrapAndPrimesASuccessor(t *testing.T) {
 	if successor.str("tmux_session") == sess.str("tmux_session") {
 		t.Error("the successor must be a genuinely new process")
 	}
-	// the successor was primed with its predecessor's handoff
-	h.waitUntil("the successor to be primed", func() bool {
-		return strings.Contains(h.sessionByID(successor.id()).str("pane_tail"),
-			"continuing work on")
-	})
+	// the successor was primed with its predecessor's handoff — carried on the
+	// launch command itself, so there is no paste to race
+	primed := false
+	for _, c := range h.mock().CmdLog() {
+		if strings.HasPrefix(c, "tmux new-session") &&
+			strings.Contains(c, successor.str("tmux_session")) &&
+			strings.Contains(c, "continuing work on") &&
+			strings.Contains(c, "WHERE WE ARE") {
+			primed = true
+		}
+	}
+	if !primed {
+		t.Error("the successor was launched without its predecessor's handoff")
+	}
 
 	// and the wrap reached project memory, so a DISPATCHED task on this project
 	// starts from the same state an interactive session would
@@ -445,4 +456,132 @@ func TestHealthCarriesSessionCounts(t *testing.T) {
 		return h.get("/api/health").num("sessions_waiting") >= 1 ||
 			h.sessionByID(sess.id()).str("status") != "waiting"
 	})
+}
+
+// Switching agents on a project is where context quietly disappears: Claude Code
+// reads CLAUDE.md, codex reads AGENTS.md, and neither reads the other's. The
+// brief names every onboarding doc the repo actually has, so the handover does
+// not depend on which CLI is picking it up.
+func TestBriefNamesTheReposOwnDocs(t *testing.T) {
+	h := newHarness(t, realLocal)
+	tid := h.localTarget(t)
+	repo := t.TempDir()
+	writeFile(t, filepath.Join(repo, "HANDOFF.md"), "where we got to")
+	writeFile(t, filepath.Join(repo, "AGENTS.md"), "codex reads this")
+	writeFile(t, filepath.Join(repo, "README.md"), "readme")
+	p := h.post("/api/projects",
+		obj{"name": "ctxproj", "target_id": tid, "repo_path": repo}, 201)
+
+	got := h.get(fmt.Sprintf("/api/projects/%d/brief", p.id()))
+	brief := got.str("brief")
+	for _, want := range []string{"HANDOFF.md", "AGENTS.md", "README.md", repo} {
+		if !strings.Contains(brief, want) {
+			t.Errorf("brief does not name %q:\n%s", want, brief)
+		}
+	}
+	// a file the repo does not have must not be invented
+	if strings.Contains(brief, "CLAUDE.md") {
+		t.Errorf("brief names a document that is not there:\n%s", brief)
+	}
+	// the repo's own handoff is the most deliberate source, so it leads
+	if !strings.HasPrefix(strings.TrimSpace(brief), "## Read these first") {
+		t.Errorf("brief should open with the repo's own docs:\n%s", brief)
+	}
+}
+
+func TestBriefCarriesNotesAndTheLastWrap(t *testing.T) {
+	h := newHarness(t, realLocal)
+	tid := h.localTarget(t)
+	p := h.post("/api/projects", obj{"name": "carried", "target_id": tid,
+		"repo_path": t.TempDir()}, 201)
+	if _, err := h.App.DB.InsertNote(p.id(), "the fan is loud above 3GHz", nil); err != nil {
+		t.Fatal(err)
+	}
+	// a wrap belongs to the session that wrote it, so make one to hang it off
+	sess, err := h.App.DB.InsertSession(&store.Session{
+		ProjectID: ptr(p.id()), TargetID: tid, Name: "prior", Agent: "claude",
+		Workdir: "/tmp", TmuxSession: "gone"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.App.DB.InsertWrap(&store.Wrap{
+		SessionID: sess.ID, ProjectID: ptr(p.id()),
+		Summary: "mid-refactor of the tick loop"}); err != nil {
+		t.Fatal(err)
+	}
+	brief := h.get(fmt.Sprintf("/api/projects/%d/brief", p.id())).str("brief")
+	if !strings.Contains(brief, "mid-refactor of the tick loop") {
+		t.Errorf("the last handoff is missing:\n%s", brief)
+	}
+	if !strings.Contains(brief, "the fan is loud") {
+		t.Errorf("project notes are missing:\n%s", brief)
+	}
+}
+
+func ptr[T any](v T) *T { return &v }
+
+// "Any agent I want, CLI or local" — the board should not hold an opinion about
+// which binary is in the terminal.
+func TestCustomAgentsAreDefinableAndLaunchable(t *testing.T) {
+	h := newHarness(t)
+	builtins := h.getList("/api/agents")
+	if len(builtins) != 3 {
+		t.Fatalf("expected the three built-ins, got %d", len(builtins))
+	}
+
+	h.decode("PUT", "/api/agents", []obj{
+		{"name": "aider", "command": "aider", "model_flag": "--model",
+			"prompt_arg": true, "env": obj{"AIDER_DARK_MODE": "1"}},
+	}, 200, nil)
+	names := map[string]bool{}
+	for _, a := range h.getList("/api/agents") {
+		names[a.str("name")] = true
+	}
+	if !names["aider"] || !names["claude"] {
+		t.Fatalf("agent set: %v", names)
+	}
+
+	// and a session actually launches with it
+	sess := h.session(obj{"project_id": h.seededProjectID(), "agent": "aider",
+		"model": "qwen3.6:35b-a3b"})
+	if sess.str("agent") != "aider" {
+		t.Fatalf("session agent: %v", sess.str("agent"))
+	}
+	cmd := h.launchCmd()
+	for _, want := range []string{"aider", "--model qwen3.6:35b-a3b", "AIDER_DARK_MODE=1"} {
+		if !strings.Contains(cmd, want) {
+			t.Errorf("launch missing %q: %s", want, cmd)
+		}
+	}
+}
+
+func TestUnknownAgentIsRejectedWithSomethingActionable(t *testing.T) {
+	h := newHarness(t)
+	code, body := h.request("POST", "/api/sessions",
+		obj{"project_id": h.seededProjectID(), "agent": "cursor"}, nil)
+	if code != 422 || !strings.Contains(string(body), "/api/agents") {
+		t.Fatalf("the error should say how to add it: %d %s", code, body)
+	}
+	if code := h.status("PUT", "/api/agents", []obj{{"name": "x"}}); code != 400 {
+		t.Errorf("an agent with no command must be rejected: %d", code)
+	}
+}
+
+// A project's env is the local-model door, and it has to reach sessions too —
+// it only ever reached dispatched tasks before.
+func TestSessionInheritsTheProjectsEnvForLocalModels(t *testing.T) {
+	h := newHarness(t)
+	p := h.post("/api/projects", obj{"name": "localmodel-sess",
+		"target_id": h.firstTargetID(), "repo_path": "/mock/lm",
+		"env": obj{"ANTHROPIC_BASE_URL": "http://ollama-host:11434",
+			"ANTHROPIC_AUTH_TOKEN": "ollama"}}, 201)
+	h.session(obj{"project_id": p.id(), "model": "qwen3.6:35b-a3b"})
+	cmd := h.launchCmd()
+	for _, want := range []string{
+		"ANTHROPIC_BASE_URL=http://ollama-host:11434",
+		"ANTHROPIC_AUTH_TOKEN=ollama", "--model qwen3.6:35b-a3b"} {
+		if !strings.Contains(cmd, want) {
+			t.Errorf("launch missing %q: %s", want, cmd)
+		}
+	}
 }

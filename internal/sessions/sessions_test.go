@@ -9,12 +9,23 @@ import (
 	"github.com/JeremiahM37/agentdeck/internal/store"
 )
 
-func launcher() Launcher {
-	return Launcher{ClaudeBin: "claude", CodexBin: "codex", GeminiBin: "gemini"}
+func launcher() specLauncher { return specLauncher{} }
+
+// specLauncher keeps the old call shape while going through the real spec path,
+// so these tests exercise what production runs.
+type specLauncher struct{}
+
+func (specLauncher) LaunchCommand(agent, workdir, tmuxName, model string,
+	resume bool, prompt string) string {
+	spec, ok := Find(Builtins(), agent)
+	if !ok {
+		return ""
+	}
+	return spec.LaunchCommand(workdir, tmuxName, model, resume, prompt, "")
 }
 
 func TestLaunchCommandIsInteractiveNotHeadless(t *testing.T) {
-	cmd := launcher().LaunchCommand("claude", "/srv/repo", "adk-s7", "opus", false)
+	cmd := launcher().LaunchCommand("claude", "/srv/repo", "adk-s7", "opus", false, "")
 	if !strings.HasPrefix(cmd, "tmux new-session -d -s adk-s7 ") {
 		t.Fatalf("prefix: %s", cmd)
 	}
@@ -35,19 +46,19 @@ func TestLaunchCommandIsInteractiveNotHeadless(t *testing.T) {
 }
 
 func TestLaunchCommandResumesPerAgent(t *testing.T) {
-	if got := launcher().LaunchCommand("claude", "/r", "s", "", true); !strings.Contains(got, "--continue") {
+	if got := launcher().LaunchCommand("claude", "/r", "s", "", true, ""); !strings.Contains(got, "--continue") {
 		t.Errorf("claude resume: %s", got)
 	}
-	if got := launcher().LaunchCommand("codex", "/r", "s", "", true); !strings.Contains(got, "resume --last") {
+	if got := launcher().LaunchCommand("codex", "/r", "s", "", true, ""); !strings.Contains(got, "resume --last") {
 		t.Errorf("codex resume: %s", got)
 	}
-	if got := launcher().LaunchCommand("claude", "/r", "s", "", false); strings.Contains(got, "--continue") {
+	if got := launcher().LaunchCommand("claude", "/r", "s", "", false, ""); strings.Contains(got, "--continue") {
 		t.Errorf("a fresh session must not resume: %s", got)
 	}
 }
 
 func TestLaunchCommandQuotesHostileWorkdirs(t *testing.T) {
-	cmd := launcher().LaunchCommand("claude", "/srv/'; rm -rf /; '", "s", "", false)
+	cmd := launcher().LaunchCommand("claude", "/srv/'; rm -rf /; '", "s", "", false, "")
 	if strings.Count(cmd, "rm -rf /") != 1 || !strings.Contains(cmd, `'\''`) {
 		t.Fatalf("hostile path was not quoted as one word: %s", cmd)
 	}
@@ -288,5 +299,131 @@ func TestParseTimesReadsTmuxsOwnClock(t *testing.T) {
 		if _, _, ok := ParseTimes(bad); ok {
 			t.Errorf("%q should not parse", bad)
 		}
+	}
+}
+
+// An opening message rides on the command line, not a timed paste: the paste is
+// a race against whatever the CLI shows first, and codex once answered its own
+// self-update prompt with it.
+func TestLaunchCommandCarriesTheOpeningPrompt(t *testing.T) {
+	cmd := launcher().LaunchCommand("codex", "/srv/repo", "adk-s9", "", false,
+		"read HANDOFF.md and tell me where we are")
+	if !strings.Contains(cmd, "read HANDOFF.md and tell me where we are") {
+		t.Fatalf("prompt missing: %s", cmd)
+	}
+	// still interactive — no -p, no exec-and-exit
+	if strings.Contains(cmd, " -p ") || strings.Contains(cmd, "exec --json") {
+		t.Errorf("a session must stay interactive: %s", cmd)
+	}
+	// a hostile prompt stays one argument
+	evil := launcher().LaunchCommand("claude", "/r", "s", "", false, "'; rm -rf /; '")
+	if strings.Count(evil, "rm -rf /") != 1 || !strings.Contains(evil, `'\''`) {
+		t.Errorf("prompt was not quoted as one word: %s", evil)
+	}
+	// resume replays a conversation; the CLIs take no opening message with it
+	claude, _ := Find(Builtins(), "claude")
+	codex, _ := Find(Builtins(), "codex")
+	gemini, _ := Find(Builtins(), "gemini")
+	if !claude.PromptArg || !codex.PromptArg {
+		t.Error("claude and codex both accept a positional prompt")
+	}
+	if gemini.PromptArg {
+		t.Error("gemini is not known to, so it must fall back to typing")
+	}
+}
+
+// The set of agents is the operator's, not a constant here. Any CLI that can be
+// started in a terminal should be startable from the board.
+func TestCustomAgentsMergeOverTheBuiltins(t *testing.T) {
+	raw := `[{"name":"aider","command":"aider","model_flag":"--model","prompt_arg":true},
+	         {"name":"claude","command":"/opt/claude/bin/claude","model_flag":"--model",
+	          "resume_args":["--continue"],"prompt_arg":true}]`
+	specs := ParseSpecs(raw)
+
+	aider, ok := Find(specs, "aider")
+	if !ok || aider.Command != "aider" || aider.Builtin {
+		t.Fatalf("custom agent: %+v", aider)
+	}
+	// same name overrides, so a built-in whose CLI drifted can be corrected
+	// without waiting for a release
+	claude, _ := Find(specs, "claude")
+	if claude.Command != "/opt/claude/bin/claude" || claude.Builtin {
+		t.Fatalf("override: %+v", claude)
+	}
+	// the untouched built-ins survive
+	if _, ok := Find(specs, "codex"); !ok {
+		t.Error("codex went missing")
+	}
+	// a corrupt definition must not take the built-ins with it
+	if len(ParseSpecs("{not json")) < 3 {
+		t.Error("a bad agents setting should degrade to the built-ins")
+	}
+}
+
+func TestCustomAgentLaunches(t *testing.T) {
+	specs := ParseSpecs(`[{"name":"aider","command":"aider","args":["--no-auto-commits"],
+	                       "model_flag":"--model","prompt_arg":true,
+	                       "env":{"AIDER_DARK_MODE":"1"}}]`)
+	spec, _ := Find(specs, "aider")
+	env, err := EnvPrefix(map[string]string{"OPENAI_API_BASE": "http://ollama:11434/v1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cmd := spec.LaunchCommand("/srv/repo", "adk-s3", "qwen3.6:35b-a3b", false,
+		"where are we?", env)
+	for _, want := range []string{
+		"aider --no-auto-commits", "--model qwen3.6:35b-a3b", "where are we?",
+		"OPENAI_API_BASE=http://ollama:11434/v1", "cd /srv/repo", "exec bash",
+	} {
+		if !strings.Contains(cmd, want) {
+			t.Errorf("missing %q:\n%s", want, cmd)
+		}
+	}
+}
+
+// An agent with no model switch must ignore a model rather than invent a flag.
+func TestSpecWithoutAModelFlagIgnoresTheModel(t *testing.T) {
+	spec := Spec{Name: "x", Command: "x"}
+	cmd := spec.LaunchCommand("/r", "s", "opus", false, "", "")
+	if strings.Contains(cmd, "opus") {
+		t.Fatalf("a model was passed to a CLI with no model flag: %s", cmd)
+	}
+}
+
+func TestValidateSpecsRejectsWhatCannotLaunch(t *testing.T) {
+	for _, bad := range []string{
+		`[{"command":"x"}]`, // no name
+		`[{"name":"x"}]`,    // no command
+		`[{"name":"a","command":"a"},{"name":"a","command":"b"}]`, // duplicate
+		`[{"name":"a","command":"a","env":{"BAD-NAME":"1"}}]`,     // hostile env key
+		`{"name":"a"}`, // not a list
+	} {
+		if err := ValidateSpecs(bad); err == nil {
+			t.Errorf("should have been rejected: %s", bad)
+		}
+	}
+	if err := ValidateSpecs(`[{"name":"aider","command":"aider"}]`); err != nil {
+		t.Errorf("valid definition rejected: %v", err)
+	}
+	if err := ValidateSpecs(""); err != nil {
+		t.Errorf("empty is valid: %v", err)
+	}
+}
+
+// A session reaching a local model is the same mechanism a dispatched task uses.
+func TestEnvPrefixQuotesAndSorts(t *testing.T) {
+	got, err := EnvPrefix(map[string]string{
+		"OPENAI_BASE_URL": "http://ollama:11434/v1", "OPENAI_API_KEY": "it's local"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(got, "OPENAI_API_KEY=") {
+		t.Errorf("keys should be sorted for a stable command: %s", got)
+	}
+	if !strings.Contains(got, `'it'\''s local'`) {
+		t.Errorf("value not shell-quoted: %s", got)
+	}
+	if _, err := EnvPrefix(map[string]string{"$(evil)": "x"}); err == nil {
+		t.Error("a hostile env name must be rejected")
 	}
 }

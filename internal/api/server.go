@@ -94,6 +94,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/hook/notes", s.hookAddNote)
 
 	// ---- sessions: the interactive half of the board ----
+	mux.HandleFunc("GET /api/agents", s.listAgents)
+	mux.HandleFunc("PUT /api/agents", s.putAgents)
 	mux.HandleFunc("GET /api/sessions", s.listSessions)
 	mux.HandleFunc("POST /api/sessions", s.createSession)
 	mux.HandleFunc("GET /api/sessions/discover", s.discoverSessions)
@@ -106,6 +108,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/sessions/{id}/handoff", s.handoffSession)
 	mux.HandleFunc("GET /api/sessions/{id}/wraps", s.sessionWraps)
 	mux.HandleFunc("GET /api/projects/{id}/wraps", s.projectWraps)
+	mux.HandleFunc("GET /api/projects/{id}/brief", s.previewBrief)
 
 	// ---- misc ----
 	mux.HandleFunc("GET /api/health", s.health)

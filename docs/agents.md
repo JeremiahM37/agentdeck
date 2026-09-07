@@ -65,7 +65,33 @@ Environment=AGENTDECK_CODEX_BIN=/home/you/.local/bin/codex
 
 `AGENTDECK_CLAUDE_BIN` and `AGENTDECK_GEMINI_BIN` work the same way.
 
-## Adding an agent
+## Any CLI, for sessions
+
+Dispatched tasks use the three built-in adapters, because a task needs its output
+parsed into a timeline. An interactive **session** does not — a human is reading
+the terminal — so any CLI can drive one. Define it once:
+
+```bash
+curl -X PUT .../api/agents -d '[{
+  "name": "aider",
+  "command": "aider",
+  "args": ["--no-auto-commits"],
+  "model_flag": "--model",
+  "prompt_arg": true,
+  "env": {"OPENAI_API_BASE": "http://ollama-host:11434/v1"}
+}]'
+```
+
+`prompt_arg` says the CLI accepts an opening message as a positional argument.
+When it does, the project briefing rides on the command line and there is no
+timing to lose; when it does not, agentdeck waits for the pane to settle at a
+prompt and types it in. A definition sharing a built-in's name overrides it,
+which is how a CLI whose flags have drifted gets fixed without a release.
+
+A project's `env` is layered over the agent's, so pointing one project at a local
+model does not require redefining the agent.
+
+## Adding an agent (as a first-class task adapter)
 
 Add a case to two functions in `internal/agents/`: build the inner shell command
 in `Launcher.Command` (launch.go), and map the CLI's output to AgentDeck's event

@@ -539,3 +539,27 @@ def test_switching_tabs_updates_the_hash(page, server):
     page.click(".tab[data-tab='sessions']")
     page.wait_for_timeout(400)
     assert page.evaluate("location.hash") == "#sessions"
+
+
+def test_any_agent_can_be_defined_and_picked(page, server):
+    """The board should not hold an opinion about which CLI is in the terminal."""
+    page.request.put(f"{server}/api/agents", data=[
+        {"name": "aider", "command": "aider", "model_flag": "--model",
+         "prompt_arg": True},
+    ])
+    page.goto(server + "/#sessions")
+    page.click("#sess-new")
+    # the agent list is fetched, so wait for it rather than racing it
+    expect(page.locator("#ns-agent option")).to_have_count(4, timeout=10000)
+    options = page.locator("#ns-agent option").all_inner_texts()
+    assert any("aider" in o for o in options), options
+    assert any("claude" in o for o in options), options
+
+    page.select_option("#ns-agent", "aider")
+    page.fill("#ns-name", "local agent")
+    page.click("#ns-go")
+    card = page.locator(".scard", has_text="local agent")
+    expect(card).to_be_visible(timeout=15000)
+    expect(card.locator(".chip", has_text="aider")).to_be_visible()
+    # leave the shared server as we found it
+    page.request.put(f"{server}/api/agents", data=[])

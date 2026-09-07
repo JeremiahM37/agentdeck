@@ -18,9 +18,11 @@ import (
 	"encoding/hex"
 	"fmt"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 
+	"github.com/JeremiahM37/agentdeck/internal/executor"
 	"github.com/JeremiahM37/agentdeck/internal/shellq"
 )
 
@@ -39,56 +41,49 @@ const (
 // and no gated-approval requirement — the operator IS the gate.
 var InteractiveAgents = []string{"claude", "codex", "gemini"}
 
-// Launcher builds the shell commands that drive interactive sessions.
+// Launcher carries the binary overrides for the built-in agents. Agent binaries
+// often live in ~/.local/bin, which a systemd unit's PATH does not include.
 type Launcher struct {
 	ClaudeBin string
 	CodexBin  string
 	GeminiBin string
 }
 
-func (l Launcher) bin(agent string) string {
-	switch agent {
-	case "codex":
-		return orDefault(l.CodexBin, "codex")
-	case "gemini":
-		return orDefault(l.GeminiBin, "gemini")
-	default:
-		return orDefault(l.ClaudeBin, "claude")
+// resolve applies a binary override to a built-in spec.
+func (l Launcher) resolve(s Spec) Spec {
+	if !s.Builtin {
+		return s
 	}
+	switch s.Name {
+	case "claude":
+		s.Command = orDefault(l.ClaudeBin, s.Command)
+	case "codex":
+		s.Command = orDefault(l.CodexBin, s.Command)
+	case "gemini":
+		s.Command = orDefault(l.GeminiBin, s.Command)
+	}
+	return s
 }
 
-// LaunchCommand starts an interactive agent in a detached tmux session.
-//
-// `exec bash` on the end is deliberate: when the agent exits, the pane stays
-// alive at a shell instead of the tmux session vanishing. That keeps the window
-// (and anything you were about to read in the scrollback) around until you
-// dismiss it yourself.
-func (l Launcher) LaunchCommand(agent, workdir, tmuxName, model string, resume bool) string {
-	parts := []string{l.bin(agent)}
-	switch agent {
-	case "codex":
-		if resume {
-			parts = append(parts, "resume", "--last")
-		}
-		if model != "" {
-			parts = append(parts, "-m", model)
-		}
-	case "gemini":
-		if model != "" {
-			parts = append(parts, "-m", model)
-		}
-	default:
-		if resume {
-			parts = append(parts, "--continue")
-		}
-		if model != "" {
-			parts = append(parts, "--model", model)
-		}
+// EnvPrefix renders KEY=value pairs for the shell, sorted so a command is stable
+// across runs. This is how a session reaches a local model.
+func EnvPrefix(env map[string]string) (string, error) {
+	if len(env) == 0 {
+		return "", nil
 	}
-	inner := fmt.Sprintf("cd %s && %s; exec bash",
-		shellq.Quote(workdir), strings.Join(parts, " "))
-	return fmt.Sprintf("tmux new-session -d -s %s %s",
-		shellq.Quote(tmuxName), shellq.Quote(inner))
+	keys := make([]string, 0, len(env))
+	for k := range env {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	parts := make([]string, 0, len(keys))
+	for _, k := range keys {
+		if !validEnvName(k) {
+			return "", fmt.Errorf("invalid env var name %q", k)
+		}
+		parts = append(parts, k+"="+shellq.Quote(env[k]))
+	}
+	return strings.Join(parts, " ") + " ", nil
 }
 
 // PaneLines is how much scrollback a poll pulls back. Enough to read the current
@@ -297,3 +292,7 @@ func orDefault(v, def string) string {
 	}
 	return v
 }
+
+// RunOptsShort is the timeout used for the quick pane reads that back the
+// readiness wait.
+func RunOptsShort() executor.RunOpts { return executor.RunOpts{Timeout: 20} }

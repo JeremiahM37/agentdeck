@@ -2,6 +2,7 @@ package sessions
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -20,8 +21,11 @@ type Manager struct {
 	Reg      *executor.Registry
 	Bus      *bus.Bus
 	Launcher Launcher
-	Memory   memory.Provider
-	Log      *slog.Logger
+	// Specs resolves an agent name to how it is launched. Injected so the set is
+	// the operator's, not a constant in this package.
+	Specs  func() []Spec
+	Memory memory.Provider
+	Log    *slog.Logger
 
 	// HandoffTimeout bounds how long we wait for an agent to write its wrap
 	// before giving up and saying so.
@@ -60,6 +64,9 @@ type LaunchOpts struct {
 	// (`claude --continue`), which is what you want when re-opening a project
 	// you were in yesterday.
 	Resume bool
+	// Env is layered over the agent's and under nothing: it is how a session is
+	// pointed at a local model (ANTHROPIC_BASE_URL, OPENAI_BASE_URL, …).
+	Env map[string]string
 	// Prime is typed into the session once it is up — a project briefing, or a
 	// predecessor's handoff.
 	Prime string
@@ -111,7 +118,34 @@ func (m *Manager) Launch(ctx context.Context, o LaunchOpts) (*store.Session, err
 	if err != nil {
 		return nil, err
 	}
-	cmd := m.Launcher.LaunchCommand(agent, workdir, tmuxName, o.Model, o.Resume)
+	spec, ok := Find(m.specs(), agent)
+	if !ok {
+		m.end(sess.ID, "dead")
+		return nil, fmt.Errorf("unknown agent %q", agent)
+	}
+	spec = m.Launcher.resolve(spec)
+	// resuming replays a conversation, and the CLIs do not accept an opening
+	// message alongside that — so a prime on a resumed session still has to be
+	// typed in once it is up
+	argPrompt := ""
+	if o.Prime != "" && !o.Resume && spec.PromptArg {
+		argPrompt = o.Prime
+	}
+	// agent-wide env first, then the project's, so a project can point one agent
+	// at a different endpoint without redefining the agent
+	env := map[string]string{}
+	for k, v := range spec.Env {
+		env[k] = v
+	}
+	for k, v := range o.Env {
+		env[k] = v
+	}
+	envPrefix, err := EnvPrefix(env)
+	if err != nil {
+		m.end(sess.ID, "dead")
+		return nil, err
+	}
+	cmd := spec.LaunchCommand(workdir, tmuxName, o.Model, o.Resume, argPrompt, envPrefix)
 	r, err := ex.Run(ctx, cmd, executor.RunOpts{Timeout: 60})
 	if err != nil {
 		m.end(sess.ID, "dead")
@@ -121,15 +155,10 @@ func (m *Manager) Launch(ctx context.Context, o LaunchOpts) (*store.Session, err
 		m.end(sess.ID, "dead")
 		return nil, executor.Errf("tmux launch failed: %s", strings.TrimSpace(r.Stderr))
 	}
-	if o.Prime != "" {
-		// the agent needs a moment to draw its prompt before it will accept a
-		// paste; a dropped prime is worse than a slightly slow start
-		go func() {
-			time.Sleep(4 * time.Second)
-			if err := m.SendText(context.Background(), sess.ID, o.Prime); err != nil {
-				m.Log.Warn("priming session failed", "session", sess.ID, "err", err)
-			}
-		}()
+	if o.Prime != "" && argPrompt == "" {
+		// the fallback path: wait until the pane settles before typing, rather
+		// than guessing a delay and landing in whatever the CLI put on screen
+		go m.primeWhenReady(sess.ID, o.Prime)
 	}
 	fresh, err := m.DB.Session(sess.ID)
 	if err != nil {
@@ -139,6 +168,87 @@ func (m *Manager) Launch(ctx context.Context, o LaunchOpts) (*store.Session, err
 	m.Log.Info("session launched", "session", fresh.ID, "agent", agent,
 		"target", target.Name, "workdir", workdir)
 	return fresh, nil
+}
+
+// primeWhenReady types an opening message once the pane has stopped changing.
+//
+// Used only where the prompt cannot be an argument. A fixed delay is a race: the
+// paste lands in whatever the CLI is showing at that instant, which is how a
+// primed message once answered codex's self-update prompt.
+func (m *Manager) primeWhenReady(id int64, text string) {
+	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+	defer cancel()
+	var last string
+	stable := 0
+	for i := 0; i < 45; i++ {
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(2 * time.Second):
+		}
+		sess, ex, err := m.resolve(id)
+		if err != nil {
+			return
+		}
+		out, err := ex.Run(ctx, PollCommand([]string{sess.TmuxSession}),
+			RunOptsShort())
+		if err != nil {
+			continue
+		}
+		pane := ParsePoll(out.Stdout)[sess.TmuxSession]
+		if strings.TrimSpace(pane) == "" {
+			continue
+		}
+		if pane == last {
+			stable++
+		} else {
+			stable, last = 0, pane
+		}
+		// settled for two consecutive polls and showing an input prompt
+		if stable >= 1 && DeriveStatus(pane, Hash(pane)) == StatusWaiting {
+			if err := m.SendText(ctx, id, text); err != nil {
+				m.Log.Warn("priming session failed", "session", id, "err", err)
+			}
+			return
+		}
+	}
+	m.Log.Warn("gave up priming: the pane never settled at a prompt", "session", id)
+}
+
+// ProjectEnv is the environment a project asks its agents to run with — the
+// any-model door, shared by dispatched tasks and interactive sessions.
+func (m *Manager) ProjectEnv(projectID *int64) map[string]string {
+	out := map[string]string{}
+	if projectID == nil {
+		return out
+	}
+	proj, err := m.DB.Project(*projectID)
+	if err != nil {
+		return out
+	}
+	var raw map[string]any
+	if err := json.Unmarshal([]byte(nzs(proj.EnvJSON, "{}")), &raw); err != nil {
+		return out
+	}
+	for k, v := range raw {
+		out[k] = fmt.Sprint(v)
+	}
+	return out
+}
+
+func nzs(v, def string) string {
+	if v == "" {
+		return def
+	}
+	return v
+}
+
+// specs is the agent set, falling back to the built-ins when none is injected.
+func (m *Manager) specs() []Spec {
+	if m.Specs == nil {
+		return Builtins()
+	}
+	return m.Specs()
 }
 
 func (m *Manager) end(id int64, status string) {

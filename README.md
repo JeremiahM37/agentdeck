@@ -119,10 +119,11 @@ reachability, `git`, `tmux`, `python3`, and your agent's CLI.
   `command_prefix` handles hosts whose SSH lands somewhere other than the work —
   `wsl -e bash -lc "echo {b64} | base64 -d | bash"` makes a Windows box with its
   toolchain in WSL an ordinary target.
-- **Agents** — Claude Code and Codex are both first-class, switched with a
-  per-task toggle (default per project); Gemini is experimental, and a small seam
-  makes adding more easy. Plus **any Anthropic-compatible endpoint** (local
-  models via `ANTHROPIC_BASE_URL`). See [docs/agents.md](docs/agents.md).
+- **Agents** — Claude Code, Codex and Gemini ship built in. Sessions take **any
+  CLI**: define one in `PUT /api/agents` with its command, model flag, resume
+  args and env, and it appears in the picker — the board holds no opinion about
+  which binary is in the terminal. Local models work the same way for sessions as
+  for tasks, through a project's `env`. See [docs/agents.md](docs/agents.md).
 - **Control loop** — hook-gated approvals with web-push + Discord/ntfy sinks, an
   always-allow policy engine, follow-ups, auto-verify, reviewer gates, A/B parallel
   attempts, agents that file their own task cards, and shared project memory.
@@ -151,8 +152,8 @@ curl -X POST .../api/projects -d '{
 ## Tests
 
 ```bash
-go test ./...     # 247 hermetic tests: mock executor, a temp database each, no real infra
-pytest -q e2e     # 34 Playwright browser flows against a real built binary
+go test ./...     # 258 hermetic tests: mock executor, a temp database each, no real infra
+pytest -q e2e     # 35 Playwright browser flows against a real built binary
 ```
 
 ## Layout

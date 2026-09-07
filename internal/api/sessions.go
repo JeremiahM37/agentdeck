@@ -5,11 +5,14 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"strings"
 
+	"github.com/JeremiahM37/agentdeck/internal/executor"
 	"github.com/JeremiahM37/agentdeck/internal/memory"
 	"github.com/JeremiahM37/agentdeck/internal/sessions"
+	"github.com/JeremiahM37/agentdeck/internal/shellq"
 	"github.com/JeremiahM37/agentdeck/internal/store"
 	"github.com/JeremiahM37/agentdeck/internal/terminal"
 )
@@ -80,9 +83,11 @@ func (s *Server) createSession(w http.ResponseWriter, r *http.Request) {
 		httpError(w, 422, "%s", err.Error())
 		return
 	}
-	if in.Agent != "" && !oneOf(in.Agent, sessions.InteractiveAgents...) {
-		httpError(w, 422, "agent must be one of %v", sessions.InteractiveAgents)
-		return
+	if in.Agent != "" {
+		if _, ok := sessions.Find(s.agentSpecs(), in.Agent); !ok {
+			httpError(w, 422, "unknown agent %q — define it in /api/agents", in.Agent)
+			return
+		}
 	}
 	// a project implies its target, so the caller only has to name one of them
 	if in.TargetID == 0 && in.ProjectID != nil {
@@ -113,6 +118,9 @@ func (s *Server) createSession(w http.ResponseWriter, r *http.Request) {
 		ProjectID: in.ProjectID, TargetID: in.TargetID, Name: in.Name,
 		Agent: in.Agent, Model: in.Model, Workdir: in.Workdir,
 		Resume: in.Resume, Prime: prime,
+		// a project's env is how a session reaches a local model, exactly as it
+		// is for a dispatched task
+		Env: s.Sessions.ProjectEnv(in.ProjectID),
 	})
 	if err != nil {
 		httpError(w, 409, "%s", err.Error())
@@ -121,22 +129,109 @@ func (s *Server) createSession(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 201, s.sessionView(sess))
 }
 
-// projectBrief gathers what this project already knows: the memory provider's
-// facts plus the most recent session handoff.
-func (s *Server) projectBrief(ctx context.Context, proj *store.Project) string {
-	var parts []string
-	if s.Memory != nil && s.Memory.Available(ctx) {
-		if facts, err := s.Memory.Recall(ctx, proj.Name, 8); err == nil {
-			if block := memory.Prime(facts); block != "" {
-				parts = append(parts, block)
-			}
+// onboardingDocs are the files a project uses to tell a newcomer where it is.
+//
+// Naming them matters more than it looks: an agent only auto-reads the file its
+// own CLI knows about — Claude Code reads CLAUDE.md, codex reads AGENTS.md — so
+// switching agents on a project silently drops whatever the other one was
+// reading. A brief that names all of them makes the handover agent-agnostic.
+var onboardingDocs = []string{
+	"HANDOFF.md", "AGENTS.md", "CLAUDE.md", "GOAL.md", "STATUS.md",
+	"DESIGN.md", "ARCHITECTURE.md", "README.md",
+}
+
+// repoDocs asks the target which onboarding documents this project actually has.
+func (s *Server) repoDocs(ctx context.Context, proj *store.Project) []string {
+	target, err := s.DB.Target(proj.TargetID)
+	if err != nil {
+		return nil
+	}
+	ex, err := s.Reg.For(target)
+	if err != nil {
+		return nil
+	}
+	var b strings.Builder
+	for _, name := range onboardingDocs {
+		fmt.Fprintf(&b, "[ -f %s ] && echo %s; ",
+			shellq.Quote(proj.RepoPath+"/"+name), shellq.Quote(name))
+	}
+	r, err := ex.Run(ctx, b.String()+"true", executor.RunOpts{Timeout: 30})
+	if err != nil {
+		return nil
+	}
+	var found []string
+	for _, line := range strings.Split(r.Stdout, "\n") {
+		if line = strings.TrimSpace(line); line != "" {
+			found = append(found, line)
 		}
 	}
+	return found
+}
+
+// projectBrief is everything a fresh agent should start from: the repo's own
+// onboarding docs, the durable notes previous agents left, the last session's
+// handoff, and whatever the memory provider knows.
+//
+// It is ordered by how load-bearing each source is. The repo's own HANDOFF.md is
+// first because it is the one the project maintains deliberately; recalled facts
+// are last because they are the least specific.
+func (s *Server) projectBrief(ctx context.Context, proj *store.Project) string {
+	var parts []string
+
+	if docs := s.repoDocs(ctx, proj); len(docs) > 0 {
+		var b strings.Builder
+		b.WriteString("## Read these first\n\nThis project documents its own state. " +
+			"Read them in " + proj.RepoPath + " before anything else:\n")
+		for _, d := range docs {
+			b.WriteString("- " + d + "\n")
+		}
+		parts = append(parts, strings.TrimRight(b.String(), "\n"))
+	}
+
 	if wraps, err := s.DB.Wraps(proj.ID, 1); err == nil && len(wraps) > 0 {
 		parts = append(parts, "## Where the last session left off\n\n"+
 			strings.TrimSpace(wraps[0].Summary))
 	}
+
+	if notes, err := s.DB.ProjectNotes(proj.ID, 10); err == nil && len(notes) > 0 {
+		var b strings.Builder
+		b.WriteString("## Notes previous agents left on this project\n\n")
+		// oldest first, so it reads chronologically
+		for i := len(notes) - 1; i >= 0; i-- {
+			b.WriteString("- " + strings.TrimSpace(notes[i].Note) + "\n")
+		}
+		parts = append(parts, strings.TrimRight(b.String(), "\n"))
+	}
+
+	if s.Memory != nil && s.Memory.Available(ctx) {
+		if facts, err := s.Memory.Recall(ctx, proj.Name, 8); err == nil {
+			if block := memory.Prime(facts); block != "" {
+				parts = append(parts, strings.TrimRight(block, "\n"))
+			}
+		}
+	}
 	return strings.Join(parts, "\n\n")
+}
+
+// previewBrief shows exactly what a new session on this project would be handed.
+// Worth having as its own endpoint: "does this agent actually have the context"
+// should be answerable before you spend a session finding out.
+func (s *Server) previewBrief(w http.ResponseWriter, r *http.Request) {
+	id, err := pathID(r, "id")
+	if err != nil {
+		httpError(w, 404, "no such project")
+		return
+	}
+	proj, err := s.DB.Project(id)
+	if err != nil {
+		httpError(w, 404, "no such project")
+		return
+	}
+	brief := s.projectBrief(r.Context(), proj)
+	writeJSON(w, 200, map[string]any{
+		"project": proj.Name, "brief": brief, "chars": len(brief),
+		"docs": s.repoDocs(r.Context(), proj),
+	})
 }
 
 type sessionPatch struct {
@@ -324,9 +419,11 @@ func (s *Server) handoffSession(w http.ResponseWriter, r *http.Request) {
 		httpError(w, 422, "%s", err.Error())
 		return
 	}
-	if in.Agent != "" && !oneOf(in.Agent, sessions.InteractiveAgents...) {
-		httpError(w, 422, "agent must be one of %v", sessions.InteractiveAgents)
-		return
+	if in.Agent != "" {
+		if _, ok := sessions.Find(s.agentSpecs(), in.Agent); !ok {
+			httpError(w, 422, "unknown agent %q — define it in /api/agents", in.Agent)
+			return
+		}
 	}
 	if err := s.Sessions.StartHandoff(row.ID, sessions.HandoffOpts{
 		Successor: in.Successor, KillOld: in.KillOld,
@@ -421,4 +518,38 @@ func (s *Server) sessionParam(w http.ResponseWriter, r *http.Request) (*store.Se
 		return nil, false
 	}
 	return row, true
+}
+
+// agentSpecs is the operator's agent set: the built-ins plus anything defined in
+// settings.
+func (s *Server) agentSpecs() []sessions.Spec {
+	return sessions.ParseSpecs(s.DB.Setting("agents"))
+}
+
+func (s *Server) listAgents(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, 200, s.agentSpecs())
+}
+
+// putAgents replaces the custom agent definitions. Built-ins are always present;
+// a custom entry with a built-in's name overrides it, which is how a CLI whose
+// flags have drifted gets corrected without a release.
+func (s *Server) putAgents(w http.ResponseWriter, r *http.Request) {
+	raw, err := io.ReadAll(io.LimitReader(r.Body, 256<<10))
+	if err != nil {
+		httpError(w, 422, "%s", err.Error())
+		return
+	}
+	body := strings.TrimSpace(string(raw))
+	if body == "" {
+		body = "[]"
+	}
+	if err := sessions.ValidateSpecs(body); err != nil {
+		httpError(w, 400, "%s", err.Error())
+		return
+	}
+	if err := s.DB.SetSetting("agents", body); err != nil {
+		respondErr(w, err)
+		return
+	}
+	writeJSON(w, 200, s.agentSpecs())
 }
