@@ -163,6 +163,16 @@ func (m *Manager) Launch(ctx context.Context, o LaunchOpts) (*store.Session, err
 		m.end(sess.ID, "dead")
 		return nil, err
 	}
+	// answer the CLI's "do you trust this folder?" before it can ask: starting an
+	// agent here, on purpose, is the answer. Best-effort — a CLI that changes
+	// where it keeps this must not stop a session from launching.
+	if probe := spec.TrustProbe(workdir); probe != "" {
+		if r, err := ex.Run(ctx, probe, executor.RunOpts{Timeout: 20}); err != nil || !r.OK() {
+			m.Log.Warn("could not pre-trust the working directory",
+				"agent", agent, "dir", workdir, "err", err)
+		}
+	}
+
 	cmd := spec.LaunchCommand(Start{
 		Workdir: workdir, TmuxName: tmuxName, Model: o.Model, Resume: o.Resume,
 		Prompt: argPrompt, EnvPrefix: envPrefix, Yolo: o.Yolo})

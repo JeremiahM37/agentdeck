@@ -34,6 +34,17 @@ type Spec struct {
 	// Env is agent-wide environment, layered under the project's own. This is
 	// the local-model door for a CLI that wants its endpoint in the environment.
 	Env map[string]string `json:"env,omitempty"`
+	// TrustCommand marks a directory as one the operator already trusts, in
+	// whatever file the CLI keeps that answer in. `{dir}` is replaced with the
+	// shell-quoted working directory.
+	//
+	// Every coding CLI asks "do you trust this folder?" the first time it opens
+	// one, and answers it in its own config. Launching an agent there IS the
+	// answer — agentdeck was told to start it, in that directory, on purpose —
+	// so being asked again in a terminal you then have to go and find is pure
+	// friction. It bites hardest on scratch sessions, where the directory is new
+	// every single time and the prompt is therefore guaranteed.
+	TrustCommand string `json:"trust_command,omitempty"`
 	// YoloArgs drop the CLI's approval prompts so the agent just works. Every
 	// coding CLI spells this differently and some cannot do it at all; empty
 	// means this agent has no such mode and the toggle is not offered for it.
@@ -54,11 +65,13 @@ func Builtins() []Spec {
 	return []Spec{
 		{Name: "claude", Command: "claude", ModelFlag: "--model",
 			ResumeArgs: []string{"--continue"}, PromptArg: true, Builtin: true,
-			YoloArgs: []string{"--permission-mode", "bypassPermissions"}},
+			YoloArgs:     []string{"--permission-mode", "bypassPermissions"},
+			TrustCommand: claudeTrust},
 		{Name: "codex", Command: "codex", ModelFlag: "-m",
 			ResumeArgs: []string{"resume", "--last"}, PromptArg: true, Builtin: true,
 			ModelsCommand: "{bin} debug models",
-			YoloArgs:      []string{"--dangerously-bypass-approvals-and-sandbox"}},
+			YoloArgs:      []string{"--dangerously-bypass-approvals-and-sandbox"},
+			TrustCommand:  codexTrust},
 		// gemini's interactive mode takes no opening message on the command
 		// line, so its prime is typed in once the pane settles
 		{Name: "gemini", Command: "gemini", ModelFlag: "-m", Builtin: true,
@@ -262,4 +275,46 @@ func findList(doc any, depth int) []any {
 		}
 	}
 	return nil
+}
+
+// claudeTrust records an accepted workspace-trust dialog in ~/.claude.json.
+//
+// Written through a temp file and rename so the config is never observed
+// half-written: Claude Code itself writes this file continuously (costs,
+// durations), and a torn write would take out far more than a trust flag. It
+// only ever adds the one key, and only when it is missing.
+const claudeTrust = `python3 - {dir} <<'ADKTRUST'
+import json, os, sys, tempfile
+path = os.path.expanduser("~/.claude.json")
+try:
+    with open(path) as f:
+        doc = json.load(f)
+except Exception:
+    doc = {}
+entry = doc.setdefault("projects", {}).setdefault(sys.argv[1], {})
+if entry.get("hasTrustDialogAccepted") is not True:
+    entry["hasTrustDialogAccepted"] = True
+    fd, tmp = tempfile.mkstemp(dir=os.path.dirname(path) or ".")
+    with os.fdopen(fd, "w") as f:
+        json.dump(doc, f, indent=2)
+    os.replace(tmp, path)
+ADKTRUST`
+
+// codexTrust records a trusted project in ~/.codex/config.toml.
+//
+// Appended rather than rewritten: the file is the operator's, holding their MCP
+// servers and model settings, and a TOML round-trip through a parser agentdeck
+// does not own is a good way to lose a comment or reorder someone's config.
+const codexTrust = `f="$HOME/.codex/config.toml"; mkdir -p "$(dirname "$f")"; touch "$f"; ` +
+	`grep -qF "[projects.\"{dir_raw}\"]" "$f" || ` +
+	`printf '\n[projects."%s"]\ntrust_level = "trusted"\n' {dir} >> "$f"`
+
+// TrustProbe is the command that marks a directory trusted for this agent, or
+// empty when the agent has no such notion.
+func (s Spec) TrustProbe(dir string) string {
+	if s.TrustCommand == "" || dir == "" {
+		return ""
+	}
+	cmd := strings.ReplaceAll(s.TrustCommand, "{dir}", shellq.Quote(dir))
+	return strings.ReplaceAll(cmd, "{dir_raw}", dir)
 }
