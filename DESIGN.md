@@ -316,6 +316,14 @@ durable unit is the PROJECT, not the conversation.
 - **Deep links.** The hash is an interface: `#sessions`, `#board`, `#task/12`.
   The notification sinks had been sending `/#task/N` since v0.2 and nothing read
   it — the phone's embedded board now opens straight to the view you asked for.
+- **Recall reads the vault, not just the fact store.** A memory system usually
+  holds two things: short atomic facts, and written notes. There is a note per
+  project; there are far fewer facts. Briefing from facts alone gave 76 of 81
+  projects the *same* two sentences, because a similarity search always returns
+  its best N — so notes are retrieved first and kept only when the project's
+  name appears in them (in the path or title = a note about it; in the body =
+  a note mentioning it, ranked below). Nothing matching means the section is
+  omitted rather than padded.
 - **Memory is a seam, not a dependency** (`internal/memory`). Grimoire is the
   first-class provider; `none` is the default and fully supported. agentdeck owns
   operational state; a memory store owns semantic state.

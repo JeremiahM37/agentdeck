@@ -152,7 +152,7 @@ curl -X POST .../api/projects -d '{
 ## Tests
 
 ```bash
-go test ./...     # 258 hermetic tests: mock executor, a temp database each, no real infra
+go test ./...     # 262 hermetic tests: mock executor, a temp database each, no real infra
 pytest -q e2e     # 35 Playwright browser flows against a real built binary
 ```
 

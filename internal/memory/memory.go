@@ -18,16 +18,20 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"sort"
 	"strings"
 	"time"
 )
 
 // Fact is one durable thing a project knows.
 type Fact struct {
-	Text  string  `json:"text"`
-	Topic string  `json:"topic,omitempty"`
-	When  string  `json:"when,omitempty"`
-	Score float64 `json:"score,omitempty"`
+	Text string `json:"text"`
+	// Source is where it came from — a note path, usually. Worth carrying: an
+	// agent that can see which note a claim came from can go read the rest of it.
+	Source string  `json:"source,omitempty"`
+	Topic  string  `json:"topic,omitempty"`
+	When   string  `json:"when,omitempty"`
+	Score  float64 `json:"score,omitempty"`
 }
 
 // Entry is something worth remembering, with the provenance that makes it
@@ -113,12 +117,118 @@ func (g *Grimoire) Available(ctx context.Context) bool {
 }
 
 // Recall asks Grimoire what it knows about a project.
+//
+// Notes first, then the fact store. A vault holds a written note per project —
+// that is what "what does this project know" actually means — while the fact
+// store holds short atomic claims and is usually much smaller. Reading only the
+// facts is how every project ended up with the same two.
 func (g *Grimoire) Recall(ctx context.Context, project string, limit int) ([]Fact, error) {
 	if limit <= 0 {
 		limit = 8
 	}
+	out := g.retrieveNotes(ctx, project, limit)
+	if len(out) < limit {
+		facts, err := g.recallFacts(ctx, project, limit-len(out))
+		if err == nil {
+			out = append(out, facts...)
+		}
+	}
+	return out, nil
+}
+
+// normalizeName strips punctuation and case so "inference-research" matches
+// "project_inference_research.md".
+func normalizeName(s string) string {
+	var b strings.Builder
+	for _, r := range strings.ToLower(s) {
+		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') {
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
+}
+
+// retrieveNotes pulls the vault chunks that are genuinely ABOUT this project.
+//
+// Retrieval returns its best N whatever the query, so the name has to appear
+// somewhere for a chunk to count. A hit in the path or title is strong evidence
+// (a note named after the project); a hit in the body is weaker (a note that
+// merely mentions it) and ranks below.
+func (g *Grimoire) retrieveNotes(ctx context.Context, project string, limit int) []Fact {
+	u := fmt.Sprintf("%s/api/retrieve?q=%s&limit=%d", g.BaseURL,
+		url.QueryEscape(project), limit*3)
+	req, err := http.NewRequestWithContext(ctx, "GET", u, nil)
+	if err != nil {
+		return nil
+	}
+	g.auth(req)
+	resp, err := g.Client.Do(req)
+	if err != nil {
+		return nil
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 400 {
+		return nil
+	}
+	var chunks []struct {
+		Path  string  `json:"path"`
+		Title string  `json:"title"`
+		Chunk string  `json:"chunk"`
+		Score float64 `json:"score"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&chunks); err != nil {
+		return nil
+	}
+	name := normalizeName(project)
+	if name == "" {
+		return nil
+	}
+	type scored struct {
+		Fact
+		strong bool
+	}
+	var kept []scored
+	seen := map[string]bool{}
+	for _, c := range chunks {
+		text := strings.TrimSpace(c.Chunk)
+		if text == "" || seen[c.Path] {
+			continue
+		}
+		strong := strings.Contains(normalizeName(c.Path+" "+c.Title), name)
+		if !strong && !strings.Contains(normalizeName(text), name) {
+			continue // retrieval's best guess, but not about this project
+		}
+		seen[c.Path] = true
+		kept = append(kept, scored{Fact{Text: clip(text, 1200), Source: c.Path,
+			Score: c.Score}, strong})
+	}
+	// a note named after the project outranks one that merely mentions it
+	sort.SliceStable(kept, func(i, j int) bool {
+		if kept[i].strong != kept[j].strong {
+			return kept[i].strong
+		}
+		return kept[i].Score > kept[j].Score
+	})
+	out := make([]Fact, 0, limit)
+	for _, k := range kept {
+		if len(out) >= limit {
+			break
+		}
+		out = append(out, k.Fact)
+	}
+	return out
+}
+
+// recallFacts reads the short atomic claims in the fact store.
+//
+// A similarity search always returns its best N matches; below MinScore they are
+// whatever else the store happens to hold, not knowledge about this project.
+func (g *Grimoire) recallFacts(ctx context.Context, project string, limit int) ([]Fact, error) {
+	if limit <= 0 {
+		return nil, nil
+	}
 	u := fmt.Sprintf("%s/api/memory?q=%s&limit=%d", g.BaseURL,
-		urlQuery(project), limit)
+		url.QueryEscape(project), limit)
 	req, err := http.NewRequestWithContext(ctx, "GET", u, nil)
 	if err != nil {
 		return nil, err
@@ -150,16 +260,16 @@ func (g *Grimoire) Recall(ctx context.Context, project string, limit int) ([]Fac
 			items = bare
 		}
 	}
-	out := make([]Fact, 0, len(items))
+	out := make([]Fact, 0, limit)
 	for _, m := range items {
 		text := firstString(m, "text", "fact", "body", "content")
 		if text == "" {
 			continue
 		}
 		score, scored := m["score"].(float64)
-		// a scored result below the floor is noise, not knowledge; an unscored
-		// store (an older Grimoire, or a different provider) is taken at face
-		// value rather than silently dropped
+		// an unscored store (an older Grimoire, or a different provider) is
+		// taken at face value rather than silently emptied by a floor it never
+		// opted into
 		if scored && score < g.MinScore {
 			continue
 		}
@@ -208,15 +318,20 @@ func (g *Grimoire) auth(req *http.Request) {
 	}
 }
 
-// Prime renders recalled facts as a block to hand a fresh agent.
+// Prime renders recalled knowledge as a block to hand a fresh agent, citing
+// where each piece came from so it can go and read the rest.
 func Prime(facts []Fact) string {
 	if len(facts) == 0 {
 		return ""
 	}
 	var b strings.Builder
-	b.WriteString("## What this project already knows\n\n")
+	b.WriteString("## What this project already knows\n")
 	for _, f := range facts {
-		b.WriteString("- " + strings.TrimSpace(f.Text) + "\n")
+		b.WriteString("\n")
+		if f.Source != "" {
+			b.WriteString("From `" + f.Source + "`:\n")
+		}
+		b.WriteString(strings.TrimSpace(f.Text) + "\n")
 	}
 	return b.String()
 }
@@ -230,4 +345,9 @@ func firstString(m map[string]any, keys ...string) string {
 	return ""
 }
 
-func urlQuery(s string) string { return url.QueryEscape(s) }
+func clip(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	return s[:n] + "…"
+}
