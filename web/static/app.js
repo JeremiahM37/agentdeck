@@ -558,17 +558,112 @@ async function promoteSession(s) {
   } catch (e) { toast(e.message, true); }
 }
 
-async function handoffSession(s) {
-  const successor = confirm(
-    `Ask ${s.name} to write a handoff for the next session?\n\n` +
-    "OK: write it, then retire this session and start a fresh one primed with it.\n" +
-    "Cancel: just write the handoff and keep this session running.");
-  try {
-    await api(`/sessions/${s.id}/handoff`, { method: "POST",
-      body: { successor, kill_old: successor } });
-    toast("Asked for a handoff — it lands when the agent finishes its turn");
-    refreshSessions();
-  } catch (e) { toast(e.message, true); }
+function handoffSession(sess) {
+  state.sheet = { kind: "handoff", session: sess };
+  renderSheet();
+}
+
+// A handoff is a session writing down where it got to, so the next one starts
+// there instead of from nothing.
+//
+// Two different things want that. One is a context window running out, where the
+// successor is the same agent with a clean slate. The other — the more useful
+// one — is moving the work to a different agent entirely: claude hands the
+// inference project to codex, and codex starts knowing what happened. The old
+// UI only ever did the first, because it never asked which agent should pick it
+// up.
+function renderHandoff(sheet) {
+  const sess = state.sheet.session;
+  sheet.innerHTML = `
+    <div class="sheet-grip"><i></i></div>
+    <div class="sheet-head"><h2>Hand off</h2><button class="x">✕</button></div>
+    <div class="sub" style="color:var(--ink-dim);font-size:12.5px">
+      <b class="hs-name"></b> writes down where it got to — what it did, what it
+      learned, what it was about to do — and the next session starts primed with it.
+    </div>
+    <label class="f">Then</label>
+    <select class="f" id="ho-mode">
+      <option value="successor">Start a new session with it</option>
+      <option value="note">Just write it down, keep this session running</option>
+    </select>
+    <div id="ho-successor">
+      <label class="f">Hand it to</label>
+      <select class="f" id="ho-agent"></select>
+      <div class="subhint" id="ho-agent-hint"></div>
+      <label class="f">Model</label>
+      <input class="f" id="ho-model" list="adk-models" placeholder="default" autocomplete="off">
+      <label class="f" style="display:flex;align-items:center;gap:9px;cursor:pointer;margin-top:12px">
+        <input type="checkbox" id="ho-kill" checked style="width:auto;margin:0">
+        <span>Retire <span class="hs-name2"></span> once the handoff is written</span>
+      </label>
+      <div class="subhint" id="ho-kill-hint"></div>
+    </div>
+    <div class="btnrow" style="margin-top:18px">
+      <button class="b ok grow" id="ho-go">⇥ Write the handoff</button>
+    </div>`;
+  $(".x", sheet).onclick = closeSheet;
+  $(".hs-name", sheet).textContent = sess.name;
+  $(".hs-name2", sheet).textContent = sess.name;
+
+  const agentBox = $("#ho-agent", sheet);
+  api("/agents").then((specs) => {
+    agentBox.innerHTML = specs.map((a) =>
+      `<option value="${esc(a.name)}">${esc(a.name)}${
+        a.name === sess.agent ? " — same agent, fresh context" : ""}</option>`).join("");
+    agentBox.value = sess.agent;
+    syncAgent(specs);
+    agentBox.onchange = () => syncAgent(specs);
+  }).catch(() => {
+    agentBox.innerHTML = `<option value="${esc(sess.agent)}">${esc(sess.agent)}</option>`;
+  });
+
+  function syncAgent(specs) {
+    const a = specs.find((x) => x.name === agentBox.value);
+    const moving = agentBox.value !== sess.agent;
+    $("#ho-agent-hint", sheet).textContent = moving
+      ? `The work moves to ${agentBox.value}. It starts fresh, knowing only what the handoff says.`
+      : "Same agent, clean context — for when the window is full.";
+    if (a && !a.model_flag) {
+      $("#ho-model", sheet).disabled = true;
+      $("#ho-model", sheet).placeholder = `${a.name} has no model switch`;
+    } else {
+      $("#ho-model", sheet).disabled = false;
+      $("#ho-model", sheet).placeholder = "default";
+    }
+  }
+
+  const syncMode = () => {
+    const successor = $("#ho-mode", sheet).value === "successor";
+    $("#ho-successor", sheet).style.display = successor ? "" : "none";
+    $("#ho-go", sheet).textContent = successor
+      ? "⇥ Write it and hand over" : "⇥ Write the handoff";
+  };
+  $("#ho-mode", sheet).onchange = syncMode;
+  syncMode();
+
+  const syncKill = () => {
+    $("#ho-kill-hint", sheet).textContent = $("#ho-kill", sheet).checked
+      ? "Its tmux session ends. The handoff and its history stay."
+      : "Both sessions keep running — useful if you want to compare them.";
+  };
+  $("#ho-kill", sheet).onchange = syncKill;
+  syncKill();
+
+  $("#ho-go", sheet).onclick = async () => {
+    const successor = $("#ho-mode", sheet).value === "successor";
+    try {
+      await api(`/sessions/${sess.id}/handoff`, { method: "POST", body: {
+        successor,
+        kill_old: successor && $("#ho-kill", sheet).checked,
+        agent: successor ? agentBox.value : "",
+        model: successor && !$("#ho-model", sheet).disabled
+          ? $("#ho-model", sheet).value.trim() : "",
+      } });
+      closeSheet();
+      toast("Asked for a handoff — it lands when the agent finishes its turn");
+      refreshSessions();
+    } catch (e) { toast(e.message, true); }
+  };
 }
 
 function renderSessions() {
@@ -1495,6 +1590,7 @@ function renderSheet() {
   if (state.sheet.kind === "new-session") return renderNewSession(sheet);
   if (state.sheet.kind === "discover") return renderDiscover(sheet);
   if (state.sheet.kind === "routines") return renderRoutines(sheet);
+  if (state.sheet.kind === "handoff") return renderHandoff(sheet);
   if (state.sheet.kind === "project") {
     sheet.innerHTML = `<div class="sheet-grip"><i></i></div>
       <div class="sheet-head"><h2>Project</h2><button class="x">✕</button></div>`;

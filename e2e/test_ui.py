@@ -894,3 +894,43 @@ def test_finished_cards_can_be_swept_off_the_board(page, server):
     gone = page.evaluate("""fetch('/api/tasks').then(r=>r.json())
         .then(t => !t.some(x => x.title === 'Sweep me'))""")
     assert gone, "the finished card is still on the board"
+
+
+def test_handoff_lets_you_choose_which_agent_picks_it_up(page, server):
+    """The point of a handoff is usually moving the work to a different agent.
+    It used to be a yes/no confirm that always reused the same one."""
+    page.goto(server)
+    page.click(".tab[data-tab='sessions']")
+    page.click("#sess-new")
+    page.fill("#ns-name", "handoff me")
+    page.click("#ns-go")
+    card = page.locator(".scard", has_text="handoff me")
+    expect(card).to_be_visible(timeout=15000)
+
+    card.locator("button", has_text="Handoff").click()
+    expect(page.locator("#ho-agent")).to_be_visible(timeout=10000)
+
+    # it defaults to the agent that is already there, and says what that means
+    expect(page.locator("#ho-agent")).to_have_value("claude")
+    expect(page.locator("#ho-agent-hint")).to_contain_text("clean context")
+
+    # and any other agent can take it instead — the whole point
+    options = page.locator("#ho-agent option").all_text_contents()
+    assert any("codex" in o for o in options), options
+    page.select_option("#ho-agent", "codex")
+    expect(page.locator("#ho-agent-hint")).to_contain_text("moves to codex")
+
+    # choosing to just record it hides the successor options
+    page.select_option("#ho-mode", "note")
+    expect(page.locator("#ho-successor")).to_be_hidden()
+    page.select_option("#ho-mode", "successor")
+    expect(page.locator("#ho-successor")).to_be_visible()
+
+    page.click("#ho-go")
+    page.wait_for_timeout(4000)
+    # a codex session picked up the thread
+    agent = page.evaluate("""fetch('/api/sessions').then(r=>r.json()).then(ss => {
+        const s = ss.filter(x => x.name === 'handoff me' && x.status !== 'dead')[0];
+        return s ? s.agent : null;
+    })""")
+    assert agent == "codex", f"the successor is running {agent!r}, not codex"

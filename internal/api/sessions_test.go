@@ -585,3 +585,90 @@ func TestSessionInheritsTheProjectsEnvForLocalModels(t *testing.T) {
 		}
 	}
 }
+
+// The point of a handoff is usually to move the work to a DIFFERENT agent —
+// claude hands the inference project to codex, and codex starts knowing what
+// happened. The successor must actually be that agent, launched with its own
+// binary and its own flags, primed with what its predecessor wrote.
+func TestHandoffCanMoveTheWorkToADifferentAgent(t *testing.T) {
+	h := newHarness(t)
+	pid := h.seededProjectID()
+	sess := h.session(obj{"project_id": pid, "name": "inference", "agent": "claude"})
+	h.waitSessionStatus(sess.id(), "waiting", "idle", "running")
+
+	h.post(fmt.Sprintf("/api/sessions/%d/handoff", sess.id()),
+		obj{"successor": true, "kill_old": true, "agent": "codex"}, 202)
+
+	var successor obj
+	h.waitUntil("a codex successor", func() bool {
+		for _, s := range h.getList("/api/sessions") {
+			if s.id() != sess.id() && s.str("name") == "inference" {
+				successor = s
+				return true
+			}
+		}
+		return false
+	})
+	if got := successor.str("agent"); got != "codex" {
+		t.Fatalf("the work was handed to %q, not codex — a handoff that cannot "+
+			"change agent is just a context reset", got)
+	}
+	// and it is genuinely codex that was launched, with codex's own flags
+	var launched string
+	for _, c := range h.mock().CmdLog() {
+		if strings.HasPrefix(c, "tmux new-session") &&
+			strings.Contains(c, successor.str("tmux_session")) {
+			launched = c
+		}
+	}
+	if launched == "" {
+		t.Fatal("the successor was never launched")
+	}
+	if !strings.Contains(launched, "codex") {
+		t.Errorf("the successor did not run codex: %s", launched)
+	}
+	if strings.Contains(launched, "--permission-mode") {
+		t.Errorf("claude's flags were passed to codex: %s", launched)
+	}
+	// it still carries the predecessor's state — that is the whole point
+	if !strings.Contains(launched, "WHERE WE ARE") {
+		t.Errorf("codex started without the handoff: %s", launched)
+	}
+	// the predecessor is retired, so there is one live session on the thread
+	h.waitSessionStatus(sess.id(), "dead")
+}
+
+// Handing to the same agent is still valid — that is the context-window case.
+func TestHandoffToTheSameAgentIsStillAContextReset(t *testing.T) {
+	h := newHarness(t)
+	sess := h.session(obj{"project_id": h.seededProjectID(),
+		"name": "same-agent", "agent": "claude"})
+	h.waitSessionStatus(sess.id(), "waiting", "idle", "running")
+
+	h.post(fmt.Sprintf("/api/sessions/%d/handoff", sess.id()),
+		obj{"successor": true, "agent": "claude"}, 202)
+	h.waitUntil("a successor", func() bool {
+		for _, s := range h.getList("/api/sessions") {
+			if s.id() != sess.id() && s.str("name") == "same-agent" {
+				return s.str("agent") == "claude"
+			}
+		}
+		return false
+	})
+}
+
+// An agent that was never defined must be refused before anything is asked of
+// the running session.
+func TestHandoffRefusesAnUnknownSuccessorAgent(t *testing.T) {
+	h := newHarness(t)
+	sess := h.session(obj{"project_id": h.seededProjectID(), "name": "x"})
+	h.waitSessionStatus(sess.id(), "waiting", "idle", "running")
+	if code, body := h.request("POST", fmt.Sprintf("/api/sessions/%d/handoff", sess.id()),
+		obj{"successor": true, "agent": "not-an-agent"}, nil); code != 422 {
+		t.Errorf("expected a refusal, got %d %s", code, body)
+	}
+	// and the session is untouched — no wrap was requested
+	if len(h.getList(fmt.Sprintf("/api/sessions/%d/wraps", sess.id()))) != 0 {
+		t.Error("a refused handoff still asked the agent to write one")
+	}
+}
