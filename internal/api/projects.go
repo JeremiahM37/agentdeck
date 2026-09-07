@@ -296,6 +296,16 @@ func (s *Server) deleteProject(w http.ResponseWriter, r *http.Request) {
 		httpError(w, 409, "project has tasks")
 		return
 	}
+	// Sessions reference the project, and a foreign key made deleting one with
+	// any attached session fail as a bare 500. Unassigning is the right answer
+	// rather than refusing or cascading: the tmux session is a real thing that
+	// outlives this record, so it goes back to being unassigned — exactly what
+	// it was before it was promoted, and reversible from the same picker.
+	if _, err := s.DB.Exec(
+		`UPDATE sessions SET project_id=NULL WHERE project_id=?`, id); err != nil {
+		respondErr(w, err)
+		return
+	}
 	if _, err := s.DB.Exec(`DELETE FROM projects WHERE id=?`, id); err != nil {
 		respondErr(w, err)
 		return

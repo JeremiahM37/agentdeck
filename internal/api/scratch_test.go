@@ -334,3 +334,43 @@ func TestARealScratchSessionIsPromotableAndDispatchable(t *testing.T) {
 		t.Error("no worktree was created for the promoted project")
 	}
 }
+
+// Deleting a promoted project must not fail on the session that references it.
+// Sessions are real tmux sessions that outlive the record, so they go back to
+// being unassigned rather than blocking the delete or being deleted with it.
+func TestDeletingAPromotedProjectUnassignsItsSessions(t *testing.T) {
+	h := newHarness(t)
+	code, body := h.request("POST", "/api/sessions", obj{"agent": "claude", "scratch": true}, nil)
+	if code != 201 {
+		t.Fatalf("%d %s", code, body)
+	}
+	var sess store.Session
+	json.Unmarshal(body, &sess)
+
+	code, body = h.request("POST", fmt.Sprintf("/api/sessions/%d/promote", sess.ID),
+		obj{"name": "short lived"}, nil)
+	if code != 200 {
+		t.Fatalf("promote: %d %s", code, body)
+	}
+	var out struct {
+		Project store.Project `json:"project"`
+	}
+	json.Unmarshal(body, &out)
+
+	if code, body := h.request("DELETE",
+		fmt.Sprintf("/api/projects/%d", out.Project.ID), nil, nil); code != 204 {
+		t.Fatalf("deleting the project: %d %s", code, body)
+	}
+	stored, err := h.App.DB.Session(sess.ID)
+	if err != nil {
+		t.Fatalf("the session was deleted along with the project: %v", err)
+	}
+	if stored.ProjectID != nil {
+		t.Errorf("the session still points at a project that is gone: %v", *stored.ProjectID)
+	}
+	// and it is still listed, so it can be reassigned rather than lost
+	code, body = h.request("GET", "/api/sessions", nil, nil)
+	if code != 200 || !strings.Contains(string(body), fmt.Sprintf(`"id":%d`, sess.ID)) {
+		t.Errorf("the session disappeared from the board: %s", body)
+	}
+}

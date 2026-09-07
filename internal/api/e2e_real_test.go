@@ -98,6 +98,12 @@ func newRealRig(t *testing.T) *realRig {
 	mustRun(t, repo, "git", "add", "-A")
 	mustRun(t, repo, "git", "commit", "-q", "-m", "initial")
 
+	// scratch directories are created by the target's shell under $HOME by
+	// default; a test must not litter the developer's home, so point the root
+	// at this test's own temp dir. The local executor inherits this process's
+	// environment, which is what makes the override reach the target.
+	t.Setenv("AGENTDECK_SCRATCH_ROOT", filepath.Join(dir, "scratch"))
+
 	agentPath := filepath.Join(dir, "fake-claude")
 	if err := os.WriteFile(agentPath, []byte(fakeAgent), 0o755); err != nil {
 		t.Fatal(err)

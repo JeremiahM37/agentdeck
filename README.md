@@ -8,7 +8,7 @@ isolated git worktree inside tmux, streams every step live, pings you for approv
 and hands you a reviewable diff.
 
 <!-- badges -->
-![status](https://img.shields.io/badge/status-v2.1.0-8b5cf6)
+![status](https://img.shields.io/badge/status-v2.2.0-8b5cf6)
 ![license](https://img.shields.io/badge/license-MIT-blue)
 ![go](https://img.shields.io/badge/go-1.25%2B-00add8)
 ![docker](https://img.shields.io/badge/docker-ready-2496ed)
