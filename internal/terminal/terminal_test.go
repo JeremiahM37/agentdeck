@@ -194,9 +194,9 @@ func TestAttachArgvPerTargetKind(t *testing.T) {
 		},
 		"ssh with a key": {
 			Attachment{TmuxSession: "adk-7"},
-			&store.Target{Kind: "ssh", Host: "100.75.49.118", User: "claude", KeyPath: "/home/admin/.ssh/id_ed25519"},
+			&store.Target{Kind: "ssh", Host: "192.0.2.14", User: "claude", KeyPath: "/home/admin/.ssh/id_ed25519"},
 			[]string{"ssh", "-tt", "-o", "StrictHostKeyChecking=accept-new",
-				"-i", "/home/admin/.ssh/id_ed25519", "claude@100.75.49.118", "tmux", "attach", "-t", "adk-7"},
+				"-i", "/home/admin/.ssh/id_ed25519", "claude@192.0.2.14", "tmux", "attach", "-t", "adk-7"},
 		},
 		"ssh defaults to root": {
 			Attachment{TmuxSession: "adk-7"},

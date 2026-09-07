@@ -124,9 +124,9 @@ func TestTargetConnectionDetailsArePatchable(t *testing.T) {
 
 	var moved obj
 	h.decode("PATCH", fmt.Sprintf("/api/targets/%d", tgt.id()),
-		obj{"host": "100.118.152.78", "user": "admin", "port": 2222,
+		obj{"host": "192.0.2.11", "user": "admin", "port": 2222,
 			"name": "lxc-101"}, 200, &moved)
-	if moved.str("host") != "100.118.152.78" || moved.str("user") != "admin" ||
+	if moved.str("host") != "192.0.2.11" || moved.str("user") != "admin" ||
 		moved.num("port") != 2222 || moved.str("name") != "lxc-101" {
 		t.Fatalf("patched: %v", moved)
 	}
