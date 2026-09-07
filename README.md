@@ -35,9 +35,9 @@ the PWA and the agent-side hook scripts embedded. Copy it to a box and run it.
 
 **Tasks *and* sessions.** A task is work you hand off — dispatch, walk away,
 review a diff. A **session** is an agent you work *with*, for days: it lives in
-tmux, agentdeck watches its status and screen, you attach with one tap, type into
-it from your phone, and when its context fills up you ask it to write a handoff
-and hand the thread to a fresh one. It will also *discover and adopt* the Claude
+tmux, agentdeck watches its status and screen. Tap **Chat** for a large-text live
+reader and multiline composer on your phone. When its context fills up, ask it
+to write a handoff and hand the thread to a fresh one. It will also *discover and adopt* the Claude
 and Codex sessions you started yourself, without disturbing them.
 
 **Runs on your hardware.** A target is any box with SSH — or the machine
@@ -48,6 +48,14 @@ requires Proxmox. Your code and credentials never leave your network.
 **Built for your phone.** The whole control loop — dispatch, live timeline, mobile
 diff review, approve/deny — is designed thumb-first. Approvals arrive as web-push,
 Discord, or ntfy notifications (ntfy carries approve/deny buttons inline).
+
+**Keep talking while tasks run.** Open a task and tap **Chat** to read its
+conversation, send corrections, and answer approvals. Messages wait for the
+current run, or choose **Interrupt and send** to change direction immediately.
+Follow-ups reuse the worktree and resume Claude/Codex conversation context.
+Messages survive server restarts; drafts stay on your device. Backlog messages
+add instructions without dispatching. Ephemeral sandbox tasks queue a fresh
+container with the previous result; interruption is unavailable there.
 
 **Any agent, any model — including fully local.** Claude Code, Codex, and
 Gemini ship with adapters, and the adapter seam is small enough to add your

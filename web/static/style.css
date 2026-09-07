@@ -635,3 +635,36 @@ label.f.check { text-transform: none; letter-spacing: normal;
 /* the phone board shows one column at a time, so its clear control needs a
    header of its own rather than the desktop column head */
 .col.solo .solo-head { border-bottom: 1px solid var(--line); }
+
+/* Responsive layout pass: keep controls usable before shortening their text. */
+.brand h1 { white-space:nowrap; }
+#topbar { gap:12px; }
+.scard-top .nm,.rowcard h3,.projgroup>h3,.card h3 { overflow-wrap:anywhere; min-width:0; }
+.scard select { max-width:100%; }
+:where(button,a,input,textarea,select):focus-visible { outline:2px solid var(--accent-soft); outline-offset:3px; }
+@media(max-width:1023px) {
+  input,textarea,select { font-size:16px !important; }
+  button.b, .scard .btnrow button.b { min-height:44px; }
+  .spane { font-size:13px; line-height:1.6; }
+  #sheet { max-height:calc(100dvh - env(safe-area-inset-top)); }
+}
+@media(max-width:600px) {
+  #quickbar { display:grid; grid-template-columns:minmax(0,1fr) 44px 44px; }
+  #qb-project { grid-column:1; max-width:100%; min-width:0; min-height:44px; }
+  #qb-mic { grid-column:2; grid-row:1; width:44px; }
+  #qb-routines { grid-column:3; grid-row:1; min-height:44px; }
+  #qb-input { grid-column:1/-1; grid-row:2; width:100%; }
+  .colchip { min-height:40px; }
+  .scard-top { row-gap:6px; }
+  .sidle { font-size:11px; }
+}
+/* Seven desktop tabs need their own row at laptop widths. */
+@media(min-width:1024px) and (max-width:1279px) {
+  #topbar { padding-bottom:62px; }
+  #tabbar { top:52px; left:24px; right:auto; }
+}
+@media(prefers-reduced-motion:reduce) {
+  *,*::before,*::after { animation:none !important; transition:none !important; scroll-behavior:auto !important; }
+}
+
+.card .task-chat { margin:8px 0; min-height:40px; width:100%; color:var(--accent-soft); }

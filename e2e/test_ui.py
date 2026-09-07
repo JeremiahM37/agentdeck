@@ -298,7 +298,7 @@ def test_delete_task_from_ui(page, server):
     _new_task(page, "UI delete target", "noop")
     card = page.locator(".card", has_text="UI delete target")
     expect(card).to_be_visible(timeout=15000)
-    card.first.click()
+    card.first.locator(".t").click()
     page.on("dialog", lambda d: d.accept())
     page.click("#actions button:has-text('Delete')")
     expect(page.locator(".card", has_text="UI delete target")).to_have_count(0, timeout=10000)
@@ -460,8 +460,11 @@ def test_session_send_reaches_the_pane(page, server):
     card = page.locator(".scard", has_text="chatty")
     expect(card).to_be_visible(timeout=15000)
 
-    page.once("dialog", lambda d: d.accept("where are we?"))
-    card.locator("button", has_text="Say…").click()
+    card.get_by_role("button", name="Chat", exact=True).click()
+    page.fill("#conversation-input", "where are we?")
+    page.click("#conversation-send")
+    expect(page.locator("#conversation-log")).to_contain_text("where are we?", timeout=15000)
+    page.click("#conversation-close")
     expect(card.locator(".spane")).to_contain_text("where are we?", timeout=15000)
 
 
@@ -1033,3 +1036,76 @@ def test_a_routine_can_be_edited(page, server):
     n = page.evaluate("""fetch('/api/routines').then(r=>r.json())
         .then(x => x.filter(r => ['Editable','Renamed'].includes(r.name)).length)""")
     assert n == 1, f"editing duplicated the routine ({n} copies)"
+
+
+@pytest.mark.parametrize("page", [PHONE], indirect=True, ids=["phone"])
+def test_mobile_task_conversation_keeps_drafts_and_continues(page, server):
+    page.goto(server)
+    _new_task(page, "Mobile conversation", "Create a friendly welcome page")
+    card = page.locator(".col.s-review .card", has_text="Mobile conversation")
+    expect(card).to_be_visible(timeout=20000)
+    card.locator(".t").click()
+    page.locator("#actions").get_by_role("button", name="Chat", exact=True).click()
+    expect(page.locator("#conversation-log")).to_contain_text("Create a friendly welcome page")
+    box = page.locator("#conversation-input")
+    box.fill("Use larger headings")
+    box.press("Enter")
+    box.type("Keep the footer")
+    expect(box).to_have_value("Use larger headings\nKeep the footer")
+    page.wait_for_timeout(2300)  # a live refresh must leave the caret and draft alone
+    expect(box).to_have_value("Use larger headings\nKeep the footer")
+    assert box.evaluate("e=>parseFloat(getComputedStyle(e).fontSize)") >= 16
+    assert page.locator("#conversation").evaluate("e=>e.scrollWidth <= innerWidth")
+    page.click("#conversation-close")
+    page.locator("#actions").get_by_role("button", name="Chat", exact=True).click()
+    expect(box).to_have_value("Use larger headings\nKeep the footer")
+    page.route("**/api/tasks/*/messages", lambda route: route.abort() if route.request.method == "POST" else route.continue_())
+    page.click("#conversation-send")
+    expect(page.locator("#conversation-receipt")).to_contain_text("Your draft is kept")
+    expect(box).to_have_value("Use larger headings\nKeep the footer")
+    page.unroute("**/api/tasks/*/messages")
+    page.click("#conversation-send")
+    expect(box).to_have_value("")
+    expect(page.locator("#conversation-log")).to_contain_text("You · delivered to agent", timeout=20000)
+    expect(page.locator("#conversation-status")).to_contain_text("turn 2", timeout=20000)
+    expect(page.locator("#conversation-log")).to_contain_text("Result · turn 2", timeout=20000)
+    page.click("#reader-larger")
+    assert page.locator(".reader-text").first.evaluate("e=>parseFloat(getComputedStyle(e).fontSize)") >= 18
+    page.screenshot(path="/tmp/agentdeck-mobile-conversation.png")
+    page.click("#conversation-close")
+    expect(page.locator("#sheet")).to_be_visible()
+
+
+@pytest.mark.parametrize("width", [320, 390, 768, 1100, 1440])
+def test_responsive_chrome_and_dispatch_remain_usable(page, server, width):
+    page.set_viewport_size({"width": width, "height": 900})
+    page.goto(server)
+    expect(page.locator("#qb-input")).to_be_visible()
+    assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
+    if width <= 600:
+        assert page.locator("#qb-input").bounding_box()["width"] >= width - 40
+        assert page.locator("#qb-project").bounding_box()["height"] >= 44
+    if width >= 1024:
+        title = page.locator(".brand").bounding_box()
+        nav = page.locator("#tabbar").bounding_box()
+        assert nav["x"] >= title["x"] + title["width"] or nav["y"] >= title["y"] + title["height"]
+
+
+@pytest.mark.parametrize("page", [PHONE], indirect=True, ids=["phone"])
+def test_dispatch_directly_into_chat_and_message_running_task(page, server):
+    page.goto(server)
+    page.click("#fab")
+    page.fill("#f-title","Talk while working")
+    page.fill("#f-prompt","Review this change [mock:approval]")
+    page.select_option("#f-perm","default")
+    page.click("#f-chat")
+    expect(page.locator("#conversation")).to_be_visible()
+    expect(page.locator("#conversation-status")).to_contain_text("running",timeout=20000)
+    page.fill("#conversation-input","Keep the existing public API")
+    page.click("#conversation-send")
+    expect(page.locator("#conversation-log")).to_contain_text("You · queued for next turn",timeout=10000)
+    expect(page.locator("#conversation-log")).to_contain_text("Keep the existing public API")
+    page.click("#conversation-close")
+    page.click("#sheet .x")
+    page.locator('.card',has_text='Talk while working').get_by_role('button',name='Chat with this task').click()
+    expect(page.locator("#conversation-log")).to_contain_text("Keep the existing public API")

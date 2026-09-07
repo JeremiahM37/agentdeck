@@ -1,3 +1,4 @@
+import { openConversation } from "/conversation.js";
 /* agentdeck PWA — vanilla ES module, no build step. */
 const $ = (s, el = document) => el.querySelector(s);
 const $$ = (s, el = document) => [...el.querySelectorAll(s)];
@@ -158,6 +159,7 @@ function card(t) {
   el.innerHTML = `
     <button class="card-x" title="delete this card">✕</button>
     <div class="t"></div>
+    <button class="b task-chat" aria-label="Chat with this task">Chat</button>
     <div class="meta">
       <span class="chip">${esc(t.project_name)}</span>
       <span class="chip tgt">${esc(t.target_name)}</span>
@@ -180,12 +182,15 @@ function card(t) {
         ? `<span class="chip info" title="${t.attempts.length} attempts (retries / follow-ups / A/B)">⑂ ×${t.attempts.length}</span>` : ""}
     </div>`;
   $(".t", el).textContent = t.title;
+  $(".task-chat", el).onclick = ev => { ev.stopPropagation(); openTaskChat(t); };
   el.onclick = () => openTaskSheet(t.id);
   // stopPropagation, or deleting a card would also open the sheet for the card
   // that is on its way out
   $(".card-x", el).onclick = (ev) => { ev.stopPropagation(); deleteCard(t); };
   return el;
 }
+
+function openTaskChat(t) { openConversation({kind:"task",id:t.id,name:t.title,api,attachMic,onClose:()=>openTaskSheet(t.id)}); }
 
 function renderBoard() {
   const main = $("#view");
@@ -485,8 +490,8 @@ function sessionCard(s) {
   };
   if (s.status !== "dead") {
     // the whole point: one tap into the real terminal, same tmux, same chat
-    act("⌨ Attach", "attach grow", () => attachSession(s));
-    act("Say…", "", () => sendToSession(s));
+    act("⌨ Attach", "attach", () => attachSession(s));
+    act("Chat", "ok grow", () => openConversation({kind:"session",id:s.id,name:s.name,api,attachMic,onClose:refreshSessions}));
     if (s.status === "running") act("⎋ Interrupt", "warn", () => sendKey(s, "escape"));
     act("⇥ Handoff", "", () => handoffSession(s));
     // work that started in a blank room: name it once you know what it is
@@ -1729,6 +1734,7 @@ function renderSheet() {
     b.className = `b ${cls}`; b.textContent = label; b.onclick = fn;
     actions.appendChild(b);
   };
+  act("Chat", "ok grow", () => openTaskChat(t));
   if (["backlog", "failed", "cancelled"].includes(t.status))
     act(t.status === "backlog" ? "▶ Dispatch" : "↻ Retry", "ok grow", () => doAction(`/tasks/${t.id}/dispatch`));
   if (["queued", "running"].includes(t.status))
@@ -1917,7 +1923,8 @@ function renderNewTask(sheet) {
     </select>
     <div class="btnrow" style="margin-top:20px">
       <button class="b grow" id="f-save">Save to backlog</button>
-      <button class="b ok grow" id="f-go">▶ Dispatch now</button>
+      <button class="b grow" id="f-go">Dispatch to board</button>
+      <button class="b ok grow" id="f-chat">Dispatch &amp; chat</button>
     </div>`;
   $(".x", sheet).onclick = closeSheet;
   attachMic($("#f-mic"), $("#f-prompt"));
@@ -2007,7 +2014,7 @@ function renderNewTask(sheet) {
     model: $("#f-model").value,
     priority: +$("#f-prio").value,
   });
-  const create = async (dispatch) => {
+  const create = async (dispatch, chat = false) => {
     const data = collect();
     if (!data.title) return toast("Title required", true);
     const modelB = $("#f-modelb").value;
@@ -2022,10 +2029,12 @@ function renderNewTask(sheet) {
         body: modelB ? { model_b: modelB } : {} });
       closeSheet(); refreshTasks();
       toast(dispatch ? "Dispatched" : "Saved to backlog");
+      if (chat) openTaskChat(t);
     } catch (e) { toast(e.message, true); }
   };
   $("#f-save").onclick = () => create(false);
   $("#f-go").onclick = () => create(true);
+  $("#f-chat").onclick = () => create(true, true);
 }
 
 async function doAction(path, body = {}) {
