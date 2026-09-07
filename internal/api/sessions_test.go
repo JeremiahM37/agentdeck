@@ -243,7 +243,7 @@ func TestHandoffWritesAWrapAndPrimesASuccessor(t *testing.T) {
 	h.waitSessionStatus(sess.id(), "waiting", "idle", "running")
 
 	h.post(fmt.Sprintf("/api/sessions/%d/handoff", sess.id()),
-		obj{"successor": true}, 202)
+		obj{"successor": true, "kill_old": true}, 202)
 
 	// the wrap lands asynchronously — an agent mid-turn can take minutes
 	h.waitUntil("the wrap to be written", func() bool {
@@ -670,5 +670,36 @@ func TestHandoffRefusesAnUnknownSuccessorAgent(t *testing.T) {
 	// and the session is untouched — no wrap was requested
 	if len(h.getList(fmt.Sprintf("/api/sessions/%d/wraps", sess.id()))) != 0 {
 		t.Error("a refused handoff still asked the agent to write one")
+	}
+}
+
+// Keeping the old session is the obvious way to compare two agents on the same
+// work. Successor used to imply killing it, so the option the UI offers did
+// nothing and the comparison was impossible.
+func TestAHandoffCanLeaveTheOldSessionRunning(t *testing.T) {
+	h := newHarness(t)
+	sess := h.session(obj{"project_id": h.seededProjectID(),
+		"name": "compare", "agent": "claude"})
+	h.waitSessionStatus(sess.id(), "waiting", "idle", "running")
+
+	h.post(fmt.Sprintf("/api/sessions/%d/handoff", sess.id()),
+		obj{"successor": true, "kill_old": false, "agent": "codex"}, 202)
+
+	h.waitUntil("a codex successor", func() bool {
+		for _, s := range h.getList("/api/sessions") {
+			if s.id() != sess.id() && s.str("agent") == "codex" {
+				return true
+			}
+		}
+		return false
+	})
+	// the predecessor is still alive, so both can be worked with
+	row, err := h.App.DB.Session(sess.id())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if row.Status == "dead" {
+		t.Error("the old session was killed despite kill_old:false — " +
+			"there is no way to compare two agents on the same work")
 	}
 }

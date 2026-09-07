@@ -175,7 +175,11 @@ func (m *Manager) runHandoff(ctx context.Context, sess *store.Session, o Handoff
 		}
 	}
 
-	if o.KillOld || o.Successor {
+	// KillOld is honoured on its own terms. It used to be implied by Successor,
+	// so a handoff that started a new agent always killed the old one even when
+	// the operator had explicitly said not to — and comparing two agents on the
+	// same work, which is the obvious reason to keep both, was impossible.
+	if o.KillOld {
 		if err := m.Kill(ctx, sess.ID); err != nil {
 			m.Log.Warn("could not retire the old session", "session", sess.ID, "err", err)
 		}
