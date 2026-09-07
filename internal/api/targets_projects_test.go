@@ -107,3 +107,33 @@ func TestProjectCanBeRenamed(t *testing.T) {
 		t.Errorf("an empty rename should be a no-op: %v", renamed)
 	}
 }
+
+// Machines move. Before this, a target that changed address had to be deleted
+// and recreated — which is blocked while it has projects, so a LAN renumber
+// meant re-pointing every project by hand.
+func TestTargetConnectionDetailsArePatchable(t *testing.T) {
+	h := newHarness(t)
+	tgt := h.post("/api/targets",
+		obj{"name": "moved", "kind": "ssh", "host": "192.168.1.182", "user": "root"}, 201)
+	// it has a project, so deleting and recreating is not available
+	h.post("/api/projects",
+		obj{"name": "onmoved", "target_id": tgt.id(), "repo_path": "/srv/x"}, 201)
+	if code := h.status("DELETE", fmt.Sprintf("/api/targets/%d", tgt.id()), nil); code != 409 {
+		t.Fatalf("a target with projects should not be deletable: %d", code)
+	}
+
+	var moved obj
+	h.decode("PATCH", fmt.Sprintf("/api/targets/%d", tgt.id()),
+		obj{"host": "100.118.152.78", "user": "admin", "port": 2222,
+			"name": "lxc-101"}, 200, &moved)
+	if moved.str("host") != "100.118.152.78" || moved.str("user") != "admin" ||
+		moved.num("port") != 2222 || moved.str("name") != "lxc-101" {
+		t.Fatalf("patched: %v", moved)
+	}
+	// a rename must not collide with an existing target
+	other := h.post("/api/targets", obj{"name": "taken", "kind": "mock"}, 201)
+	if code := h.status("PATCH", fmt.Sprintf("/api/targets/%d", other.id()),
+		obj{"name": "lxc-101"}); code != 409 {
+		t.Errorf("duplicate rename: %d", code)
+	}
+}

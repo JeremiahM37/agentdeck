@@ -10,13 +10,14 @@ import (
 // ---- targets ----------------------------------------------------------------
 
 const targetCols = `id, name, kind, host, port, user, key_path, workroot,
-	max_concurrent, sandbox, status, info_json, context_json, memory_dir, created_at`
+	max_concurrent, sandbox, status, info_json, context_json, memory_dir,
+	command_prefix, created_at`
 
 func scanTarget(s interface{ Scan(...any) error }) (*Target, error) {
 	var t Target
 	err := s.Scan(&t.ID, &t.Name, &t.Kind, &t.Host, &t.Port, &t.User, &t.KeyPath,
 		&t.Workroot, &t.MaxConcurrent, &t.Sandbox, &t.Status, &t.InfoJSON,
-		&t.ContextJSON, &t.MemoryDir, &t.CreatedAt)
+		&t.ContextJSON, &t.MemoryDir, &t.CommandPrefix, &t.CreatedAt)
 	return &t, err
 }
 
@@ -60,10 +61,10 @@ func (db *DB) TargetByName(name string) (*Target, error) {
 func (db *DB) InsertTarget(t *Target) (*Target, error) {
 	res, err := db.Exec(`INSERT INTO targets(name, kind, host, port, user, key_path,
 		workroot, max_concurrent, sandbox, status, info_json, context_json, memory_dir,
-		created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		command_prefix, created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 		t.Name, t.Kind, t.Host, t.Port, t.User, t.KeyPath, t.Workroot,
 		t.MaxConcurrent, t.Sandbox, nz(t.Status, "unknown"), nz(t.InfoJSON, "{}"),
-		nz(t.ContextJSON, "[]"), t.MemoryDir, Now())
+		nz(t.ContextJSON, "[]"), t.MemoryDir, t.CommandPrefix, Now())
 	if err != nil {
 		return nil, err
 	}

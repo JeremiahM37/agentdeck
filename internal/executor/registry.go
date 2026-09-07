@@ -50,7 +50,7 @@ func (r *Registry) For(t *store.Target) (Executor, error) {
 		// the agent itself runs inside the container via a per-attempt Pct
 		ex = NewLocal()
 	case "ssh":
-		ex = NewSSH(t.Host, t.User, t.Port, t.KeyPath)
+		ex = NewSSH(t.Host, t.User, t.Port, t.KeyPath, t.CommandPrefix)
 	case "pct":
 		ex = NewPct(t.Host)
 	default:

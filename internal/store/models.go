@@ -7,20 +7,25 @@ package store
 
 // Target is a machine agentdeck can dispatch onto.
 type Target struct {
-	ID            int64   `json:"id"`
-	Name          string  `json:"name"`
-	Kind          string  `json:"kind"`
-	Host          string  `json:"host"`
-	Port          int     `json:"port"`
-	User          string  `json:"user"`
-	KeyPath       string  `json:"key_path"`
-	Workroot      string  `json:"workroot"`
-	MaxConcurrent int     `json:"max_concurrent"`
-	Sandbox       int     `json:"sandbox"`
-	Status        string  `json:"status"`
-	InfoJSON      string  `json:"info_json"`
-	ContextJSON   string  `json:"context_json"`
-	MemoryDir     string  `json:"memory_dir"`
+	ID            int64  `json:"id"`
+	Name          string `json:"name"`
+	Kind          string `json:"kind"`
+	Host          string `json:"host"`
+	Port          int    `json:"port"`
+	User          string `json:"user"`
+	KeyPath       string `json:"key_path"`
+	Workroot      string `json:"workroot"`
+	MaxConcurrent int    `json:"max_concurrent"`
+	Sandbox       int    `json:"sandbox"`
+	Status        string `json:"status"`
+	InfoJSON      string `json:"info_json"`
+	ContextJSON   string `json:"context_json"`
+	MemoryDir     string `json:"memory_dir"`
+	// CommandPrefix wraps every command run on this target. It exists for hosts
+	// whose SSH lands somewhere other than where the work is — a Windows box
+	// where the toolchain lives in WSL needs `wsl -e bash -lc`, and without it
+	// the target probes as "no tmux, no python3" and nothing can run.
+	CommandPrefix string  `json:"command_prefix"`
 	CreatedAt     float64 `json:"created_at"`
 }
 

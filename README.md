@@ -115,7 +115,10 @@ reachability, `git`, `tmux`, `python3`, and your agent's CLI.
   looks like a project (git repo, build manifest, or a HANDOFF.md).
 - **Targets** — `local` and `ssh` cover any machine; Proxmox users also get
   `pct` (no SSH needed) and `sandbox` (ephemeral container: clone → run →
-  capture → destroy). Deep credentials probe included.
+  capture → destroy). Deep credentials probe included. A per-target
+  `command_prefix` handles hosts whose SSH lands somewhere other than the work —
+  `wsl -e bash -lc "echo {b64} | base64 -d | bash"` makes a Windows box with its
+  toolchain in WSL an ordinary target.
 - **Agents** — Claude Code and Codex are both first-class, switched with a
   per-task toggle (default per project); Gemini is experimental, and a small seam
   makes adding more easy. Plus **any Anthropic-compatible endpoint** (local
@@ -148,7 +151,7 @@ curl -X POST .../api/projects -d '{
 ## Tests
 
 ```bash
-go test ./...     # 244 hermetic tests: mock executor, a temp database each, no real infra
+go test ./...     # 247 hermetic tests: mock executor, a temp database each, no real infra
 pytest -q e2e     # 34 Playwright browser flows against a real built binary
 ```
 

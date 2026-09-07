@@ -3,6 +3,7 @@ package api
 import (
 	"encoding/json"
 	"net/http"
+	"strings"
 
 	"github.com/JeremiahM37/agentdeck/internal/agents"
 	"github.com/JeremiahM37/agentdeck/internal/creds"
@@ -29,6 +30,9 @@ type targetIn struct {
 	// It depends on the CLI's internal ~/.claude/projects layout, hence off
 	// unless you set it.
 	MemoryDir string `json:"memory_dir"`
+	// CommandPrefix wraps every command, for hosts whose SSH lands somewhere
+	// other than the work (a Windows box with its toolchain in WSL).
+	CommandPrefix string `json:"command_prefix"`
 }
 
 func (s *Server) listTargets(w http.ResponseWriter, r *http.Request) {
@@ -67,6 +71,7 @@ func (s *Server) createTarget(w http.ResponseWriter, r *http.Request) {
 		User: strOr(in.User, "root"), KeyPath: in.KeyPath, Workroot: in.Workroot,
 		MaxConcurrent: valOr(in.MaxConcurrent, 4), Sandbox: boolInt(in.Sandbox),
 		ContextJSON: store.J(orEmpty(in.ContextPaths)), MemoryDir: in.MemoryDir,
+		CommandPrefix: in.CommandPrefix,
 	}
 	out, err := s.DB.InsertTarget(t)
 	if err != nil {
@@ -81,6 +86,16 @@ type targetPatch struct {
 	MemoryDir     *string   `json:"memory_dir"`
 	Workroot      *string   `json:"workroot"`
 	MaxConcurrent *int      `json:"max_concurrent"`
+	// Connection details are patchable because machines move. Without this, a
+	// target that changed address had to be deleted and recreated — which is
+	// blocked while it has projects, so the only way out was to re-point every
+	// project by hand. A LAN renumber should not cost that.
+	Host          *string `json:"host"`
+	CommandPrefix *string `json:"command_prefix"`
+	User          *string `json:"user"`
+	Port          *int    `json:"port"`
+	KeyPath       *string `json:"key_path"`
+	Name          *string `json:"name"`
 }
 
 func (s *Server) patchTarget(w http.ResponseWriter, r *http.Request) {
@@ -110,6 +125,21 @@ func (s *Server) patchTarget(w http.ResponseWriter, r *http.Request) {
 	}
 	if p.MaxConcurrent != nil {
 		fields["max_concurrent"] = *p.MaxConcurrent
+	}
+	setStr(fields, "host", p.Host)
+	setStr(fields, "command_prefix", p.CommandPrefix)
+	setStr(fields, "user", p.User)
+	setStr(fields, "key_path", p.KeyPath)
+	if p.Port != nil {
+		fields["port"] = *p.Port
+	}
+	if p.Name != nil && strings.TrimSpace(*p.Name) != "" {
+		if existing, err := s.DB.TargetByName(strings.TrimSpace(*p.Name)); err == nil &&
+			existing.ID != id {
+			httpError(w, 409, "target name exists")
+			return
+		}
+		fields["name"] = strings.TrimSpace(*p.Name)
 	}
 	if len(fields) > 0 {
 		if err := s.DB.Update("targets", id, fields); err != nil {

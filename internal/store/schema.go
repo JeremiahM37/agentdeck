@@ -11,6 +11,7 @@ CREATE TABLE IF NOT EXISTS targets(
   status TEXT DEFAULT 'unknown', info_json TEXT DEFAULT '{}',
   context_json TEXT DEFAULT '[]',              -- control-plane paths staged into every worktree
   memory_dir TEXT DEFAULT '',                  -- opt-in shared Claude Code memory store
+  command_prefix TEXT DEFAULT '',              -- wraps every command, e.g. wsl -e bash -lc
   created_at REAL
 );
 CREATE TABLE IF NOT EXISTS projects(
@@ -113,6 +114,7 @@ CREATE INDEX IF NOT EXISTS idx_memories_project ON memories(project_id);
 var migrations = []string{
 	"ALTER TABLE targets ADD COLUMN context_json TEXT DEFAULT '[]'",
 	"ALTER TABLE targets ADD COLUMN memory_dir TEXT DEFAULT ''",
+	"ALTER TABLE targets ADD COLUMN command_prefix TEXT DEFAULT ''",
 	"ALTER TABLE projects ADD COLUMN verify_cmd TEXT DEFAULT ''",
 	"ALTER TABLE projects ADD COLUMN keep_worktrees INTEGER DEFAULT 0",
 	"ALTER TABLE projects ADD COLUMN review_gate INTEGER DEFAULT 0",

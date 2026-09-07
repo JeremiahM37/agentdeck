@@ -3,9 +3,11 @@ package executor
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"fmt"
 	"net"
 	"os"
+	"strings"
 	"sync"
 	"time"
 
@@ -19,6 +21,23 @@ type SSH struct {
 	User    string
 	Port    int
 	KeyPath string
+	// Wrapper, when set, transforms every command before it is sent. It is how a
+	// host whose SSH lands somewhere other than the work becomes an ordinary
+	// target. Two placeholders:
+	//
+	//	{cmd}  the command, POSIX shell-quoted
+	//	{b64}  the command, base64-encoded
+	//
+	// {b64} is the one to reach for on a Windows host: its SSH server hands the
+	// line to cmd.exe, which does not understand POSIX quoting, and anything
+	// that survives that still gets $-expanded by the outer bash. Base64 is
+	// alphanumeric, so it passes through both untouched:
+	//
+	//	wsl -e bash -lc "echo {b64} | base64 -d | bash"
+	//
+	// A wrapper with no placeholder is treated as a prefix and given the
+	// shell-quoted command, which is what a POSIX host wants.
+	Wrapper string
 
 	mu   sync.Mutex
 	conn *ssh.Client
@@ -29,14 +48,14 @@ type SSH struct {
 }
 
 // NewSSH builds an SSH executor for a target.
-func NewSSH(host, user string, port int, keyPath string) *SSH {
+func NewSSH(host, user string, port int, keyPath, wrapper string) *SSH {
 	if user == "" {
 		user = "root"
 	}
 	if port == 0 {
 		port = 22
 	}
-	return &SSH{Host: host, User: user, Port: port, KeyPath: keyPath}
+	return &SSH{Host: host, User: user, Port: port, KeyPath: keyPath, Wrapper: wrapper}
 }
 
 func (s *SSH) client() (*ssh.Client, error) {
@@ -99,18 +118,39 @@ func (s *SSH) authMethods() ([]ssh.AuthMethod, error) {
 	return methods, nil
 }
 
+// buildCommand renders what actually goes over the wire: the command, its
+// working directory, and any target wrapper — in that order, so the wrapper
+// receives the whole thing as one argument.
+func (s *SSH) buildCommand(cmd, cwd string) string {
+	full := cmd
+	if cwd != "" {
+		full = "cd " + ShellQuote(cwd) + " && " + cmd
+	}
+	if s.Wrapper == "" {
+		return full
+	}
+	switch {
+	case strings.Contains(s.Wrapper, "{b64}"):
+		return strings.ReplaceAll(s.Wrapper, "{b64}",
+			base64.StdEncoding.EncodeToString([]byte(full)))
+	case strings.Contains(s.Wrapper, "{cmd}"):
+		return strings.ReplaceAll(s.Wrapper, "{cmd}", ShellQuote(full))
+	default:
+		return s.Wrapper + " " + ShellQuote(full)
+	}
+}
+
 // Run executes a command over a fresh SSH channel on the pooled connection.
 func (s *SSH) Run(ctx context.Context, cmd string, opts RunOpts) (Result, error) {
+	full := s.buildCommand(cmd, opts.Cwd)
+	// the seam receives the FULLY BUILT command, so a test asserting on it is
+	// checking what the target would really see rather than a reimplementation
 	if s.runner != nil {
-		return s.runner(ctx, cmd, opts)
+		return s.runner(ctx, full, opts)
 	}
 	conn, err := s.client()
 	if err != nil {
 		return Result{}, err
-	}
-	full := cmd
-	if opts.Cwd != "" {
-		full = "cd " + ShellQuote(opts.Cwd) + " && " + cmd
 	}
 	sess, err := conn.NewSession()
 	if err != nil {
