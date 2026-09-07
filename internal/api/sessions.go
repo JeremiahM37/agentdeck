@@ -374,7 +374,10 @@ func (s *Server) attachSession(w http.ResponseWriter, r *http.Request) {
 		httpError(w, 503, "%s", err.Error())
 		return
 	}
-	writeJSON(w, 200, map[string]any{"port": port, "tmux_session": row.TmuxSession})
+	// url is what the UI opens: same-origin, so it works through nginx, over the
+	// tailnet, and on a phone. port stays for older clients and for debugging.
+	writeJSON(w, 200, map[string]any{"port": port, "url": terminalURL(port),
+		"tmux_session": row.TmuxSession})
 }
 
 // deleteSession stops tracking a session, and kills its process ONLY when

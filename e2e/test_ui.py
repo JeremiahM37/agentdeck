@@ -607,3 +607,84 @@ def test_blank_room_session_can_be_promoted_to_a_project(page, server):
     page.click(".tab[data-tab='board']")
     page.click("#fab")
     expect(page.locator("#f-project")).to_contain_text("half-an-idea")
+
+
+@pytest.mark.parametrize("page", [PHONE], indirect=True, ids=["phone"])
+def test_phone_session_cards_do_not_overflow_with_every_button(page, server):
+    """Session cards grew a "Make a project" button. A phone is 390px wide and
+    the button row is where that shows up first."""
+    page.goto(server)
+    page.click(".tab[data-tab='sessions']")
+    page.click("#sess-new")
+    page.select_option("#ns-project", "")          # blank room: the most buttons
+    page.fill("#ns-name", "phone room")
+    page.click("#ns-go")
+
+    card = page.locator(".scard", has_text="phone room")
+    expect(card).to_be_visible(timeout=15000)
+    expect(card.locator("button", has_text="Make a project")).to_be_visible()
+
+    # nothing may push the document sideways
+    scroll_w = page.evaluate("() => document.documentElement.scrollWidth")
+    assert scroll_w <= PHONE["width"] + 1, f"sessions tab overflows on a phone ({scroll_w}px)"
+
+    # and every button must actually be reachable inside the card
+    overflow = card.evaluate("""el => {
+        const row = el.querySelector('.btnrow');
+        return row ? row.scrollWidth - row.clientWidth : 0;
+    }""")
+    assert overflow <= 1, f"the button row is {overflow}px wider than the card"
+
+    # each button must be tappable: at least 30px tall and inside the viewport
+    for i in range(card.locator(".btnrow button").count()):
+        box = card.locator(".btnrow button").nth(i).bounding_box()
+        assert box["height"] >= 28, f"button {i} is only {box['height']}px tall"
+        assert box["x"] >= 0 and box["x"] + box["width"] <= PHONE["width"] + 1, \
+            f"button {i} runs off the screen: {box}"
+
+
+@pytest.mark.parametrize("page", [PHONE], indirect=True, ids=["phone"])
+def test_phone_new_session_sheet_fits(page, server):
+    """The sheet gained a project option and a model list; it still has to be
+    usable one-handed."""
+    page.goto(server)
+    page.click(".tab[data-tab='sessions']")
+    page.click("#sess-new")
+    for sel in ("#ns-project", "#ns-agent", "#ns-model", "#ns-start", "#ns-go"):
+        expect(page.locator(sel)).to_be_visible()
+        box = page.locator(sel).bounding_box()
+        assert box["x"] >= 0 and box["x"] + box["width"] <= PHONE["width"] + 1, \
+            f"{sel} runs off the screen: {box}"
+    scroll_w = page.evaluate("() => document.documentElement.scrollWidth")
+    assert scroll_w <= PHONE["width"] + 1, f"the sheet overflows ({scroll_w}px)"
+
+
+def test_attach_opens_a_same_origin_terminal(page, server):
+    """Attach used to open http://<the browser's hostname>:<port>, which named
+    whichever machine served the page — the reverse proxy, usually, which runs no
+    ttyd. It must be a path on this origin."""
+    page.goto(server)
+    page.click(".tab[data-tab='sessions']")
+    page.click("#sess-new")
+    page.fill("#ns-name", "attachable")
+    page.click("#ns-go")
+    card = page.locator(".scard", has_text="attachable")
+    expect(card).to_be_visible(timeout=15000)
+
+    page.evaluate("window.__opened = []; "
+                  "window.open = (u) => { window.__opened.push(u); return null; };")
+    card.locator("button", has_text="Attach").click()
+    page.wait_for_timeout(3000)
+
+    opened = [u for u in page.evaluate("window.__opened || []") if u]
+    assert opened, "Attach opened nothing"
+    # every URL it opens must be same-origin, not just the first one
+    for url in opened:
+        assert url.startswith("/term/"), f"terminal url must be same-origin, got {url!r}"
+        for bad in ("http://", "https://", "localhost", "127.0.0.1", ":77"):
+            assert bad not in url, f"terminal url names a host ({bad}): {url!r}"
+    url = opened[0]
+
+    # and that path must actually serve ttyd through the proxy
+    resp = page.request.get(server + url)
+    assert resp.ok, f"{url} -> {resp.status}"

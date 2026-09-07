@@ -23,6 +23,42 @@ const (
 	PortHi = 7730
 )
 
+// TTYDArgs builds ttyd's command line.
+//
+//   - `-i lo`: a ttyd with no credential is an unauthenticated shell, so it
+//     listens on loopback only and is reached through this service's own proxy.
+//     That is also what makes it work from any hostname.
+//   - `-b <base path>`: ttyd's asset and websocket URLs are absolute, so it must
+//     be told the prefix it is mounted under or the page loads blank.
+func TTYDArgs(port int, argv []string) []string {
+	return append([]string{
+		"-p", strconv.Itoa(port), "-i", "lo", "-W", "--once",
+		"-b", BasePath(port)}, argv...)
+}
+
+// BasePath is where a terminal is mounted on the control plane's own origin.
+// Same-origin matters: the browser may have reached agentdeck through nginx, a
+// tailnet name or an IP, and only the control plane knows where ttyd actually
+// runs. Building the URL from the browser's hostname pointed the terminal at
+// whichever machine served the page — the reverse proxy, usually, which runs no
+// ttyd at all and simply refused the connection.
+func BasePath(port int) string { return "/term/" + strconv.Itoa(port) }
+
+// Owns reports whether a port is one this manager actually spawned. The proxy
+// asks before forwarding, so /term/<port> cannot be pointed at an arbitrary
+// local service.
+func (m *Manager) Owns(port int) bool {
+	m.reap()
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, s := range m.procs {
+		if s.port == port && s.cmd != nil {
+			return true
+		}
+	}
+	return false
+}
+
 // ErrNoPorts means every terminal port in the range is taken.
 var ErrNoPorts = errors.New("no free terminal ports")
 
@@ -61,8 +97,7 @@ func NewManager() *Manager {
 		procs:    map[string]*session{},
 		LookPath: exec.LookPath,
 		Spawn: func(port int, argv []string) (*exec.Cmd, error) {
-			args := append([]string{"-p", strconv.Itoa(port), "-W", "--once"}, argv...)
-			cmd := exec.Command("ttyd", args...)
+			cmd := exec.Command("ttyd", TTYDArgs(port, argv)...)
 			if err := cmd.Start(); err != nil {
 				return nil, err
 			}

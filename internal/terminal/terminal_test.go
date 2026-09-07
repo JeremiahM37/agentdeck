@@ -139,19 +139,34 @@ func TestPortsAreReturnedWhenTerminalsAreShutDown(t *testing.T) {
 
 func TestExhaustingTheRangeIsAClearError(t *testing.T) {
 	m, _ := fakeManager(t)
+	// Allocate until the range runs out rather than assuming how many are free:
+	// the range is shared with anything else on this machine that happens to be
+	// listening (the estate's temp terminals overlap it), and a test that pins an
+	// exact count fails for reasons that have nothing to do with the code.
+	got := 0
+	var err error
 	for i := 0; i <= PortHi-PortLo; i++ {
-		if _, err := m.Attach(context.Background(),
+		if _, err = m.Attach(context.Background(),
 			Attachment{Key: fmt.Sprintf("attempt:%d", i)}, target("local")); err != nil {
-			t.Fatalf("attach %d of %d failed early: %v", i, PortHi-PortLo+1, err)
+			break
 		}
+		got++
 	}
-	_, err := m.Attach(context.Background(), Attachment{Key: "one-too-many"}, target("local"))
+	if got == 0 {
+		t.Fatalf("could not allocate a single terminal: %v", err)
+	}
+	if err == nil {
+		// the whole range was free, so ask for one more than it holds
+		_, err = m.Attach(context.Background(),
+			Attachment{Key: "one-too-many"}, target("local"))
+	}
 	if err == nil {
 		t.Fatal("the range is full; attaching must fail rather than hand out a used port")
 	}
 	if !strings.Contains(err.Error(), "no free terminal port") {
 		t.Errorf("the error should say the range is exhausted, got %q", err)
 	}
+	t.Logf("allocated %d of %d before the range ran out", got, PortHi-PortLo+1)
 }
 
 // The argv is what actually reaches the target. A wrong one fails at connect

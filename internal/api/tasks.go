@@ -509,7 +509,7 @@ func (s *Server) attachTerminal(w http.ResponseWriter, r *http.Request) {
 		httpError(w, 503, "%s", err.Error())
 		return
 	}
-	writeJSON(w, 200, map[string]any{"port": port})
+	writeJSON(w, 200, map[string]any{"port": port, "url": terminalURL(port)})
 }
 
 func (s *Server) taskEvents(w http.ResponseWriter, r *http.Request) {

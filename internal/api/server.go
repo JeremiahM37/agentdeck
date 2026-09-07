@@ -114,6 +114,10 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/sessions/{id}/handoff", s.handoffSession)
 	mux.HandleFunc("GET /api/sessions/{id}/wraps", s.sessionWraps)
 	mux.HandleFunc("POST /api/sessions/{id}/promote", s.promoteSession)
+
+	// ---- attached terminals (proxied on this origin; see termproxy.go) ----
+	mux.HandleFunc("/term/{port}", s.termProxy)
+	mux.HandleFunc("/term/{port}/", s.termProxy)
 	mux.HandleFunc("GET /api/projects/{id}/wraps", s.projectWraps)
 	mux.HandleFunc("GET /api/projects/{id}/brief", s.previewBrief)
 

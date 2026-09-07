@@ -510,7 +510,10 @@ async function endSession(s, kill) {
 async function attachSession(s) {
   try {
     const r = await api(`/sessions/${s.id}/terminal`, { method: "POST" });
-    window.open(`http://${location.hostname}:${r.port}`, "_blank");
+    // same origin: the terminal is proxied by agentdeck itself, so this works
+    // through the nginx vhost, over the tailnet and on a phone. Building it from
+    // location.hostname aimed it at whichever machine served the page.
+    window.open(r.url || `/term/${r.port}/`, "_blank");
   } catch (e) {
     // ttyd may not be installed; the manual command is still useful
     toast(e.message + " — attach manually", true);
@@ -1210,7 +1213,10 @@ function renderSheet() {
     act("⌨ Terminal", "", async () => {
       try {
         const r = await api(`/tasks/${t.id}/terminal`, { method: "POST" });
-        window.open(`http://${location.hostname}:${r.port}`, "_blank");
+        // same origin: the terminal is proxied by agentdeck itself, so this works
+    // through the nginx vhost, over the tailnet and on a phone. Building it from
+    // location.hostname aimed it at whichever machine served the page.
+    window.open(r.url || `/term/${r.port}/`, "_blank");
       } catch (e) {
         const sshPrefix = t.target_kind === "ssh"
           ? `ssh -t ${t.target_user}@${t.target_host} ` : "";
