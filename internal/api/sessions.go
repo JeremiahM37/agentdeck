@@ -341,6 +341,10 @@ func (s *Server) sendToSession(w http.ResponseWriter, r *http.Request) {
 		httpError(w, 422, "%s", err.Error())
 		return
 	}
+	if len(in.Text) > 32000 {
+		httpError(w, 422, "message is too long (maximum 32000 bytes)")
+		return
+	}
 	if row.Status == sessions.StatusDead {
 		httpError(w, 409, "this session has ended")
 		return

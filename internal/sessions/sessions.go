@@ -226,9 +226,9 @@ func lastLines(s string, n int) string {
 // verbatim: newlines, quotes and unicode all reach the agent as one paste
 // instead of being re-interpreted as shell syntax or as separate submissions.
 func SendTextCommand(tmuxName, stagePath string) string {
-	q, p := shellq.Quote(tmuxName), shellq.Quote(stagePath)
+	q, p := shellq.Quote("="+tmuxName+":"), shellq.Quote(stagePath)
 	return fmt.Sprintf("tmux load-buffer -b agentdeck %s && "+
-		"tmux paste-buffer -b agentdeck -t %s -d && "+
+		"tmux paste-buffer -b agentdeck -t %s -d -p && "+
 		"tmux send-keys -t %s Enter && rm -f %s", p, q, q, p)
 }
 
@@ -248,7 +248,7 @@ func SendKeyCommand(tmuxName, key string) (string, bool) {
 	if !ok {
 		return "", false
 	}
-	return fmt.Sprintf("tmux send-keys -t %s %s", shellq.Quote(tmuxName), code), true
+	return fmt.Sprintf("tmux send-keys -t %s %s", shellq.Quote("="+tmuxName+":"), code), true
 }
 
 // KillCommand ends a session's tmux process.

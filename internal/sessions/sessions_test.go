@@ -143,7 +143,7 @@ func TestSendTextGoesThroughABufferNotSendKeys(t *testing.T) {
 	// send-keys -l would re-interpret newlines as submissions and quotes as
 	// shell syntax; a buffer paste delivers the text exactly as written
 	cmd := SendTextCommand("adk-s2", "/tmp/stage")
-	for _, want := range []string{"load-buffer", "paste-buffer", "send-keys -t adk-s2 Enter", "rm -f"} {
+	for _, want := range []string{"load-buffer", "paste-buffer", "send-keys -t =adk-s2: Enter", "rm -f"} {
 		if !strings.Contains(cmd, want) {
 			t.Errorf("missing %q: %s", want, cmd)
 		}

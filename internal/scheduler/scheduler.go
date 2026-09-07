@@ -152,6 +152,7 @@ func (s *Scheduler) Tick(ctx context.Context) {
 	if s.Routines != nil {
 		s.Routines(ctx)
 	}
+	s.DeliverMessages(ctx)
 	s.promoteQueued(ctx)
 
 	running, err := s.DB.AttemptsWhere("status='running'")
@@ -517,7 +518,7 @@ func (s *Scheduler) poll(ctx context.Context, att *store.Attempt) error {
 	}
 
 	if len(chunk) == 0 { // no output and no exit code — is the session even alive?
-		alive, err := ex.Run(ctx, fmt.Sprintf("tmux has-session -t adk-%d 2>/dev/null", att.ID),
+		alive, err := ex.Run(ctx, fmt.Sprintf("tmux has-session -t =adk-%d 2>/dev/null", att.ID),
 			executor.RunOpts{Timeout: 20})
 		if err != nil {
 			return err
@@ -678,6 +679,9 @@ func (s *Scheduler) finalize(ctx context.Context, att *store.Attempt, rc int, no
 	anyOK, _ := s.DB.Count("attempts", "task_id=? AND status='done'", att.TaskID)
 	if anyOK > 0 {
 		s.setTaskStatus(task.ID, "review")
+		if n, _ := s.DB.Count("task_messages", "task_id=? AND status='pending'", task.ID); n > 0 {
+			return
+		}
 		s.Notifier.Notify("Ready for review", clip(task.Title, 80),
 			fmt.Sprintf("/#task/%d", task.ID), nil)
 		if task.CreatedBy == "reviewer-gate" {
@@ -823,7 +827,7 @@ func (s *Scheduler) CancelAttempt(ctx context.Context, att *store.Attempt) {
 	s.Broker.ExpireForAttempt(att.ID)
 	if c, err := s.contextFor(att); err == nil {
 		if ex, err := s.attemptExecutor(att, c.Target); err == nil {
-			ex.Run(ctx, fmt.Sprintf("tmux kill-session -t adk-%d 2>/dev/null || true", att.ID),
+			ex.Run(ctx, fmt.Sprintf("tmux kill-session -t =adk-%d 2>/dev/null || true", att.ID),
 				executor.RunOpts{Timeout: 20})
 		}
 		if c.Target.Kind == "sandbox" && att.SandboxVMID != "" {

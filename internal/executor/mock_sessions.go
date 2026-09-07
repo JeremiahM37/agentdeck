@@ -74,7 +74,7 @@ func (m *Mock) capture(sess string) (string, bool) {
 func (m *Mock) handlePoll(cmd string) Result {
 	var b strings.Builder
 	for _, match := range capturePaneRe.FindAllStringSubmatch(cmd, -1) {
-		name := match[1]
+		name := strings.TrimSuffix(strings.TrimPrefix(match[1], "="), ":")
 		pane, ok := m.capture(name)
 		b.WriteString(MockPaneDelimiter + name + "\n")
 		if ok {
@@ -95,7 +95,7 @@ func (m *Mock) handleSendText(cmd string) Result {
 	}
 	m.mu.Lock()
 	text := string(m.fs[src[1]])
-	pane, ok := m.panes[target[1]]
+	pane, ok := m.panes[strings.TrimSuffix(strings.TrimPrefix(target[1], "="), ":")]
 	m.mu.Unlock()
 	if !ok {
 		return Result{1, "", "no such session"}
@@ -149,7 +149,7 @@ func (m *Mock) handleSendKey(cmd string) Result {
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	pane, ok := m.panes[match[1]]
+	pane, ok := m.panes[strings.TrimSuffix(strings.TrimPrefix(match[1], "="), ":")]
 	if !ok {
 		return Result{1, "", "no such session"}
 	}

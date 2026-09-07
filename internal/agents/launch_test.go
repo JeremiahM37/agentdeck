@@ -182,3 +182,8 @@ func TestHookSettingsCarryURLAndToken(t *testing.T) {
 		t.Errorf("narrowed matcher: %q", parsed.Hooks.PreToolUse[0].Matcher)
 	}
 }
+
+func TestCodexFollowupResumesWithTheOriginalPermissions(t *testing.T) {
+	cmd := mustCommand(t, LaunchSpec{Agent: "codex", Worktree: "/wt/task1-a1", TmuxSession: "adk-2", PermissionMode: "acceptEdits", ResumeSession: "thread-123"})
+	hasAll(t, cmd, "codex exec --json --sandbox workspace-write resume thread-123", "prompt.md")
+}

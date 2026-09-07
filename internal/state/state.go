@@ -14,8 +14,8 @@ var Transitions = map[string]map[string]bool{
 	"running":   {"review": true, "failed": true, "cancelled": true},
 	"review":    {"done": true, "queued": true, "cancelled": true}, // queued = follow-up attempt
 	"failed":    {"queued": true, "backlog": true, "cancelled": true},
-	"done":      {},
-	"cancelled": {"backlog": true},
+	"done":      {"queued": true}, // an explicit message reopens completed work
+	"cancelled": {"backlog": true, "queued": true},
 }
 
 // IllegalTransition is returned for any move the machine forbids.

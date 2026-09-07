@@ -119,6 +119,9 @@ func (l Launcher) Command(s LaunchSpec) (string, error) {
 			return "", fmt.Errorf("codex has no sandbox for permission mode %q", s.PermissionMode)
 		}
 		parts = append(parts, flags...)
+		if s.ResumeSession != "" {
+			parts = append(parts, "resume", shellQuote(s.ResumeSession))
+		}
 		parts = append(parts, `"$(cat .agentdeck/prompt.md)"`)
 	case "gemini":
 		parts = []string{l.bin(l.GeminiBin, "gemini"), "-p", `"$(cat .agentdeck/prompt.md)"`}

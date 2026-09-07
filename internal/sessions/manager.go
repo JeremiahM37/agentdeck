@@ -31,6 +31,7 @@ type Manager struct {
 	// before giving up and saying so.
 	HandoffTimeout time.Duration
 
+	sendMu   sync.Mutex
 	mu       sync.Mutex
 	handoffs map[int64]bool // sessions with a wrap in flight
 }
@@ -351,6 +352,8 @@ func (m *Manager) end(id int64, status string) {
 // SendText types a message into a session and submits it — the phone-side
 // equivalent of typing at the terminal.
 func (m *Manager) SendText(ctx context.Context, id int64, text string) error {
+	m.sendMu.Lock()
+	defer m.sendMu.Unlock()
 	sess, ex, err := m.resolve(id)
 	if err != nil {
 		return err
@@ -373,6 +376,8 @@ func (m *Manager) SendText(ctx context.Context, id int64, text string) error {
 // SendKey presses one allowlisted key in a session — Escape to interrupt a turn,
 // Enter to accept, and so on.
 func (m *Manager) SendKey(ctx context.Context, id int64, key string) error {
+	m.sendMu.Lock()
+	defer m.sendMu.Unlock()
 	sess, ex, err := m.resolve(id)
 	if err != nil {
 		return err

@@ -173,7 +173,7 @@ func (m *Mock) Run(ctx context.Context, cmd string, opts RunOpts) (Result, error
 	case sendKeysRe.MatchString(cmd):
 		return m.handleSendKey(cmd), nil
 	case strings.Contains(cmd, "tmux display-message"):
-		name := strings.Trim(firstGroup(targetRe, cmd), "'")
+		name := strings.TrimPrefix(strings.Trim(firstGroup(targetRe, cmd), "'"), "=")
 		m.mu.Lock()
 		_, known := m.panes[name]
 		m.mu.Unlock()
@@ -184,7 +184,7 @@ func (m *Mock) Run(ctx context.Context, cmd string, opts RunOpts) (Result, error
 		now := time.Now().Unix()
 		return Result{0, fmt.Sprintf("%d %d\n", now-7200, now-600), ""}, nil
 	case strings.HasPrefix(cmd, "tmux has-session"):
-		name := strings.Trim(firstGroup(targetRe, cmd), "'")
+		name := strings.TrimPrefix(strings.Trim(firstGroup(targetRe, cmd), "'"), "=")
 		if m.alive(name) {
 			return Result{0, "", ""}, nil
 		}
@@ -196,7 +196,7 @@ func (m *Mock) Run(ctx context.Context, cmd string, opts RunOpts) (Result, error
 		}
 		return Result{1, "", ""}, nil
 	case strings.HasPrefix(cmd, "tmux kill-session"):
-		name := strings.Trim(firstGroup(targetRe, cmd), "'")
+		name := strings.TrimPrefix(strings.Trim(firstGroup(targetRe, cmd), "'"), "=")
 		m.killAgent(name)
 		m.mu.Lock()
 		delete(m.panes, name)

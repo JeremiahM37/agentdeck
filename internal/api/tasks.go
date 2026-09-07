@@ -184,6 +184,10 @@ func (s *Server) dispatchTask(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	if task.Status == "done" {
+		httpError(w, 409, "send a follow-up message to continue a completed task")
+		return
+	}
 	if err := state.Check(task.Status, "queued"); err != nil {
 		httpError(w, 409, "%s", err.Error())
 		return

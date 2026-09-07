@@ -56,6 +56,20 @@ CREATE TABLE IF NOT EXISTS attempts(
   verify_json TEXT DEFAULT '{}'
 );
 CREATE INDEX IF NOT EXISTS idx_attempts_task ON attempts(task_id);
+-- Operator messages survive restarts and are assigned to exactly one turn.
+CREATE TABLE IF NOT EXISTS task_messages(
+  id INTEGER PRIMARY KEY,
+  task_id INTEGER NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+  request_id TEXT NOT NULL,
+  text TEXT NOT NULL,
+  interrupt INTEGER NOT NULL DEFAULT 0,
+  status TEXT NOT NULL DEFAULT 'pending',
+  attempt_id INTEGER,
+  error TEXT NOT NULL DEFAULT '',
+  created_at REAL NOT NULL,
+  UNIQUE(task_id, request_id)
+);
+CREATE INDEX IF NOT EXISTS idx_task_messages_pending ON task_messages(status, task_id);
 CREATE TABLE IF NOT EXISTS events(
   id INTEGER PRIMARY KEY, attempt_id INTEGER NOT NULL REFERENCES attempts(id),
   seq INTEGER NOT NULL, ts REAL, type TEXT NOT NULL, payload_json TEXT DEFAULT '{}'

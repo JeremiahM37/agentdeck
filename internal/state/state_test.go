@@ -5,7 +5,7 @@ import "testing"
 func TestLegalTransitions(t *testing.T) {
 	for _, tc := range [][2]string{
 		{"backlog", "queued"}, {"queued", "running"}, {"running", "review"},
-		{"review", "done"}, {"review", "queued"}, {"running", "failed"},
+		{"done", "queued"}, {"cancelled", "queued"}, {"review", "done"}, {"review", "queued"}, {"running", "failed"},
 		{"failed", "queued"}, {"queued", "cancelled"}, {"cancelled", "backlog"},
 	} {
 		if err := Check(tc[0], tc[1]); err != nil {
@@ -16,7 +16,7 @@ func TestLegalTransitions(t *testing.T) {
 
 func TestIllegalTransitions(t *testing.T) {
 	for _, tc := range [][2]string{
-		{"backlog", "running"}, {"backlog", "review"}, {"done", "queued"},
+		{"backlog", "running"}, {"backlog", "review"},
 		{"done", "backlog"}, {"running", "done"}, {"queued", "review"},
 		{"review", "running"}, {"cancelled", "running"},
 	} {
