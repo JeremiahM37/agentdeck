@@ -293,3 +293,26 @@ func TestFinalizeSurvivesANullResultBlob(t *testing.T) {
 		t.Fatalf("the board stalled: %v", other.str("status"))
 	}
 }
+
+// The poll reads the event log and the exit code as two separate reads. Whatever
+// the agent wrote between them — usually its closing `result`, the summary of
+// what it actually did — was lost, because finalising takes the attempt out of
+// the running set and nothing ever reads the tail. It showed up as a task in
+// review whose timeline simply stopped mid-run.
+func TestTheAgentsLastWordsSurviveFinalising(t *testing.T) {
+	for i := 0; i < 12; i++ {
+		func() {
+			h := newHarness(t)
+			task := h.run(h.seededProjectID(), "final words", "x", nil)
+			h.waitStatus(task.id(), "review")
+
+			seen := map[string]bool{}
+			for _, e := range h.getList(fmt.Sprintf("/api/tasks/%d/events", task.id())) {
+				seen[e.str("type")] = true
+			}
+			if !seen["result"] {
+				t.Fatalf("run %d: the closing result event is missing: %v", i, seen)
+			}
+		}()
+	}
+}

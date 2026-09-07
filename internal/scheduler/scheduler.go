@@ -448,6 +448,32 @@ func projectEnv(p *store.Project) map[string]string {
 
 // ---- running: tail + finalise -------------------------------------------------
 
+// drainEvents reads whatever the agent has written since the last poll and
+// stores the complete lines, returning the raw chunk it saw.
+func (s *Scheduler) drainEvents(ctx context.Context, ex executor.Executor,
+	att *store.Attempt, c *runCtx, rt string) ([]byte, error) {
+	chunk, err := ex.ReadFile(ctx, rt+"/events.jsonl", att.LogOffset)
+	if err != nil {
+		return nil, err
+	}
+	if len(chunk) == 0 {
+		return chunk, nil
+	}
+	// a trailing partial line is left for the next read rather than parsed half
+	nl := lastIndexByte(chunk, '\n')
+	if nl < 0 {
+		return chunk, nil
+	}
+	events, _ := agents.ParseStreamLines(firstNonEmpty(c.Task.Agent, "claude"),
+		string(chunk[:nl+1]))
+	if err := s.StoreEvents(att, events); err != nil {
+		return nil, err
+	}
+	att.LogOffset += int64(nl) + 1
+	s.DB.Update("attempts", att.ID, map[string]any{"log_offset": att.LogOffset})
+	return chunk, nil
+}
+
 func (s *Scheduler) poll(ctx context.Context, att *store.Attempt) error {
 	c, err := s.contextFor(att)
 	if err != nil {
@@ -459,20 +485,9 @@ func (s *Scheduler) poll(ctx context.Context, att *store.Attempt) error {
 	}
 	rt := agents.RuntimeDir(att.WorktreePath)
 
-	chunk, err := ex.ReadFile(ctx, rt+"/events.jsonl", att.LogOffset)
+	chunk, err := s.drainEvents(ctx, ex, att, c, rt)
 	if err != nil {
 		return err
-	}
-	if len(chunk) > 0 {
-		if nl := lastIndexByte(chunk, '\n'); nl >= 0 {
-			events, _ := agents.ParseStreamLines(firstNonEmpty(c.Task.Agent, "claude"),
-				string(chunk[:nl+1]))
-			if err := s.StoreEvents(att, events); err != nil {
-				return err
-			}
-			s.DB.Update("attempts", att.ID, map[string]any{
-				"log_offset": att.LogOffset + int64(nl) + 1})
-		}
 	}
 
 	exitRaw, err := ex.ReadFile(ctx, rt+"/exit_code", 0)
@@ -480,6 +495,14 @@ func (s *Scheduler) poll(ctx context.Context, att *store.Attempt) error {
 		return err
 	}
 	if trimmed := strings.TrimSpace(string(exitRaw)); trimmed != "" {
+		// One last read before finalising. The chunk above and this exit code are
+		// two separate reads: whatever the agent wrote between them — which is
+		// usually its closing `result`, the summary of what it did — would
+		// otherwise be lost, because finalising takes the attempt out of the
+		// running set and nothing ever reads the tail.
+		if _, err := s.drainEvents(ctx, ex, att, c, rt); err != nil {
+			s.Log.Warn("final event drain failed", "attempt", att.ID, "err", err)
+		}
 		rc := -1
 		fmt.Sscanf(trimmed, "%d", &rc)
 		return s.captureAndFinalize(ctx, att, c, rc)

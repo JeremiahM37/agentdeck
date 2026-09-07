@@ -9,7 +9,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
+	"net/url"
 	"os/exec"
 	"strings"
 	"testing"
@@ -91,7 +93,6 @@ func TestTTYDArgsMountUnderTheBasePathOnLoopback(t *testing.T) {
 		"-p 7712",       // the port it was given
 		"-i lo",         // an unauthenticated shell stays off the network
 		"-b /term/7712", // or its assets 404 under the proxy
-		"--once",        // exits when the client disconnects
 		"-W",            // the operator can type
 		"tmux attach -t adk-1",
 	} {
@@ -102,6 +103,16 @@ func TestTTYDArgsMountUnderTheBasePathOnLoopback(t *testing.T) {
 	// the base path must match what the proxy actually serves
 	if !strings.Contains(got, "-b "+terminal.BasePath(7712)) {
 		t.Errorf("base path disagrees with the proxy's route: %s", got)
+	}
+	// --once accepts a single client and exits when it disconnects, which made a
+	// terminal open on a phone dead on a desktop
+	if strings.Contains(got, "--once") {
+		t.Errorf("--once is back; the terminal is single-client again: %s", got)
+	}
+	// --once accepts a single client and exits when it disconnects, which made a
+	// terminal open on a phone dead on a desktop
+	if strings.Contains(got, "--once") {
+		t.Errorf("--once is back; the terminal is single-client again: %s", got)
 	}
 }
 
@@ -173,4 +184,103 @@ func TestARealTerminalIsReachableThroughTheProxy(t *testing.T) {
 			t.Logf("note: ttyd also answers at its root on loopback (%d)", root.StatusCode)
 		}
 	}
+}
+
+// A tmux session is multi-client by design — that is most of the point of it.
+// ttyd was launched with --once, which accepts a single client and exits when it
+// disconnects, so having the terminal open on a phone made the same terminal
+// dead on a desktop and ttyd's own "reconnect" had nothing left to reconnect to.
+func TestTwoClientsCanHoldTheSameTerminalAtOnce(t *testing.T) {
+	if _, err := exec.LookPath("ttyd"); err != nil {
+		t.Skip("ttyd is not installed")
+	}
+	if _, err := exec.LookPath("tmux"); err != nil {
+		t.Skip("tmux is not installed")
+	}
+	r := newInteractiveRig(t)
+	sess := r.launchSession(map[string]any{"agent": "claude", "scratch": true, "name": "two clients"})
+	r.waitForLog(sess.Workdir, "argv:", 10*time.Second)
+
+	code, body := r.do("POST", fmt.Sprintf("/api/sessions/%d/terminal", sess.ID), map[string]any{})
+	if code != 200 {
+		t.Fatalf("attach: %d %s", code, body)
+	}
+	var out struct {
+		URL string `json:"url"`
+	}
+	json.Unmarshal(body, &out)
+	t.Cleanup(func() { r.app.Terminals.Shutdown() })
+
+	// wait for ttyd to bind
+	deadline := time.Now().Add(10 * time.Second)
+	for time.Now().Before(deadline) {
+		if resp, err := http.Get(r.url + out.URL); err == nil {
+			resp.Body.Close()
+			if resp.StatusCode == 200 {
+				break
+			}
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+
+	// the phone connects, and stays connected
+	phone := openTerminalWS(t, r.url+out.URL+"ws")
+	defer phone.Close()
+
+	// now the desktop connects to the SAME terminal, while the phone still holds it
+	desktop, err := dialTerminalWS(r.url + out.URL + "ws")
+	if err != nil {
+		t.Fatalf("a second client could not attach while the first was connected: %v\n"+
+			"this is the --once behaviour: phone open means desktop dead", err)
+	}
+	defer desktop.Close()
+
+	// and the first client is still usable — it was not evicted
+	if _, err := phone.Write([]byte{}); err != nil {
+		t.Errorf("the first client was dropped when the second joined: %v", err)
+	}
+}
+
+// openTerminalWS connects and fails the test if it cannot.
+func openTerminalWS(t *testing.T, url string) net.Conn {
+	t.Helper()
+	c, err := dialTerminalWS(url)
+	if err != nil {
+		t.Fatalf("first client could not connect: %v", err)
+	}
+	return c
+}
+
+// dialTerminalWS performs a websocket handshake by hand and keeps the socket
+// open, which is what a browser tab holding a terminal actually does.
+func dialTerminalWS(rawURL string) (net.Conn, error) {
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		return nil, err
+	}
+	conn, err := net.DialTimeout("tcp", u.Host, 5*time.Second)
+	if err != nil {
+		return nil, err
+	}
+	req := fmt.Sprintf("GET %s HTTP/1.1\r\nHost: %s\r\nConnection: Upgrade\r\n"+
+		"Upgrade: websocket\r\nSec-WebSocket-Version: 13\r\n"+
+		"Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n"+
+		"Sec-WebSocket-Protocol: tty\r\n\r\n", u.RequestURI(), u.Host)
+	if _, err := conn.Write([]byte(req)); err != nil {
+		conn.Close()
+		return nil, err
+	}
+	conn.SetReadDeadline(time.Now().Add(5 * time.Second))
+	buf := make([]byte, 256)
+	n, err := conn.Read(buf)
+	if err != nil {
+		conn.Close()
+		return nil, err
+	}
+	if !strings.Contains(string(buf[:n]), "101") {
+		conn.Close()
+		return nil, fmt.Errorf("no upgrade: %s", strings.SplitN(string(buf[:n]), "\r\n", 2)[0])
+	}
+	conn.SetReadDeadline(time.Time{})
+	return conn, nil
 }

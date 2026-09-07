@@ -137,36 +137,52 @@ func TestPortsAreReturnedWhenTerminalsAreShutDown(t *testing.T) {
 	}
 }
 
-func TestExhaustingTheRangeIsAClearError(t *testing.T) {
+// Terminals no longer exit when their last viewer leaves, so the range can fill
+// with ones nobody is looking at. Refusing to attach at that point would make
+// the board unusable until a restart, so the oldest is retired instead — the
+// tmux session behind it is untouched, and re-attaching costs one click.
+func TestAFullRangeRetiresTheOldestTerminal(t *testing.T) {
 	m, _ := fakeManager(t)
-	// Allocate until the range runs out rather than assuming how many are free:
-	// the range is shared with anything else on this machine that happens to be
-	// listening (the estate's temp terminals overlap it), and a test that pins an
-	// exact count fails for reasons that have nothing to do with the code.
+	var first string
 	got := 0
-	var err error
 	for i := 0; i <= PortHi-PortLo; i++ {
-		if _, err = m.Attach(context.Background(),
-			Attachment{Key: fmt.Sprintf("attempt:%d", i)}, target("local")); err != nil {
+		key := fmt.Sprintf("attempt:%d", i)
+		if _, err := m.Attach(context.Background(),
+			Attachment{Key: key}, target("local")); err != nil {
 			break
+		}
+		if first == "" {
+			first = key
 		}
 		got++
 	}
 	if got == 0 {
-		t.Fatalf("could not allocate a single terminal: %v", err)
+		t.Fatal("could not allocate a single terminal")
 	}
-	if err == nil {
-		// the whole range was free, so ask for one more than it holds
-		_, err = m.Attach(context.Background(),
-			Attachment{Key: "one-too-many"}, target("local"))
+	m.mu.Lock()
+	held := len(m.procs)
+	m.mu.Unlock()
+
+	// one more than the range holds must still succeed
+	port, err := m.Attach(context.Background(),
+		Attachment{Key: "one-too-many"}, target("local"))
+	if err != nil {
+		t.Fatalf("a full range refused a new terminal instead of making room: %v", err)
 	}
-	if err == nil {
-		t.Fatal("the range is full; attaching must fail rather than hand out a used port")
+	if port < PortLo || port > PortHi {
+		t.Errorf("port %d is outside the range", port)
 	}
-	if !strings.Contains(err.Error(), "no free terminal port") {
-		t.Errorf("the error should say the range is exhausted, got %q", err)
+	m.mu.Lock()
+	nowHeld := len(m.procs)
+	_, oldestStillThere := m.procs[first]
+	m.mu.Unlock()
+
+	if nowHeld > held {
+		t.Errorf("the range grew from %d to %d instead of recycling", held, nowHeld)
 	}
-	t.Logf("allocated %d of %d before the range ran out", got, PortHi-PortLo+1)
+	if got > PortHi-PortLo && oldestStillThere {
+		t.Errorf("the oldest terminal (%s) was not the one retired", first)
+	}
 }
 
 // The argv is what actually reaches the target. A wrong one fails at connect

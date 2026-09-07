@@ -30,9 +30,14 @@ const (
 //     That is also what makes it work from any hostname.
 //   - `-b <base path>`: ttyd's asset and websocket URLs are absolute, so it must
 //     be told the prefix it is mounted under or the page loads blank.
+//   - NOT `--once`: that accepts a single client and exits when it disconnects,
+//     so having the terminal open on a phone made the same terminal dead on a
+//     desktop, and ttyd's own "reconnect" had nothing to reconnect to. A tmux
+//     session is multi-client by design — that is most of the point of it — so
+//     the terminal in front of it has to be too.
 func TTYDArgs(port int, argv []string) []string {
 	return append([]string{
-		"-p", strconv.Itoa(port), "-i", "lo", "-W", "--once",
+		"-p", strconv.Itoa(port), "-i", "lo", "-W",
 		"-b", BasePath(port)}, argv...)
 }
 
@@ -87,8 +92,9 @@ type Manager struct {
 }
 
 type session struct {
-	port int
-	cmd  *exec.Cmd
+	port    int
+	cmd     *exec.Cmd
+	started time.Time
 }
 
 // NewManager builds a terminal manager wired to the real ttyd binary.
@@ -162,7 +168,7 @@ func (m *Manager) Attach(ctx context.Context, a Attachment, target *store.Target
 		m.mu.Unlock()
 		return 0, err
 	}
-	m.procs[a.Key] = &session{port: port} // cmd nil: reserved, not yet running
+	m.procs[a.Key] = &session{port: port, started: time.Now()} // reserved, not yet running
 	m.mu.Unlock()
 
 	cmd, err := m.Spawn(port, argv)
@@ -180,7 +186,7 @@ func (m *Manager) Attach(ctx context.Context, a Attachment, target *store.Target
 		return 0, errors.New("ttyd exited immediately")
 	}
 	m.mu.Lock()
-	m.procs[a.Key] = &session{port: port, cmd: cmd}
+	m.procs[a.Key] = &session{port: port, cmd: cmd, started: time.Now()}
 	m.mu.Unlock()
 	go func() { _ = cmd.Wait() }()
 	return port, nil
@@ -224,7 +230,30 @@ func (m *Manager) freePortLocked() (int, error) {
 		}
 		conn.Close()
 	}
+	// Terminals no longer exit on their own when the last viewer leaves, so the
+	// range can fill with ones nobody is looking at. Rather than refuse to
+	// attach, retire the oldest: re-attaching to it costs one click and the tmux
+	// session behind it is untouched either way.
+	if key, s := m.oldestLocked(); s != nil {
+		if s.cmd != nil && s.cmd.Process != nil {
+			_ = s.cmd.Process.Kill()
+		}
+		delete(m.procs, key)
+		return s.port, nil
+	}
 	return 0, ErrNoPorts
+}
+
+// oldestLocked returns the longest-running terminal. Caller holds m.mu.
+func (m *Manager) oldestLocked() (string, *session) {
+	var oldestKey string
+	var oldest *session
+	for key, s := range m.procs {
+		if oldest == nil || s.started.Before(oldest.started) {
+			oldestKey, oldest = key, s
+		}
+	}
+	return oldestKey, oldest
 }
 
 // Shutdown terminates every attached terminal.
