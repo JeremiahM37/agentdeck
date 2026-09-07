@@ -1,21 +1,24 @@
-FROM python:3.13-slim
+# Build the control plane, then ship a single static binary.
+FROM golang:1.25-bookworm AS build
+WORKDIR /src
+COPY go.mod go.sum ./
+RUN go mod download
+COPY . .
+# CGO off: modernc.org/sqlite is pure Go, so the result runs on any base image
+RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/agentdeck ./cmd/agentdeck
 
+FROM debian:bookworm-slim
+# git and tmux drive the LOCAL target; openssh-client reaches remote ones
 RUN apt-get update && apt-get install -y --no-install-recommends \
     git tmux openssh-client curl ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
-# ttyd for one-click terminal attach (optional but recommended)
+# ttyd powers one-click terminal attach (optional but recommended)
 RUN curl -fsSL -o /usr/local/bin/ttyd \
     https://github.com/tsl0922/ttyd/releases/download/1.7.7/ttyd.x86_64 \
     && chmod +x /usr/local/bin/ttyd || true
 
-WORKDIR /app
-COPY requirements.txt .
-RUN pip install --no-cache-dir fastapi uvicorn asyncssh httpx pywebpush
-
-COPY server ./server
-COPY web ./web
-COPY hooks ./hooks
+COPY --from=build /out/agentdeck /usr/local/bin/agentdeck
 
 # NOTE: runs as root deliberately — the container drives targets over SSH with
 # keys bind-mounted from the host (see deploy/docker-compose.yml) and manages
@@ -25,6 +28,6 @@ VOLUME /data
 EXPOSE 9110
 
 HEALTHCHECK --interval=30s --timeout=3s --start-period=10s \
-  CMD ["python", "-c", "import urllib.request,os;urllib.request.urlopen(f'http://127.0.0.1:{os.environ.get(\"AGENTDECK_PORT\",\"9110\")}/api/health')"]
+  CMD curl -fsS "http://127.0.0.1:${AGENTDECK_PORT:-9110}/api/health" || exit 1
 
-CMD ["python", "-m", "server"]
+CMD ["agentdeck"]

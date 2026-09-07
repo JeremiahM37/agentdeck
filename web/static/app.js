@@ -1,0 +1,1446 @@
+/* agentdeck PWA — vanilla ES module, no build step. */
+const $ = (s, el = document) => el.querySelector(s);
+const $$ = (s, el = document) => [...el.querySelectorAll(s)];
+const COLUMNS = ["backlog", "queued", "running", "review", "done", "failed"];
+
+const state = {
+  tab: "board", tasks: [], projects: [], targets: [], approvals: [], sessions: [],
+  sheet: null,            // {kind:'task', id} | {kind:'new'} | null
+  taskES: null, taskEvents: [], taskDiff: null, diffOpen: false,
+  deckPanes: new Map(),   // taskId -> {el, es}: persisted deck panes/streams
+  mobileCol: null,        // phone: which status column is showing (null = auto)
+  mobileColPinned: false, // ...and whether the user chose it themselves
+  showAllDone: false,     // phone: finished lists are capped until asked
+  diffWrap: localStorage.getItem("adk-diffwrap") === "1",
+};
+
+// Rotating a phone or dragging a desktop window across the breakpoint has to
+// rebuild the board — the two layouts are different DOM, not just different CSS.
+let _wasPhone = null;
+addEventListener("resize", () => {
+  const now = !window.matchMedia("(min-width: 1024px)").matches;
+  if (now !== _wasPhone) { _wasPhone = now; if (state.tab === "board") renderColumns(); }
+});
+
+/* ---------- api ---------- */
+function authToken() { return localStorage.getItem("adk-token") || ""; }
+// EventSource can't set headers and fetch needs the bearer too — thread the
+// token (when the server runs in token-auth mode) through both surfaces.
+function withToken(url) {
+  const t = authToken();
+  return t ? url + (url.includes("?") ? "&" : "?") + "token=" + encodeURIComponent(t) : url;
+}
+async function api(path, opts = {}) {
+  const headers = { "Content-Type": "application/json" };
+  if (authToken()) headers.Authorization = "Bearer " + authToken();
+  const r = await fetch(`/api${path}`, {
+    headers, ...opts, body: opts.body ? JSON.stringify(opts.body) : undefined,
+  });
+  if (r.status === 401) {
+    const t = prompt("This agentdeck requires an access token:", authToken());
+    if (t !== null) { localStorage.setItem("adk-token", t); location.reload(); }
+    throw new Error("unauthorized");
+  }
+  if (!r.ok) {
+    let msg = r.statusText;
+    try { msg = (await r.json()).detail || msg; } catch {}
+    throw new Error(msg);
+  }
+  return r.status === 204 ? null : r.json();
+}
+
+function toast(msg, err = false) {
+  const t = document.createElement("div");
+  t.className = "toast" + (err ? " err" : "");
+  t.textContent = msg;
+  $("#toasts").appendChild(t);
+  setTimeout(() => t.remove(), 4200);
+}
+
+/* ---------- live board stream ---------- */
+let es, sseConnectedOnce = false;
+function connectSSE() {
+  es = new EventSource(withToken("/api/stream"));
+  es.onopen = () => {
+    setConn(true);
+    // EventSource auto-reconnects but never replays what it missed while down —
+    // resync board + approvals on every (re)connect after the first.
+    if (sseConnectedOnce) { refreshTasks(); refreshApprovals(); refreshSessions(); }
+    sseConnectedOnce = true;
+  };
+  es.onerror = () => setConn(false);
+  es.addEventListener("task", (e) => {
+    const task = JSON.parse(e.data);
+    refreshTasks();               // authoritative refetch (cheap at homelab scale)
+    if (state.sheet?.kind === "task" && state.sheet.id === task.id) loadTaskSheet(task.id, true);
+  });
+  es.addEventListener("approval", () => { refreshApprovals(); });
+  es.addEventListener("session", () => refreshSessions());
+  es.addEventListener("session_dismissed", () => refreshSessions());
+  es.addEventListener("session_handoff", (e) => {
+    const d = JSON.parse(e.data);
+    toast(d.ok
+      ? "Handoff written" + (d.successor ? " — successor session started" : "") +
+        (d.remembered ? " · remembered" : "")
+      : "Handoff failed: " + (d.error || "unknown"), !d.ok);
+    refreshSessions();
+  });
+  es.addEventListener("task_deleted", (e) => {
+    const { id } = JSON.parse(e.data);
+    if (state.sheet?.kind === "task" && state.sheet.id === id) closeSheet();
+    refreshTasks();
+  });
+}
+function setConn(on) {
+  $("#conn-led").className = "led " + (on ? "led-on" : "led-err");
+  $("#conn-label").textContent = on ? "LIVE" : "RECONNECTING";
+}
+
+/* ---------- data ---------- */
+async function refreshTasks() {
+  state.tasks = await api("/tasks");
+  if (state.tab === "board") ($("#board") ? renderColumns() : renderBoard());
+  if (state.tab === "deck") renderDeck();
+}
+async function refreshApprovals() {
+  state.approvals = await api("/approvals?status=pending");
+  const b = $("#appr-badge");
+  b.hidden = state.approvals.length === 0;
+  b.textContent = state.approvals.length;
+  if (state.tab === "approvals") renderApprovals();
+  if (state.sheet?.kind === "task") renderSheet();
+}
+async function refreshSessions() {
+  state.sessions = await api("/sessions");
+  const live = state.sessions.filter((s) => s.status !== "dead").length;
+  const b = $("#sess-badge");
+  b.hidden = live === 0;
+  b.textContent = live;
+  if (state.tab === "sessions") renderSessions();
+}
+async function refreshMeta() {
+  [state.projects, state.targets] = await Promise.all([api("/projects"), api("/targets")]);
+  if (state.tab === "targets") renderTargets();
+}
+
+/* ---------- board ---------- */
+function fmtCost(c) { return c == null ? "" : `$${(+c).toFixed(3)}`; }
+function attachMic(btn, input) {
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if (!SR) { btn.style.display = "none"; return; }
+  btn.onclick = () => {
+    const rec = new SR();
+    rec.lang = "en-US"; rec.interimResults = false;
+    btn.classList.add("rec");
+    rec.onresult = (e) => { input.value = (input.value + " " + e.results[0][0].transcript).trim(); };
+    rec.onend = () => btn.classList.remove("rec");
+    rec.onerror = () => { btn.classList.remove("rec"); toast("voice input failed", true); };
+    rec.start();
+  };
+}
+
+function card(t) {
+  const el = document.createElement("div");
+  el.className = `card s-${t.status}`;
+  el.draggable = true;
+  el.ondragstart = (e) => e.dataTransfer.setData("text/adk-task", JSON.stringify(
+    { id: t.id, status: t.status }));
+  // diff_stat is {} server-side until a diff is captured; a running card that
+  // assumed an array once threw and aborted the whole column render
+  const ds = Array.isArray(t.attempt?.diff_stat) ? t.attempt.diff_stat : [];
+  const adds = ds.reduce((a, f) => a + (f.additions || 0), 0);
+  const dels = ds.reduce((a, f) => a + (f.deletions || 0), 0);
+  const v = t.attempt?.verify;
+  const review = t.attempt?.result?.review;
+  el.innerHTML = `
+    <div class="t"></div>
+    <div class="meta">
+      <span class="chip">${esc(t.project_name)}</span>
+      <span class="chip tgt">${esc(t.target_name)}</span>
+      ${t.status === "running" ? '<span class="working"><i></i><i></i><i></i></span>' : ""}
+      ${ds.length ? `<span class="chip ds">+${adds} <b>−${dels}</b></span>` : ""}
+      ${t.attempt?.result?.cost_usd != null
+        ? `<span class="chip cost">${fmtCost(t.attempt.result.cost_usd)}</span>` : ""}
+      ${v?.cmd ? (v.rc === 0
+        ? '<span class="chip ds" title="auto-verify passed">✓ verified</span>'
+        : '<span class="chip bad" title="auto-verify FAILED">✗ verify</span>') : ""}
+      ${t.priority >= 3 ? '<span class="chip warn">▲ high</span>' : ""}
+      ${t.agent && t.agent !== "claude" ? `<span class="chip tgt">${esc(t.agent)}</span>` : ""}
+      ${t.created_by === "agent"
+        ? `<span class="chip info" title="filed by an agent (parent #${t.parent_task_id})">by agent</span>` : ""}
+      ${t.created_by === "reviewer-gate" ? '<span class="chip tgt">reviewer</span>' : ""}
+      ${review ? (review.verdict === "APPROVE"
+        ? '<span class="chip ds" title="reviewer approved">⚖ approved</span>'
+        : '<span class="chip warn" title="reviewer requests changes">⚖ changes</span>') : ""}
+      ${(t.attempts || []).length > 1
+        ? `<span class="chip info" title="${t.attempts.length} attempts (retries / follow-ups / A/B)">⑂ ×${t.attempts.length}</span>` : ""}
+    </div>`;
+  $(".t", el).textContent = t.title;
+  el.onclick = () => openTaskSheet(t.id);
+  return el;
+}
+
+function renderBoard() {
+  const main = $("#view");
+  main.innerHTML = `
+    <div id="quickbar">
+      <select id="qb-project" title="project"></select>
+      <input id="qb-input" placeholder="Describe it, hit ⏎ — instant dispatch" autocomplete="off">
+      <button id="qb-mic" title="voice">🎤</button>
+      <input id="qb-filter" placeholder="Filter…" autocomplete="off">
+    </div>
+    <div id="board"></div>`;
+  $("#qb-filter").value = state.filter || "";
+  $("#qb-filter").oninput = (e) => { state.filter = e.target.value; renderColumns(); };
+  const sel = $("#qb-project");
+  sel.innerHTML = state.projects.map((p) => `<option value="${p.id}">${esc(p.name)}</option>`).join("");
+  sel.value = localStorage.getItem("adk-quickproj") || (state.projects[0]?.id ?? "");
+  sel.onchange = () => localStorage.setItem("adk-quickproj", sel.value);
+  $("#qb-input").onkeydown = async (e) => {
+    if (e.key !== "Enter" || !e.target.value.trim()) return;
+    const text = e.target.value.trim();
+    e.target.value = "";
+    try {
+      const t = await api("/tasks", { method: "POST", body: {
+        project_id: +sel.value, title: text.slice(0, 70), prompt: text } });
+      await api(`/tasks/${t.id}/dispatch`, { method: "POST", body: {} });
+      toast("Dispatched — " + text.slice(0, 40));
+      refreshTasks();
+    } catch (err) { toast(err.message, true); }
+  };
+  attachMic($("#qb-mic"), $("#qb-input"));
+  renderColumns();
+}
+
+/* ---------- board columns ----------
+   Desktop keeps the kanban. A phone cannot use one: six columns at 86vw is
+   ~2100px of sideways scrolling, so the app opened on an empty BACKLOG with the
+   only actionable card three swipes away — and the scroll-to-the-busy-column
+   nudge latched after its first run, while every re-render reset scrollLeft to 0.
+   Narrow screens now get ONE column plus a status strip, ordered by what wants a
+   decision first. Same data, same actions, no horizontal scrolling. */
+const MOBILE_ORDER = ["review", "running", "queued", "backlog", "failed", "done"];
+const COL_LABEL = { review: "needs you", running: "running", queued: "queued",
+                    backlog: "backlog", failed: "failed", done: "done" };
+const DONE_PAGE = 15;   // 40+ finished nightly-smoke cards is a DOM full of noise
+
+function isPhone() { return !window.matchMedia("(min-width: 1024px)").matches; }
+
+function visibleTasks() {
+  const f = (state.filter || "").trim().toLowerCase();
+  return f ? state.tasks.filter((t) =>
+    `${t.title} ${t.project_name} ${t.target_name}`.toLowerCase().includes(f))
+    : state.tasks;
+}
+
+function attachDrop(c, col) {
+  c.ondragover = (e) => { e.preventDefault(); c.classList.add("dropok"); };
+  c.ondragleave = () => c.classList.remove("dropok");
+  c.ondrop = async (e) => {
+    e.preventDefault(); c.classList.remove("dropok");
+    const data = e.dataTransfer.getData("text/adk-task");
+    if (!data) return;
+    const { id, status } = JSON.parse(data);
+    try {
+      if (col === "queued" && ["backlog", "failed", "cancelled"].includes(status))
+        await api(`/tasks/${id}/dispatch`, { method: "POST", body: {} });
+      else if (col === "done" && status === "review")
+        await api(`/tasks/${id}/complete`, { method: "POST" });
+      else if (col === "cancelled" || (col === "backlog" && status === "backlog")) return;
+      else return toast(`${status} → ${col}: not a thing. Drag to queued (dispatch) or done (complete).`, true);
+      refreshTasks();
+    } catch (err) { toast(err.message, true); }
+  };
+}
+
+/** Fill a .col-body with cards, capping long finished lists behind a reveal. */
+function fillColumn(body, col, items) {
+  if (!items.length) { body.innerHTML = '<div class="col-empty">Nothing here</div>'; return; }
+  const cap = col === "done" && !state.showAllDone ? DONE_PAGE : items.length;
+  items.slice(0, cap).forEach((t) => {
+    try { body.appendChild(card(t)); }   // one bad card must never blank the board
+    catch (err) { console.error("card render failed", t?.id, err); }
+  });
+  if (items.length > cap) {
+    const more = document.createElement("button");
+    more.className = "col-more";
+    more.textContent = `show ${items.length - cap} more`;
+    more.onclick = () => { state.showAllDone = true; renderColumns(); };
+    body.appendChild(more);
+  }
+}
+
+function renderColumns() {
+  const board = $("#board");
+  if (!board) return;
+  board.innerHTML = "";
+  const visible = visibleTasks();
+  const byCol = Object.fromEntries(
+    COLUMNS.map((c) => [c, visible.filter((t) => t.status === c)]));
+
+  if (isPhone()) return renderPhoneBoard(board, byCol);
+
+  board.classList.remove("phone");
+  for (const col of COLUMNS) {
+    const c = document.createElement("div");
+    c.className = `col s-${col}`;
+    c.innerHTML = `
+      <div class="col-head"><span class="dot"></span>${col}<span class="cnt">${byCol[col].length}</span></div>
+      <div class="col-body"></div>`;
+    attachDrop(c, col);
+    fillColumn($(".col-body", c), col, byCol[col]);
+    board.appendChild(c);
+  }
+}
+
+/** One column at a time, chosen by a status strip. */
+function renderPhoneBoard(board, byCol) {
+  board.classList.add("phone");
+  // auto-focus the most urgent non-empty status until the user picks one, and
+  // fall back to auto if their pick empties out — never strand them on nothing
+  let col = state.mobileCol;
+  if (!col || (!byCol[col].length && !state.mobileColPinned))
+    col = MOBILE_ORDER.find((c) => byCol[c].length) || "backlog";
+  state.mobileCol = col;
+
+  const strip = document.createElement("div");
+  strip.className = "colstrip";
+  for (const c of MOBILE_ORDER) {
+    const b = document.createElement("button");
+    b.className = `colchip s-${c}${c === col ? " on" : ""}`;
+    b.innerHTML = `<span class="dot"></span>${COL_LABEL[c]}<b>${byCol[c].length}</b>`;
+    b.onclick = () => {
+      state.mobileCol = c; state.mobileColPinned = true; state.showAllDone = false;
+      renderColumns();
+    };
+    strip.appendChild(b);
+  }
+  board.appendChild(strip);
+
+  const wrap = document.createElement("div");
+  wrap.className = `col s-${col} solo`;
+  wrap.innerHTML = '<div class="col-body"></div>';
+  attachDrop(wrap, col);
+  fillColumn($(".col-body", wrap), col, byCol[col]);
+  board.appendChild(wrap);
+  strip.querySelector(".colchip.on")?.scrollIntoView(
+    { inline: "center", block: "nearest", behavior: "instant" });
+}
+
+/* ---------- deck view (desktop multi-pane cockpit) ---------- */
+// Panes are reconciled incrementally: streams persist across task updates so a
+// status change elsewhere never tears down and reconnects every pane's SSE
+// (that thrash risked dropping mid-stream events under concurrent load).
+function closeDeckStreams() {
+  for (const p of state.deckPanes.values()) p.es.close();
+  state.deckPanes.clear();
+}
+function makePaneLogger(log) {
+  return (e) => {
+    const p = e.payload || {};
+    const line = document.createElement("div");
+    line.className = "pane-line";
+    line.textContent =
+      e.type === "text" ? p.text :
+      e.type === "tool_use" ? `▸ ${p.name} ${snippet(p.input)}` :
+      e.type === "tool_result" ? `↳ ${(p.content || "").slice(0, 80)}` :
+      e.type === "verify" ? `verify ${p.rc === 0 ? "PASS" : "FAIL"}` :
+      e.type === "result" ? `✔ ${p.result || ""}` : e.type;
+    log.appendChild(line);
+    while (log.children.length > 40) log.firstChild.remove();
+    log.scrollTop = log.scrollHeight;
+  };
+}
+function renderDeck() {
+  const main = $("#view");
+  const active = state.tasks
+    .filter((t) => ["running", "review", "queued"].includes(t.status))
+    .slice(0, 16);
+  let deck = $("#deck");
+  if (!active.length) {
+    closeDeckStreams();
+    main.innerHTML = '<div class="hint">Nothing live right now.<br>Dispatch tasks and watch them run here, side by side.</div>';
+    return;
+  }
+  if (!deck) { main.innerHTML = '<div id="deck"></div>'; deck = $("#deck"); }
+  const activeIds = new Set(active.map((t) => t.id));
+  // remove panes whose task left the active set (close their stream)
+  for (const [id, p] of [...state.deckPanes]) {
+    if (!activeIds.has(id)) { p.es.close(); p.el.remove(); state.deckPanes.delete(id); }
+  }
+  for (const t of active) {
+    let p = state.deckPanes.get(t.id);
+    if (!p) {
+      const pane = document.createElement("div");
+      pane.innerHTML = `
+        <div class="pane-head">
+          <span class="statpill"></span>
+          <span class="pane-title"></span>
+          <span class="pane-sub">${esc(t.target_name)}</span>
+        </div>
+        <div class="pane-log"></div>`;
+      $(".pane-title", pane).textContent = t.title;
+      $(".pane-head", pane).onclick = () => openTaskSheet(t.id);
+      deck.appendChild(pane);
+      const log = $(".pane-log", pane);
+      const add = makePaneLogger(log);
+      const es = new EventSource(withToken(`/api/tasks/${t.id}/stream`));
+      es.addEventListener("agent_event", (e) => add(JSON.parse(e.data)));
+      p = { el: pane, es };
+      state.deckPanes.set(t.id, p);
+      api(`/tasks/${t.id}/events`).then((evs) => evs.slice(-15).forEach(add));
+    }
+    // update header status in place (no stream churn)
+    p.el.className = `pane s-${t.status}`;
+    $(".statpill", p.el).textContent = t.status;
+  }
+}
+
+/* ---------- sessions tab ----------
+   The other half of the board. A task is work you hand off; a session is an
+   agent you work WITH, for days. Its card leads with the two things a task card
+   never needs — how long it has been quiet, and what is on its screen — and its
+   primary action is Attach, because the point is to get you into the actual
+   terminal in one tap. */
+const SESSION_ORDER = { waiting: 0, running: 1, starting: 2, idle: 3, dead: 4 };
+
+function fmtDuration(seconds) {
+  const s = Math.max(0, Math.round(seconds || 0));
+  if (s < 60) return `${s}s`;
+  const m = Math.floor(s / 60);
+  if (m < 60) return `${m}m`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `${h}h ${m % 60}m`;
+  return `${Math.floor(h / 24)}d ${h % 24}h`;
+}
+const SESSION_LABEL = { waiting: "wants you", running: "working",
+                        starting: "starting", idle: "idle", dead: "ended" };
+
+function sessionCard(s) {
+  const el = document.createElement("div");
+  el.className = `scard s-${s.status}`;
+  const live = s.status === "running";
+  const ctx = s.context_pct;
+  const ctxClass = ctx == null ? "" : ctx <= 10 ? " crit" : ctx <= 25 ? " low" : "";
+  el.innerHTML = `
+    <div class="scard-top">
+      <span class="dot${live ? " live" : ""}"></span>
+      <span class="nm"></span>
+      <span class="sstate">${SESSION_LABEL[s.status] || esc(s.status)}</span>
+      <span class="sidle">${s.status === "dead" ? "" : "quiet " + fmtDuration(s.idle_seconds)}</span>
+    </div>
+    <div class="smeta">
+      <span class="chip">${esc(s.agent)}${s.model ? " · " + esc(s.model) : ""}</span>
+      <span class="chip tgt">${esc(s.target_name || "")}</span>
+      <span class="chip">up ${fmtDuration(s.uptime_seconds)}</span>
+      ${s.origin === "discovered" ? '<span class="chip info" title="started outside agentdeck and adopted">adopted</span>' : ""}
+      ${s.wraps ? `<span class="chip info" title="handoffs written from this session">⇥ ${s.wraps}</span>` : ""}
+      ${s.handoff_in_flight ? '<span class="chip warn">writing handoff…</span>' : ""}
+      ${ctx != null ? `<span class="ctxbar${ctxClass}">ctx <i><b style="width:${ctx}%"></b></i> ${ctx}%</span>` : ""}
+    </div>
+    <div class="spane"></div>
+    <div class="btnrow"></div>`;
+  $(".nm", el).textContent = s.name;
+  $(".spane", el).textContent = s.pane_tail || "";
+
+  const row = $(".btnrow", el);
+  const act = (label, cls, fn) => {
+    const b = document.createElement("button");
+    b.className = `b ${cls}`; b.textContent = label; b.onclick = fn;
+    row.appendChild(b);
+  };
+  if (s.status !== "dead") {
+    // the whole point: one tap into the real terminal, same tmux, same chat
+    act("⌨ Attach", "attach grow", () => attachSession(s));
+    act("Say…", "", () => sendToSession(s));
+    if (s.status === "running") act("⎋ Interrupt", "warn", () => sendKey(s, "escape"));
+    act("⇥ Handoff", "", () => handoffSession(s));
+  }
+  // Adoption is non-destructive, so letting go has to be too. An agent you
+  // started yourself is released — agentdeck stops watching, the terminal keeps
+  // running — and killing it is a separate, explicit choice.
+  const adopted = s.origin === "discovered";
+  if (s.status === "dead") {
+    act("Dismiss", "no", () => endSession(s, false));
+  } else if (adopted) {
+    act("Stop tracking", "", () => endSession(s, false));
+    act("Kill", "no", async () => {
+      if (!confirm(`Kill "${s.name}"?\n\nThis ends the tmux session and the ` +
+        `conversation running in it. You started this one yourself — ` +
+        `"Stop tracking" removes it from the board and leaves it running.`)) return;
+      endSession(s, true);
+    });
+  } else {
+    act("End", "no", async () => {
+      if (!confirm(`End "${s.name}"? The tmux session is killed; the record and its handoffs stay.`))
+        return;
+      endSession(s, true);
+    });
+  }
+  return el;
+}
+
+async function endSession(s, kill) {
+  try {
+    await api(`/sessions/${s.id}${kill ? "?kill=true" : ""}`, { method: "DELETE" });
+    refreshSessions();
+  } catch (e) { toast(e.message, true); }
+}
+
+async function attachSession(s) {
+  try {
+    const r = await api(`/sessions/${s.id}/terminal`, { method: "POST" });
+    window.open(`http://${location.hostname}:${r.port}`, "_blank");
+  } catch (e) {
+    // ttyd may not be installed; the manual command is still useful
+    toast(e.message + " — attach manually", true);
+    prompt("Attach with:", `tmux attach -t ${s.tmux_session}`);
+  }
+}
+async function sendToSession(s) {
+  const text = prompt(`Send to ${s.name}:`);
+  if (!text) return;
+  try {
+    await api(`/sessions/${s.id}/send`, { method: "POST", body: { text } });
+    toast("Sent");
+    setTimeout(refreshSessions, 800);
+  } catch (e) { toast(e.message, true); }
+}
+async function sendKey(s, key) {
+  try { await api(`/sessions/${s.id}/send`, { method: "POST", body: { key } }); }
+  catch (e) { toast(e.message, true); }
+}
+async function handoffSession(s) {
+  const successor = confirm(
+    `Ask ${s.name} to write a handoff for the next session?\n\n` +
+    "OK: write it, then retire this session and start a fresh one primed with it.\n" +
+    "Cancel: just write the handoff and keep this session running.");
+  try {
+    await api(`/sessions/${s.id}/handoff`, { method: "POST",
+      body: { successor, kill_old: successor } });
+    toast("Asked for a handoff — it lands when the agent finishes its turn");
+    refreshSessions();
+  } catch (e) { toast(e.message, true); }
+}
+
+function renderSessions() {
+  const main = $("#view");
+  const live = state.sessions.filter((s) => s.status !== "dead");
+  main.innerHTML = `
+    <div class="list wide">
+      <div class="sesshead">
+        <h2>Sessions</h2>
+        <button class="b" id="sess-discover">⌕ Find running agents</button>
+        <button class="b ok" id="sess-new">+ New session</button>
+      </div>
+      <div id="sesslist"></div>
+    </div>`;
+  $("#sess-new").onclick = () => { state.sheet = { kind: "new-session" }; renderSheet(); };
+  $("#sess-discover").onclick = () => { state.sheet = { kind: "discover" }; renderSheet(); };
+
+  const list = $("#sesslist");
+  if (!live.length) {
+    list.innerHTML = `<div class="hint">No sessions yet.<br><br>
+      Start one here, or hit <b>Find running agents</b> to adopt the Claude and Codex
+      sessions already running in tmux — agentdeck will watch them from then on.</div>`;
+    return;
+  }
+  // group by project, because that is the unit that outlives any one session
+  const groups = new Map();
+  for (const s of live) {
+    const key = s.project_name || "Unassigned";
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(s);
+  }
+  for (const [project, items] of [...groups].sort((a, b) => a[0].localeCompare(b[0]))) {
+    items.sort((a, b) => (SESSION_ORDER[a.status] ?? 9) - (SESSION_ORDER[b.status] ?? 9)
+      || a.idle_seconds - b.idle_seconds);
+    const g = document.createElement("div");
+    g.className = "projgroup";
+    g.innerHTML = "<h3></h3>";
+    $("h3", g).textContent = project;
+    items.forEach((s) => g.appendChild(sessionCard(s)));
+    list.appendChild(g);
+  }
+}
+
+/* ---------- new session sheet ---------- */
+function renderNewSession(sheet) {
+  sheet.innerHTML = `
+    <div class="sheet-grip"><i></i></div>
+    <div class="sheet-head"><h2>New session</h2><button class="x">✕</button></div>
+    <div class="sub" style="color:var(--ink-dim);font-size:12.5px">
+      An interactive agent you attach to and work with — not a dispatched task.
+    </div>
+    <label class="f">Project</label>
+    <select class="f" id="ns-project">${state.projects.map((p) =>
+      `<option value="${p.id}">${esc(p.name)} — ${esc(p.target_name)}</option>`).join("")}</select>
+    <label class="f">Name</label>
+    <input class="f" id="ns-name" placeholder="what you're working on">
+    <label class="f">Agent</label>
+    <div class="seg f" id="ns-agent" data-value="claude">
+      <button type="button" data-agent="claude" class="on">Claude Code</button>
+      <button type="button" data-agent="codex">Codex</button>
+      <button type="button" data-agent="gemini">Gemini</button>
+    </div>
+    <label class="f">Model</label>
+    <input class="f" id="ns-model" list="adk-models" placeholder="default" autocomplete="off">
+    <datalist id="adk-models">
+      <option>fable</option><option>opus</option><option>sonnet</option><option>haiku</option>
+    </datalist>
+    <label class="f">Start from</label>
+    <select class="f" id="ns-start">
+      <option value="fresh">Fresh context</option>
+      <option value="brief">Fresh, primed with what this project knows</option>
+      <option value="resume">Resume the agent's own last conversation</option>
+    </select>
+    <div class="subhint" id="ns-hint"></div>
+    <label class="f">First message (optional)</label>
+    <textarea class="f" id="ns-prime" placeholder="Typed in once the agent is up."></textarea>
+    <div class="btnrow" style="margin-top:20px">
+      <button class="b ok grow" id="ns-go">▶ Start session</button>
+    </div>`;
+  $(".x", sheet).onclick = closeSheet;
+  const agentBox = $("#ns-agent");
+  $$("button", agentBox).forEach((b) => {
+    b.onclick = () => {
+      agentBox.dataset.value = b.dataset.agent;
+      $$("button", agentBox).forEach((x) => x.classList.toggle("on", x === b));
+    };
+  });
+  const hint = $("#ns-hint");
+  const syncHint = () => {
+    const mode = $("#ns-start").value;
+    hint.textContent = mode === "brief"
+      ? "Pulls the project's durable memory and its last handoff into the first message."
+      : mode === "resume"
+      ? "Reopens the agent's own previous conversation in this directory."
+      : "";
+  };
+  $("#ns-start").onchange = syncHint;
+  syncHint();
+  $("#ns-go").onclick = async () => {
+    const mode = $("#ns-start").value;
+    try {
+      await api("/sessions", { method: "POST", body: {
+        project_id: +$("#ns-project").value,
+        name: $("#ns-name").value.trim(),
+        agent: agentBox.dataset.value,
+        model: $("#ns-model").value.trim(),
+        resume: mode === "resume",
+        brief: mode === "brief",
+        prime: $("#ns-prime").value.trim(),
+      } });
+      closeSheet();
+      switchTab("sessions");
+      toast("Session started");
+    } catch (e) { toast(e.message, true); }
+  };
+}
+
+/* ---------- discover sheet ----------
+   The sessions worth tracking are usually the ones you started yourself, by
+   hand, weeks ago. Adopting one is non-destructive: the tmux session is left
+   exactly as it is and agentdeck simply starts watching it. */
+function renderDiscover(sheet) {
+  sheet.innerHTML = `
+    <div class="sheet-grip"><i></i></div>
+    <div class="sheet-head"><h2>Running agents</h2><button class="x">✕</button></div>
+    <div class="sub" style="color:var(--ink-dim);font-size:12.5px">
+      Every Claude/Codex process found in tmux on your targets. Adopting one does
+      not restart or disturb it.
+    </div>
+    <div id="cands" style="margin-top:14px"><div class="hint">Scanning…</div></div>`;
+  $(".x", sheet).onclick = closeSheet;
+  const box = $("#cands", sheet);
+  api("/sessions/discover").then((list) => {
+    if (!list.length) {
+      box.innerHTML = '<div class="hint">No agents found running on any target.</div>';
+      return;
+    }
+    box.innerHTML = "";
+    for (const c of list) {
+      const row = document.createElement("div");
+      row.className = "cand";
+      row.innerHTML = `
+        <div class="grow">
+          <div class="who"></div>
+          <div class="where"></div>
+        </div>
+        <select class="f cand-proj" style="width:auto;min-width:150px;padding:8px 10px">
+          <option value="">— no project —</option>
+          ${state.projects.map((p) =>
+            `<option value="${p.id}">${esc(p.name)}</option>`).join("")}
+        </select>
+        <div class="btnrow" style="margin:0"></div>`;
+      $(".who", row).textContent =
+        `${c.tmux_session} · ${c.agent}${c.model ? " " + c.model : ""}`;
+      $(".where", row).textContent = `${c.target_name} · ${c.workdir}`;
+      const proj = $(".cand-proj", row);
+      // an agent's working directory is often a scratch dir, not the project it
+      // is actually working on — so the match is a suggestion, not a decision
+      if (c.project_id) proj.value = String(c.project_id);
+      const btns = $(".btnrow", row);
+      if (c.adopted) {
+        proj.remove();
+        const tag = document.createElement("span");
+        tag.className = "chip ds";
+        tag.textContent = "tracked";
+        btns.appendChild(tag);
+      } else {
+        const b = document.createElement("button");
+        b.className = "b ok";
+        b.textContent = "Adopt";
+        b.onclick = async () => {
+          b.textContent = "Adopting…";
+          try {
+            await api("/sessions/adopt", { method: "POST", body: {
+              target_id: c.target_id, tmux_session: c.tmux_session,
+              project_id: proj.value ? +proj.value : null,
+              agent: c.agent, model: c.model,
+              workdir: c.workdir, name: c.tmux_session } });
+            closeSheet(); switchTab("sessions"); refreshSessions();
+            toast(`Adopted ${c.tmux_session}`);
+          } catch (e) { toast(e.message, true); b.textContent = "Adopt"; }
+        };
+        btns.appendChild(b);
+      }
+      box.appendChild(row);
+    }
+  }).catch((e) => { box.innerHTML = `<div class="hint">${esc(e.message)}</div>`; });
+}
+
+/* ---------- approvals tab ---------- */
+function renderApprovals() {
+  const main = $("#view");
+  if (!state.approvals.length) {
+    main.innerHTML = '<div class="hint">No pending approvals.<br>When an agent needs permission it shows up here — and pings your phone.</div>';
+    return;
+  }
+  main.innerHTML = '<div class="list"></div>';
+  const list = $(".list", main);
+  for (const a of state.approvals) list.appendChild(approvalCard(a));
+}
+function approvalCard(a) {
+  const el = document.createElement("div");
+  el.className = "rowcard";
+  el.innerHTML = `
+    <h3>${esc(a.tool_name)} <span style="color:var(--ink-faint);font-weight:400">wants to run</span></h3>
+    <div class="sub">task #${a.task_id} · ${esc(a.task_title || "")}</div>
+    <pre></pre>
+    <div class="btnrow">
+      <button class="b ok grow">Approve</button>
+      <button class="b ok" title="approve and never ask again for this pattern in this project">∞ Always</button>
+      <button class="b no grow">Deny</button>
+    </div>`;
+  $("pre", el).textContent = JSON.stringify(a.input, null, 2).slice(0, 1200);
+  $(".ok", el).onclick = () => decide(a.id, "approved");
+  el.querySelectorAll(".ok")[1].onclick = () => decide(a.id, "approved", "", true);
+  $(".no", el).onclick = async () => {
+    const note = prompt("Reason (sent back to the agent):", "not safe, find another way") || "";
+    decide(a.id, "denied", note);
+  };
+  return el;
+}
+async function decide(id, decision, note = "", always = false) {
+  try {
+    await api(`/approvals/${id}/decision`, { method: "POST",
+      body: { decision, note, always_allow: always } });
+    toast(decision === "approved" ? "Approved — agent continuing" : "Denied — agent notified");
+    refreshApprovals();
+  } catch (e) { toast(e.message, true); }
+}
+
+/* ---------- targets tab ---------- */
+async function renderTargets() {
+  const main = $("#view");
+  main.innerHTML = '<div class="list"></div>';
+  const list = $(".list", main);
+  // fetch BEFORE building the form — a late response must never clobber typed input
+  let settings = {};
+  try { settings = await api("/settings"); } catch {}
+  for (const t of state.targets) {
+    const el = document.createElement("div");
+    el.className = "rowcard";
+    const led = t.status === "online" ? "led-on" : t.status === "offline" ? "led-err" : "led-warn";
+    const info = safeParse(t.info_json);
+    el.innerHTML = `
+      <h3><span class="led ${led}"></span> ${esc(t.name)}</h3>
+      <div class="sub">${esc(t.kind)}${t.host ? " · " + esc(t.user + "@" + t.host) : ""} · ${t.max_concurrent} slots${t.sandbox ? " · sandbox" : ""}</div>
+      ${info.claude ? `<div class="sub" style="margin-top:5px">claude ${esc(info.claude)} · ${esc(info.git || "")}</div>` : ""}
+      <div class="btnrow"><button class="b">Probe</button></div>`;
+    $("button", el).onclick = async (ev) => {
+      ev.target.textContent = "Probing…";
+      try { await api(`/targets/${t.id}/check`, { method: "POST" }); await refreshMeta(); }
+      catch (e) { toast(e.message, true); }
+    };
+    list.appendChild(el);
+  }
+  for (const p of state.projects) list.appendChild(projectCard(p));
+
+  list.appendChild(importCard());
+
+  const statsCard = document.createElement("div");
+  statsCard.className = "rowcard";
+  statsCard.innerHTML = '<h3>Spend</h3><div class="sub">loading…</div>';
+  api("/stats").then((s) => {
+    statsCard.innerHTML = `<h3>Spend</h3>
+      <div class="sub">$${s.total_cost_usd.toFixed(2)} all-time · $${s.last_7d_usd.toFixed(2)} last 7d · ${s.tasks_done} tasks done</div>
+      ${s.by_project.slice(0, 5).map((p) =>
+        `<div class="sub" style="margin-top:4px">${esc(p.name)} <span style="color:var(--amber)">$${p.cost_usd.toFixed(2)}</span></div>`).join("")}`;
+  }).catch(() => { statsCard.querySelector(".sub").textContent = "unavailable"; });
+  list.appendChild(statsCard);
+
+  const foot = document.createElement("div");
+  foot.className = "rowcard";
+  foot.innerHTML = `<h3>Notifications</h3>
+    <div class="sub">Get pinged for approvals and finished tasks.</div>
+    <div class="btnrow"><button class="b warn grow" id="push-btn">Enable push on this device</button></div>
+    <label class="f">Discord webhook URL</label>
+    <input class="f" id="s-discord" placeholder="https://discord.com/api/webhooks/…">
+    <label class="f">ntfy server / topic <span style="text-transform:none;letter-spacing:0">(gets approve/deny buttons)</span></label>
+    <div style="display:flex;gap:8px">
+      <input class="f" id="s-ntfy-server" placeholder="https://ntfy.sh" style="flex:2">
+      <input class="f" id="s-ntfy-topic" placeholder="topic" style="flex:1">
+    </div>
+    <div class="btnrow">
+      <button class="b grow" id="s-save">Save sinks</button>
+      <button class="b" id="s-test">Send test</button>
+    </div>`;
+  $("#push-btn", foot).onclick = enablePush;
+  $("#s-discord", foot).value = settings.discord_webhook || "";
+  $("#s-ntfy-server", foot).value = settings.ntfy_server || "";
+  $("#s-ntfy-topic", foot).value = settings.ntfy_topic || "";
+  $("#s-save", foot).onclick = async () => {
+    try {
+      await api("/settings", { method: "PUT", body: {
+        discord_webhook: $("#s-discord", foot).value.trim(),
+        ntfy_server: $("#s-ntfy-server", foot).value.trim(),
+        ntfy_topic: $("#s-ntfy-topic", foot).value.trim() } });
+      toast("Sinks saved");
+    } catch (e) { toast(e.message, true); }
+  };
+  $("#s-test", foot).onclick = async () => {
+    try { await api("/settings/test-notification", { method: "POST" }); toast("Test sent"); }
+    catch (e) { toast(e.message, true); }
+  };
+  list.appendChild(foot);
+}
+
+/** One project's capability, stated from the server's RESOLVED view.
+
+    A dispatched agent is headless: it cannot be asked for permission, so a tool
+    that is not granted is denied with no prompt and no error the operator sees.
+    'parity' grants what a terminal session has — Bash with pipes, the MCP servers
+    the target can actually reach, and the shared memory store. */
+function projectCard(p) {
+  const el = document.createElement("div");
+  el.className = "rowcard";
+  el.innerHTML = `
+    <h3>${esc(p.name)}</h3>
+    <div class="sub">${esc(p.target_name)} · ${esc(p.target_kind)} · ${esc(p.repo_path)}</div>
+    <label class="f">Agent capability</label>
+    <select class="f cap-sel">
+      <option value="restricted">restricted — only rules you set</option>
+      <option value="parity">parity — same tools as your terminal</option>
+    </select>
+    <div class="sub cap-info">checking…</div>
+    <label class="f">Default permission mode</label>
+    <select class="f perm-sel">
+      <option value="">— task default (accept edits) —</option>
+      <option value="default">Gated — approve every tool call</option>
+      <option value="acceptEdits">Accept edits</option>
+      <option value="plan">Plan only</option>
+      <option value="bypassPermissions">Bypass — sandboxed targets only</option>
+    </select>`;
+  const sel = $(".cap-sel", el);
+  const info = $(".cap-info", el);
+  sel.value = p.capability_profile || "restricted";
+  const permSel = $(".perm-sel", el);
+  permSel.value = p.default_permission_mode || "";
+  permSel.onchange = async () => {
+    try {
+      await api(`/projects/${p.id}`, { method: "PATCH",
+        body: { default_permission_mode: permSel.value } });
+      p.default_permission_mode = permSel.value;
+      toast(`${p.name}: ${permSel.value || "task default"}`);
+    } catch (e) {
+      toast(e.message, true);
+      permSel.value = p.default_permission_mode || "";
+    }
+  };
+
+  const paint = (c) => {
+    const bits = [];
+    bits.push(c.mcp_servers.length ? `MCP: ${c.mcp_servers.join(", ")}` : "MCP: none reachable");
+    bits.push(c.memory_dir ? "memory: shared" : "memory: none");
+    if (c.allow.includes("Bash")) bits.push("bash: unrestricted");
+    info.innerHTML = esc(bits.join(" · ")) +
+      (c.notes.length ? c.notes.map((n) => `<div class="cap-note">⚠ ${esc(n)}</div>`).join("") : "");
+  };
+  const load = () => api(`/projects/${p.id}/capability`).then(paint)
+    .catch(() => { info.textContent = "capability unavailable"; });
+  load();
+
+  sel.onchange = async () => {
+    try {
+      await api(`/projects/${p.id}`, { method: "PATCH", body: { capability_profile: sel.value } });
+      p.capability_profile = sel.value;
+      toast(`${p.name}: ${sel.value}`);
+      load();
+    } catch (e) { toast(e.message, true); sel.value = p.capability_profile || "restricted"; }
+  };
+  return el;
+}
+
+/** Bulk-register the projects you already have.
+
+    An empty board is the reason a tool like this gets abandoned in week one.
+    Point it at where your code lives; the scan looks for a git repo, a build
+    manifest, or a project-shaped document, and you pick from the list. */
+function importCard() {
+  const el = document.createElement("div");
+  el.className = "rowcard";
+  el.innerHTML = `
+    <h3>Import projects</h3>
+    <div class="sub">Scan a directory on a target and register what looks like a project.</div>
+    <label class="f">Target</label>
+    <select class="f" id="imp-target">${state.targets.map((t) =>
+      `<option value="${t.id}">${esc(t.name)} — ${esc(t.kind)}</option>`).join("")}</select>
+    <label class="f">Directory to scan</label>
+    <div style="display:flex;gap:8px">
+      <input class="f" id="imp-root" placeholder="/home/you/projects" style="flex:1">
+      <button class="b" id="imp-scan">Scan</button>
+    </div>
+    <div id="imp-out"></div>`;
+  const out = $("#imp-out", el);
+  $("#imp-scan", el).onclick = async () => {
+    const root = $("#imp-root", el).value.trim();
+    if (!root) return toast("Give a directory to scan", true);
+    out.innerHTML = '<div class="sub" style="margin-top:10px">Scanning…</div>';
+    try {
+      const found = await api(`/projects/import/scan?root=${encodeURIComponent(root)}` +
+        `&target_id=${$("#imp-target", el).value}`);
+      if (!found.length) {
+        out.innerHTML = '<div class="sub" style="margin-top:10px">Nothing project-shaped in there.</div>';
+        return;
+      }
+      out.innerHTML = `<div class="sub" style="margin-top:12px">${found.length} found —
+        untick anything you don't want.</div><div id="imp-list"></div>
+        <label class="f"><input type="checkbox" id="imp-verify"> also set the suggested test command</label>
+        <div class="btnrow"><button class="b ok grow" id="imp-go">Import selected</button></div>`;
+      const box = $("#imp-list", out);
+      for (const c of found) {
+        const row = document.createElement("label");
+        row.className = "cand";
+        row.innerHTML = `
+          <input type="checkbox" ${c.registered ? "disabled" : "checked"} value="${esc(c.path)}">
+          <span class="grow">
+            <span class="who"></span>
+            <span class="where"></span>
+          </span>`;
+        $(".who", row).textContent = c.name + (c.registered ? "  (already on the board)" : "");
+        $(".where", row).textContent =
+          [c.git ? "git " + (c.branch || "?") : "no git", c.marker, c.last_commit]
+            .filter(Boolean).join(" · ");
+        box.appendChild(row);
+      }
+      $("#imp-go", out).onclick = async () => {
+        const paths = [...box.querySelectorAll("input:checked")].map((i) => i.value);
+        if (!paths.length) return toast("Nothing selected", true);
+        try {
+          const r = await api("/projects/import", { method: "POST", body: {
+            target_id: +$("#imp-target", el).value, paths,
+            verify: $("#imp-verify", out).checked } });
+          toast(`Imported ${r.imported.length} project(s)`);
+          await refreshMeta();
+          renderTargets();
+        } catch (e) { toast(e.message, true); }
+      };
+    } catch (e) { out.innerHTML = `<div class="sub" style="margin-top:10px">${esc(e.message)}</div>`; }
+  };
+  return el;
+}
+
+/* ---------- task sheet ---------- */
+async function openTaskSheet(id) {
+  state.sheet = { kind: "task", id };
+  state.taskEvents = [];
+  state.taskDiff = null; state.diffOpen = false; state.attemptView = null;
+  await loadTaskSheet(id);
+  if (state.taskES) state.taskES.close();
+  let taskSseOnce = false;
+  state.taskES = new EventSource(withToken(`/api/tasks/${id}/stream`));
+  state.taskES.onopen = () => {
+    // resync the timeline on reconnect — SSE doesn't replay missed events
+    if (taskSseOnce && state.sheet?.kind === "task" && state.sheet.id === id)
+      loadTaskSheet(id);
+    taskSseOnce = true;
+  };
+  state.taskES.addEventListener("agent_event", (e) => {
+    state.taskEvents.push(JSON.parse(e.data));
+    renderSheet();
+  });
+  state.taskES.addEventListener("approval", () => refreshApprovals());
+}
+async function loadTaskSheet(id, soft = false) {
+  state.sheetTask = await api(`/tasks/${id}`);
+  if (!soft || !state.taskEvents.length) {
+    const q = state.attemptView ? `?attempt_n=${state.attemptView}` : "";
+    state.taskEvents = (await api(`/tasks/${id}/events${q}`)).map((e) => ({
+      type: e.type, payload: e.payload, seq: e.seq, attempt_n: e.attempt_n }));
+  }
+  renderSheet();
+}
+function closeSheet() {
+  state.sheet = null;
+  if (state.taskES) { state.taskES.close(); state.taskES = null; }
+  $("#sheet").hidden = true; $("#sheet-backdrop").hidden = true;
+}
+
+function evRow(e) {
+  const el = document.createElement("div");
+  el.className = `ev e-${e.type}`;
+  const p = e.payload || {};
+  if (e.type === "init")
+    el.innerHTML = `<div class="k">session start</div><div class="body dim">model <code>${esc(p.model || "?")}</code> · session <code>${esc((p.session_id || "").slice(0, 18))}</code></div>`;
+  else if (e.type === "text") {
+    el.innerHTML = `<div class="k">agent</div><div class="body"></div>`;
+    $(".body", el).textContent = p.text;
+  } else if (e.type === "tool_use")
+    el.innerHTML = `<div class="k">tool</div><div class="body"><code>${esc(p.name)}</code> <span style="color:var(--ink-dim)">${esc(snippet(p.input))}</span></div>`;
+  else if (e.type === "tool_result") {
+    el.innerHTML = `<div class="k">↳ result${p.is_error ? " · ERROR" : ""}</div><div class="body dim"></div>`;
+    $(".body", el).textContent = (p.content || "").slice(0, 400);
+  } else if (e.type === "verify")
+    el.innerHTML = `<div class="k">auto-verify · ${p.rc === 0 ? "PASS ✓" : "FAIL ✗"}</div>
+      <div class="body" style="color:${p.rc === 0 ? "var(--green)" : "var(--red)"}"><code>${esc(p.cmd)}</code>\n${esc((p.output || "").slice(-500))}</div>`;
+  else if (e.type === "review_verdict")
+    el.innerHTML = `<div class="k">reviewer verdict · ${esc(p.verdict || "")}</div><div class="body dim">${esc((p.notes || "").slice(-400))}</div>`;
+  else if (e.type === "result")
+    el.innerHTML = `<div class="k">finished · ${esc(p.subtype)}</div><div class="body">${esc(p.result || "")}\n<span style="color:var(--ink-dim)">${p.num_turns ?? "?"} turns · ${fmtCost(p.cost_usd)} · ${p.duration_ms ? (p.duration_ms / 1000).toFixed(1) + "s" : ""}</span></div>`;
+  else {
+    el.innerHTML = `<div class="k">${esc(e.type)}</div><div class="body dim"></div>`;
+    $(".body", el).textContent = JSON.stringify(p).slice(0, 300);
+  }
+  return el;
+}
+
+function renderSheet() {
+  if (!state.sheet) return;
+  const sheet = $("#sheet");
+  sheet.hidden = false; $("#sheet-backdrop").hidden = false;
+  if (state.sheet.kind === "new") return renderNewTask(sheet);
+  if (state.sheet.kind === "new-session") return renderNewSession(sheet);
+  if (state.sheet.kind === "discover") return renderDiscover(sheet);
+  const t = state.sheetTask;
+  if (!t) return;
+  sheet.innerHTML = `
+    <div class="sheet-grip"><i></i></div>
+    <div class="sheet-head"><h2></h2><button class="x">✕</button></div>
+    <div class="statline s-${t.status}">
+      <span class="statpill">${t.status}</span>
+      <span>${esc(t.project_name)} → ${esc(t.target_name)}</span>
+      ${t.attempt ? `<span>attempt #${t.attempt.n}${t.attempt.branch ? " · <code>" + esc(t.attempt.branch) + "</code>" : ""}</span>` : ""}
+    </div>
+    <div class="btnrow" id="attempt-chips"></div>
+    <div class="btnrow" id="actions"></div>
+    <div id="sheet-approvals"></div>
+    <div id="sheet-body"></div>`;
+  if ((t.attempts || []).length > 1) {
+    const chips = $("#attempt-chips", sheet);
+    for (const a of t.attempts) {
+      const b = document.createElement("button");
+      b.className = "b" + ((state.attemptView ?? t.attempt.n) === a.n ? " ok" : "");
+      b.textContent = `⑂ A${a.n}${a.model ? " · " + a.model : ""} · ${a.status}` +
+        (a.cost_usd != null ? ` · ${fmtCost(a.cost_usd)}` : "");
+      b.onclick = async () => {
+        state.attemptView = a.n; state.taskEvents = []; state.taskDiff = null;
+        await loadTaskSheet(t.id);
+      };
+      chips.appendChild(b);
+    }
+  }
+  $("h2", sheet).textContent = t.title;
+  $(".x", sheet).onclick = closeSheet;
+
+  const actions = $("#actions", sheet);
+  const act = (label, cls, fn) => {
+    const b = document.createElement("button");
+    b.className = `b ${cls}`; b.textContent = label; b.onclick = fn;
+    actions.appendChild(b);
+  };
+  if (["backlog", "failed", "cancelled"].includes(t.status))
+    act(t.status === "backlog" ? "▶ Dispatch" : "↻ Retry", "ok grow", () => doAction(`/tasks/${t.id}/dispatch`));
+  if (["queued", "running"].includes(t.status))
+    act("■ Cancel", "no", () => doAction(`/tasks/${t.id}/cancel`));
+  if (t.status === "review") {
+    act("✓ Mark done", "ok grow", () => doAction(`/tasks/${t.id}/complete`));
+    act("↺ Request changes", "warn grow", async () => {
+      const fb = prompt("What should change?");
+      if (fb) doAction(`/tasks/${t.id}/followup`, { feedback: fb });
+    });
+  }
+  if (["review", "done"].includes(t.status)) {
+    act(state.diffOpen ? "Timeline" : "± Diff", "", toggleDiff);
+    act("▶ Replay", "", () => {
+      if (state.diffOpen) return toast("switch to timeline first", true);
+      const rows = [...document.querySelectorAll("#sheet .tl .ev")];
+      rows.forEach((r) => (r.style.display = "none"));
+      let i = 0;
+      const iv = setInterval(() => {
+        if (i >= rows.length) return clearInterval(iv);
+        rows[i].style.display = "";
+        rows[i].scrollIntoView({ block: "nearest", behavior: "smooth" });
+        i++;
+      }, 260);
+    });
+    act("⎇ Commit", "", async () => {
+      const message = prompt("Commit message:", t.title);
+      if (message == null) return;
+      const push = confirm("Also push the branch to origin?");
+      const pr = push && confirm("…and open a PR (needs gh on the target)?");
+      try {
+        const r = await api(`/tasks/${t.id}/commit`, { method: "POST",
+          body: { message, push, pr } });
+        const prStep = r.steps.find((s) => s.step === "pr");
+        toast("Committed" + (push ? " + pushed" : "") +
+              (prStep?.url ? ` · PR: ${prStep.url}` : ""));
+      } catch (e) { toast(e.message, true); }
+    });
+  }
+  if (["done", "failed", "cancelled"].includes(t.status) && t.attempt?.worktree_path)
+    act("Clean worktree", "", async () => {
+      if (!confirm("Remove the worktree(s)? Uncommitted changes are lost.")) return;
+      try { await api(`/tasks/${t.id}/cleanup`, { method: "POST" });
+            toast("Worktrees removed"); loadTaskSheet(t.id); }
+      catch (e) { toast(e.message, true); }
+    });
+  if (t.status === "running" && t.attempt?.tmux_session) {
+    act("⌨ Terminal", "", async () => {
+      try {
+        const r = await api(`/tasks/${t.id}/terminal`, { method: "POST" });
+        window.open(`http://${location.hostname}:${r.port}`, "_blank");
+      } catch (e) {
+        const sshPrefix = t.target_kind === "ssh"
+          ? `ssh -t ${t.target_user}@${t.target_host} ` : "";
+        const cmd = `${sshPrefix}tmux attach -t ${t.attempt.tmux_session}`;
+        toast(e.message + " — attach manually", true);
+        prompt("Attach with:", cmd);
+      }
+    });
+  }
+  act("Delete", "no", async () => {
+    if (!confirm(`Delete "${t.title}"? Removes its attempts, events, diffs and worktrees. Cannot be undone.`)) return;
+    try { await api(`/tasks/${t.id}`, { method: "DELETE" }); toast("Task deleted"); closeSheet(); refreshTasks(); }
+    catch (e) { toast(e.message, true); }
+  });
+
+  const apDiv = $("#sheet-approvals", sheet);
+  state.approvals.filter((a) => a.task_id === t.id).forEach((a) => apDiv.appendChild(approvalCard(a)));
+
+  const body = $("#sheet-body", sheet);
+  if (state.diffOpen && state.taskDiff) renderDiff(body);
+  else {
+    const tl = document.createElement("div");
+    tl.className = "tl";
+    if (!state.taskEvents.length && t.prompt) {
+      const pr = document.createElement("div");
+      pr.className = "ev";
+      pr.innerHTML = '<div class="k">prompt</div><div class="body dim"></div>';
+      $(".body", pr).textContent = t.prompt;
+      tl.appendChild(pr);
+    }
+    state.taskEvents.forEach((e) => tl.appendChild(evRow(e)));
+    body.appendChild(tl);
+  }
+}
+
+async function toggleDiff() {
+  if (!state.diffOpen) {
+    const q = state.attemptView ? `?attempt_n=${state.attemptView}` : "";
+    try { state.taskDiff = await api(`/tasks/${state.sheet.id}/diff${q}`); }
+    catch (e) { return toast(e.message, true); }
+  }
+  state.diffOpen = !state.diffOpen;
+  renderSheet();
+}
+function renderDiff(body) {
+  const d = state.taskDiff;
+  const stats = d.stats || [];
+  const head = document.createElement("div");
+  head.className = "diffhead";
+  head.innerHTML = `<span>attempt #${d.attempt_n} · ${stats.length} file(s) changed</span>`;
+  // Reviewing on a phone means prose and long lines run off the right edge with
+  // no way back; wrapping is the difference between readable and unreadable.
+  const wrapBtn = document.createElement("button");
+  wrapBtn.className = "wrapbtn";
+  const paintWrap = () => {
+    wrapBtn.textContent = state.diffWrap ? "⏎ wrap: on" : "⏎ wrap: off";
+    wrapBtn.classList.toggle("on", !!state.diffWrap);
+    body.classList.toggle("wrapped", !!state.diffWrap);
+  };
+  wrapBtn.onclick = () => {
+    state.diffWrap = !state.diffWrap;
+    localStorage.setItem("adk-diffwrap", state.diffWrap ? "1" : "");
+    paintWrap();
+  };
+  head.appendChild(wrapBtn);
+  body.appendChild(head);
+  paintWrap();
+  for (const f of d.files || []) {
+    const st = stats.find((s) => s.path === f.path) || {};
+    const det = document.createElement("details");
+    det.className = "dfile"; det.open = (d.files.length <= 3);
+    det.innerHTML = `<summary><span>${esc(f.path)}</span>
+      <span class="pm"><b class="a">+${st.additions ?? "?"}</b> <b class="d">−${st.deletions ?? "?"}</b></span></summary>
+      <div class="dcode"></div>`;
+    const code = $(".dcode", det);
+    for (const line of f.patch.split("\n")) {
+      const div = document.createElement("div");
+      div.textContent = line || " ";
+      if (line.startsWith("+") && !line.startsWith("+++")) div.className = "dl-add";
+      else if (line.startsWith("-") && !line.startsWith("---")) div.className = "dl-del";
+      else if (line.startsWith("@@")) div.className = "dl-hunk";
+      else if (line.startsWith("diff ") || line.startsWith("index ")) div.className = "dl-meta";
+      code.appendChild(div);
+    }
+    body.appendChild(det);
+  }
+}
+
+/* ---------- new task sheet ---------- */
+function renderNewTask(sheet) {
+  sheet.innerHTML = `
+    <div class="sheet-grip"><i></i></div>
+    <div class="sheet-head"><h2>New task</h2><button class="x">✕</button></div>
+    <label class="f">Template</label>
+    <select class="f" id="f-template"><option value="">— none —</option></select>
+    <label class="f">Project</label>
+    <select class="f" id="f-project">${state.projects.map((p) =>
+      `<option value="${p.id}">${esc(p.name)} — ${esc(p.target_name)}</option>`).join("")}</select>
+    <div class="subhint" id="f-cap-hint"></div>
+    <label class="f">Title</label>
+    <input class="f" id="f-title" placeholder="Add /health endpoint">
+    <label class="f">Prompt — what should the agent do? <button id="f-mic" style="float:right;background:none;border:1px solid var(--line-2);border-radius:7px;cursor:pointer;color:var(--ink-dim)">🎤</button></label>
+    <textarea class="f" id="f-prompt" placeholder="Describe intent. Be specific about files, behavior, and how to verify."></textarea>
+    <label class="f">Permissions</label>
+    <select class="f" id="f-perm">
+      <option value="default">Gated — ask me before running anything (push)</option>
+      <option value="acceptEdits" selected>Accept edits — file changes auto-approved</option>
+      <option value="plan">Plan only — no changes</option>
+      <option value="bypassPermissions">Bypass — sandboxed targets only</option>
+    </select>
+    <label class="f">Agent</label>
+    <div class="seg f" id="f-agent" data-value="claude">
+      <button type="button" data-agent="claude" class="on">Claude Code</button>
+      <button type="button" data-agent="codex">Codex</button>
+      <button type="button" data-agent="gemini">Gemini</button>
+    </div>
+    <div class="subhint" id="f-agent-hint"></div>
+    <label class="f">Model</label>
+    <input class="f" id="f-model" list="adk-models" placeholder="default" autocomplete="off">
+    <datalist id="adk-models">
+      <option>fable</option><option>opus</option><option>sonnet</option><option>haiku</option>
+    </datalist>
+    <div id="f-ab-row">
+      <label class="f">A/B second attempt (parallel, compare diffs)</label>
+      <select class="f" id="f-modelb">
+        <option value="">off</option><option>fable</option><option>opus</option><option>sonnet</option><option>haiku</option>
+      </select>
+    </div>
+    <label class="f">Priority</label>
+    <select class="f" id="f-prio">
+      <option value="1">low</option><option value="2" selected>normal</option><option value="3">high</option>
+    </select>
+    <div class="btnrow" style="margin-top:20px">
+      <button class="b grow" id="f-save">Save to backlog</button>
+      <button class="b ok grow" id="f-go">▶ Dispatch now</button>
+    </div>`;
+  $(".x", sheet).onclick = closeSheet;
+  attachMic($("#f-mic"), $("#f-prompt"));
+
+  // Agent toggle. Only claude supports gated approvals and the claude model
+  // aliases, so switching agents has to reshape the rest of the form — and say
+  // so, rather than letting a dispatch fail later for reasons that look random.
+  const agentBox = $("#f-agent");
+  const syncAgent = () => {
+    const agent = agentBox.dataset.value;
+    $$("button", agentBox).forEach((b) => b.classList.toggle("on", b.dataset.agent === agent));
+    const claude = agent === "claude";
+    const gated = $("#f-perm").querySelector('option[value="default"]');
+    gated.disabled = !claude;
+    gated.textContent = claude
+      ? "Gated — ask me before running anything (push)"
+      : "Gated — Claude Code only";
+    if (!claude && $("#f-perm").value === "default") $("#f-perm").value = "acceptEdits";
+    $("#f-ab-row").style.display = claude ? "" : "none";
+    if (!claude) $("#f-modelb").value = "";
+    $("#adk-models").innerHTML = claude
+      ? ["fable", "opus", "sonnet", "haiku"].map((m) => `<option>${m}</option>`).join("")
+      : "";
+    // probe truth beats optimism: say when the target has no such binary
+    const proj = state.projects.find((p) => p.id === +$("#f-project").value);
+    const tgt = state.targets.find((t) => t.id === proj?.target_id);
+    let info = {};
+    try { info = JSON.parse(tgt?.info_json || "{}"); } catch {}
+    const missing = tgt && info[agent] === null;
+    $("#f-agent-hint").textContent = missing
+      ? `⚠ ${agent} not detected on ${tgt.name} — probe the target, or set `
+        + `AGENTDECK_${agent.toUpperCase()}_BIN if it lives outside the service PATH`
+      : "";
+  };
+  $$("button", agentBox).forEach((b) => {
+    b.onclick = () => { agentBox.dataset.value = b.dataset.agent; syncAgent(); };
+  });
+  // what the agent will actually be able to do, before you spend a dispatch on it
+  const syncCapability = () => {
+    const el = $("#f-cap-hint");
+    const id = +$("#f-project").value;
+    if (!el || !id) return;
+    el.textContent = "checking capability…";
+    api(`/projects/${id}/capability`).then((c) => {
+      if (+$("#f-project").value !== id) return;   // a later pick already won
+      const have = [c.mcp_servers.length ? `MCP ${c.mcp_servers.join(", ")}` : "no MCP",
+                    c.memory_dir ? "shared memory" : "no memory"];
+      el.innerHTML = `<b>${esc(c.profile)}</b> · ${esc(have.join(" · "))}` +
+        (c.profile === "restricted"
+          ? '<div class="cap-note">⚠ restricted: tools it was not granted are '
+            + 'denied with no prompt. Set parity on the Targets tab.</div>' : "");
+    }).catch(() => { el.textContent = ""; });
+  };
+  $("#f-project").addEventListener("change", () => {
+    const proj = state.projects.find((p) => p.id === +$("#f-project").value);
+    agentBox.dataset.value = proj?.default_agent || "claude";
+    if (proj?.default_permission_mode) $("#f-perm").value = proj.default_permission_mode;
+    syncAgent();
+    syncCapability();
+  });
+  syncCapability();
+  const initialProj = state.projects.find((p) => p.id === +$("#f-project").value);
+  agentBox.dataset.value = initialProj?.default_agent || "claude";
+  if (initialProj?.default_permission_mode) $("#f-perm").value = initialProj.default_permission_mode;
+  syncAgent();
+  api("/templates").then((tpls) => {
+    const sel = $("#f-template");
+    tpls.forEach((t, i) => {
+      const o = document.createElement("option");
+      o.value = i; o.textContent = t.name;
+      sel.appendChild(o);
+    });
+    sel.onchange = () => {
+      const t = tpls[+sel.value];
+      if (!t) return;
+      if (t.title) $("#f-title").value = t.title;
+      if (t.prompt) $("#f-prompt").value = t.prompt;
+      if (t.permission_mode) $("#f-perm").value = t.permission_mode;
+      if (t.model !== undefined) $("#f-model").value = t.model;
+    };
+  }).catch(() => {});
+  const collect = () => ({
+    project_id: +$("#f-project").value,
+    title: $("#f-title").value.trim(),
+    prompt: $("#f-prompt").value.trim(),
+    agent: $("#f-agent").dataset.value,
+    permission_mode: $("#f-perm").value,
+    model: $("#f-model").value,
+    priority: +$("#f-prio").value,
+  });
+  const create = async (dispatch) => {
+    const data = collect();
+    if (!data.title) return toast("Title required", true);
+    const modelB = $("#f-modelb").value;
+    // Fable 5 is the most capable — and highest-usage — model; confirm before
+    // dispatching an agent on it so it is never an accidental quota burn.
+    if (dispatch && (data.model === "fable" || modelB === "fable") &&
+        !confirm("Dispatch on Fable 5? It's the most capable model and uses the "
+                 + "most of your Claude Code plan. Continue?")) return;
+    try {
+      const t = await api("/tasks", { method: "POST", body: data });
+      if (dispatch) await api(`/tasks/${t.id}/dispatch`, { method: "POST",
+        body: modelB ? { model_b: modelB } : {} });
+      closeSheet(); refreshTasks();
+      toast(dispatch ? "Dispatched" : "Saved to backlog");
+    } catch (e) { toast(e.message, true); }
+  };
+  $("#f-save").onclick = () => create(false);
+  $("#f-go").onclick = () => create(true);
+}
+
+async function doAction(path, body = {}) {
+  try {
+    await api(path, { method: "POST", body });
+    await loadTaskSheet(state.sheet.id);
+    refreshTasks();
+  } catch (e) { toast(e.message, true); }
+}
+
+/* ---------- push ---------- */
+async function enablePush() {
+  try {
+    if (!("serviceWorker" in navigator)) throw new Error("no service worker support");
+    const reg = await navigator.serviceWorker.ready;
+    const perm = await Notification.requestPermission();
+    if (perm !== "granted") throw new Error("notifications not granted");
+    const keyResp = await fetch("/api/push/vapid").catch(() => null);
+    let appServerKey;
+    if (keyResp && keyResp.ok) appServerKey = (await keyResp.json()).key;
+    const sub = await reg.pushManager.subscribe({
+      userVisibleOnly: true,
+      ...(appServerKey ? { applicationServerKey: urlB64(appServerKey) } : {}),
+    });
+    await api("/push/subscribe", { method: "POST", body: sub.toJSON() });
+    toast("Push enabled on this device");
+  } catch (e) { toast("Push: " + e.message, true); }
+}
+function urlB64(s) {
+  const pad = "=".repeat((4 - (s.length % 4)) % 4);
+  const raw = atob((s + pad).replace(/-/g, "+").replace(/_/g, "/"));
+  return Uint8Array.from([...raw].map((c) => c.charCodeAt(0)));
+}
+
+/* ---------- helpers / boot ---------- */
+function esc(s) { const d = document.createElement("i"); d.textContent = s ?? ""; return d.innerHTML; }
+function snippet(input) {
+  if (!input) return "";
+  const s = input.command || input.file_path || JSON.stringify(input);
+  return String(s).slice(0, 120);
+}
+function safeParse(s) { try { return JSON.parse(s || "{}"); } catch { return {}; } }
+
+function switchTab(tab) {
+  state.tab = tab;
+  if (tab !== "deck") closeDeckStreams();
+  $$(".tab").forEach((b) => b.classList.toggle("on", b.dataset.tab === tab));
+  if (tab === "board") renderBoard();
+  if (tab === "sessions") { renderSessions(); refreshSessions(); }
+  if (tab === "deck") renderDeck();
+  if (tab === "approvals") renderApprovals();
+  if (tab === "targets") renderTargets();
+}
+$$(".tab").forEach((b) => (b.onclick = () => switchTab(b.dataset.tab)));
+$("#fab").onclick = () => {
+  state.sheet = { kind: state.tab === "sessions" ? "new-session" : "new" };
+  renderSheet();
+};
+$("#sheet-backdrop").onclick = closeSheet;
+addEventListener("keydown", (e) => { if (e.key === "Escape" && state.sheet) closeSheet(); });
+// A phone that was locked or backgrounded drops SSE silently — resync on return
+// to foreground (shares the reconnect resync path).
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "visible") {
+    refreshTasks(); refreshApprovals(); refreshSessions();
+  }
+});
+
+if ("serviceWorker" in navigator) navigator.serviceWorker.register("/sw.js");
+
+(async function boot() {
+  connectSSE();
+  await Promise.all([refreshMeta(), refreshTasks(), refreshApprovals(), refreshSessions()]);
+  renderBoard();
+  setInterval(refreshTasks, 30000);   // safety net if SSE hiccups
+  // sessions carry a live idle clock, so the list is re-rendered on a cadence
+  // even when nothing changed — "quiet for 40 minutes" is the number you act on
+  setInterval(() => { if (state.tab === "sessions") renderSessions(); }, 5000);
+})();

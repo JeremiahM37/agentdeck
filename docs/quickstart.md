@@ -3,14 +3,17 @@
 ## 1. Run the control plane
 
 ```bash
-python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
-.venv/bin/python -m server        # http://<host>:9110
+go build -o agentdeck ./cmd/agentdeck
+./agentdeck                       # http://<host>:9110
 ```
+
+One static binary — the PWA, the agent-side hook scripts and a pure-Go SQLite
+driver are all embedded in it.
 
 Try it with fake agents first (no infrastructure needed):
 
 ```bash
-AGENTDECK_MOCK=1 .venv/bin/python -m server
+AGENTDECK_MOCK=1 ./agentdeck
 ```
 
 ## 2. Register a target
@@ -75,11 +78,14 @@ model — small local models may respond conversationally instead of editing.)
 
 ## MCP
 
-`server/mcp_server.py` exposes the board over MCP so any MCP client can file and
-steer tasks. Register with Claude Code:
+`agentdeck mcp` speaks MCP on stdio, so any MCP client can file and steer tasks.
+It is a client of the HTTP API, so point it at a running control plane — local or
+remote. Register with Claude Code:
 
 ```bash
-claude mcp add agentdeck /path/.venv/bin/python /path/server/mcp_server.py
+claude mcp add agentdeck /usr/local/bin/agentdeck mcp
+# non-default host, or a token-protected instance:
+#   AGENTDECK_API=http://aiserver:9110 AGENTDECK_AUTH_TOKEN=… agentdeck mcp
 ```
 
 ## Deploy for real

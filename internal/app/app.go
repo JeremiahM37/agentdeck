@@ -1,0 +1,119 @@
+// Package app wires every component together. Both the binary and the test suite
+// build an App from a Config, so nothing is only ever exercised in production.
+package app
+
+import (
+	"context"
+	"log/slog"
+	"net/http"
+
+	"github.com/JeremiahM37/agentdeck/internal/api"
+	"github.com/JeremiahM37/agentdeck/internal/broker"
+	"github.com/JeremiahM37/agentdeck/internal/bus"
+	"github.com/JeremiahM37/agentdeck/internal/config"
+	"github.com/JeremiahM37/agentdeck/internal/creds"
+	"github.com/JeremiahM37/agentdeck/internal/executor"
+	"github.com/JeremiahM37/agentdeck/internal/memory"
+	"github.com/JeremiahM37/agentdeck/internal/push"
+	"github.com/JeremiahM37/agentdeck/internal/scheduler"
+	"github.com/JeremiahM37/agentdeck/internal/sessions"
+	"github.com/JeremiahM37/agentdeck/internal/sinks"
+	"github.com/JeremiahM37/agentdeck/internal/store"
+	"github.com/JeremiahM37/agentdeck/internal/terminal"
+)
+
+// App owns every long-lived component.
+type App struct {
+	Cfg       *config.Config
+	DB        *store.DB
+	Bus       *bus.Bus
+	Notifier  *sinks.Notifier
+	Broker    *broker.Broker
+	Reg       *executor.Registry
+	Sched     *scheduler.Scheduler
+	Sessions  *sessions.Manager
+	Memory    memory.Provider
+	Terminals *terminal.Manager
+	Server    *api.Server
+	Log       *slog.Logger
+}
+
+// New builds the whole service and starts its scheduler.
+func New(cfg *config.Config, log *slog.Logger) (*App, error) {
+	db, err := store.Open(cfg.DBPath)
+	if err != nil {
+		return nil, err
+	}
+	b := bus.New()
+	pushSender := &push.Sender{
+		PrivateKey: cfg.VAPIDPrivateKey, PublicKey: cfg.VAPIDPublicKey,
+		Email: cfg.VAPIDEmail, Log: log,
+	}
+	notifier := &sinks.Notifier{DB: db, BaseURL: cfg.BaseURL, Push: pushSender, Log: log}
+	br := broker.New(db, b, notifier, cfg.ApprovalExpire)
+	reg := executor.NewRegistry(cfg.Mock, cfg.MockAgentDelay)
+	provisioner := creds.New(cfg.ClaudeCredsPath, cfg.CodexCredsPath, cfg.AnthropicAPIKey, log)
+	var mem memory.Provider = memory.None{}
+	if cfg.GrimoireURL != "" {
+		mem = memory.NewGrimoire(cfg.GrimoireURL, cfg.GrimoireToken)
+	}
+	sessMgr := sessions.New(db, reg, b, sessions.Launcher{
+		ClaudeBin: cfg.ClaudeBin, CodexBin: cfg.CodexBin, GeminiBin: cfg.GeminiBin,
+	}, mem, log)
+	sched := scheduler.New(db, b, br, notifier, reg, cfg, provisioner, log)
+	sched.Sessions = sessMgr
+	terms := terminal.NewManager()
+
+	srv := &api.Server{
+		DB: db, Bus: b, Broker: br, Notifier: notifier, Reg: reg, Sched: sched,
+		Terminals: terms, Push: pushSender, Cfg: cfg, Log: log,
+		Sessions: sessMgr, Memory: mem,
+	}
+	app := &App{Cfg: cfg, DB: db, Bus: b, Notifier: notifier, Broker: br, Reg: reg,
+		Sched: sched, Sessions: sessMgr, Memory: mem, Terminals: terms,
+		Server: srv, Log: log}
+
+	if cfg.Mock {
+		if err := app.SeedDemoData(); err != nil {
+			return nil, err
+		}
+	}
+	sched.Start()
+	return app, nil
+}
+
+// Handler is the HTTP handler for this app.
+func (a *App) Handler() http.Handler { return a.Server.Handler() }
+
+// Close stops the scheduler and releases the database.
+func (a *App) Close() {
+	a.Server.Shutdown(context.Background())
+	a.DB.Close()
+}
+
+// SeedDemoData gives mock mode a ready board, so the UI and the e2e suite always
+// have something to show.
+func (a *App) SeedDemoData() error {
+	if targets, err := a.DB.Targets(); err != nil || len(targets) > 0 {
+		return err
+	}
+	t1, err := a.DB.InsertTarget(&store.Target{
+		Name: "lxc-101-project-env", Kind: "mock", Host: "192.0.2.10",
+		Status: "online", MaxConcurrent: 4, Port: 22, User: "root"})
+	if err != nil {
+		return err
+	}
+	t2, err := a.DB.InsertTarget(&store.Target{
+		Name: "aiserver-local", Kind: "mock", Status: "online",
+		MaxConcurrent: 8, Port: 22, User: "root"})
+	if err != nil {
+		return err
+	}
+	if _, err := a.DB.InsertProject(&store.Project{
+		Name: "demo-app", TargetID: t1.ID, RepoPath: "/mock/demo-app"}); err != nil {
+		return err
+	}
+	_, err = a.DB.InsertProject(&store.Project{
+		Name: "homelab-api", TargetID: t2.ID, RepoPath: "/mock/homelab-api"})
+	return err
+}

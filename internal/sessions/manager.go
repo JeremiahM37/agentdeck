@@ -1,0 +1,253 @@
+package sessions
+
+import (
+	"context"
+	"fmt"
+	"log/slog"
+	"strings"
+	"sync"
+	"time"
+
+	"github.com/JeremiahM37/agentdeck/internal/bus"
+	"github.com/JeremiahM37/agentdeck/internal/executor"
+	"github.com/JeremiahM37/agentdeck/internal/memory"
+	"github.com/JeremiahM37/agentdeck/internal/store"
+)
+
+// Manager owns the lifecycle of every interactive session.
+type Manager struct {
+	DB       *store.DB
+	Reg      *executor.Registry
+	Bus      *bus.Bus
+	Launcher Launcher
+	Memory   memory.Provider
+	Log      *slog.Logger
+
+	// HandoffTimeout bounds how long we wait for an agent to write its wrap
+	// before giving up and saying so.
+	HandoffTimeout time.Duration
+
+	mu       sync.Mutex
+	handoffs map[int64]bool // sessions with a wrap in flight
+}
+
+// New builds a session manager.
+func New(db *store.DB, reg *executor.Registry, b *bus.Bus, l Launcher,
+	mem memory.Provider, log *slog.Logger) *Manager {
+	if mem == nil {
+		mem = memory.None{}
+	}
+	return &Manager{DB: db, Reg: reg, Bus: b, Launcher: l, Memory: mem, Log: log,
+		HandoffTimeout: 4 * time.Minute, handoffs: map[int64]bool{}}
+}
+
+func (m *Manager) publish(s *store.Session) {
+	m.Bus.Publish("board", "session", s)
+	m.Bus.Publish(fmt.Sprintf("session:%d", s.ID), "session", s)
+}
+
+// ---- launching ---------------------------------------------------------------
+
+// LaunchOpts are the inputs of a new interactive session.
+type LaunchOpts struct {
+	ProjectID *int64
+	TargetID  int64
+	Name      string
+	Agent     string
+	Model     string
+	Workdir   string
+	// Resume asks the agent to pick up its own previous conversation
+	// (`claude --continue`), which is what you want when re-opening a project
+	// you were in yesterday.
+	Resume bool
+	// Prime is typed into the session once it is up — a project briefing, or a
+	// predecessor's handoff.
+	Prime string
+}
+
+// Launch starts an interactive agent and records it.
+func (m *Manager) Launch(ctx context.Context, o LaunchOpts) (*store.Session, error) {
+	target, err := m.DB.Target(o.TargetID)
+	if err != nil {
+		return nil, err
+	}
+	workdir := o.Workdir
+	if workdir == "" && o.ProjectID != nil {
+		proj, err := m.DB.Project(*o.ProjectID)
+		if err != nil {
+			return nil, err
+		}
+		workdir = proj.RepoPath
+	}
+	if workdir == "" {
+		return nil, fmt.Errorf("a session needs a working directory")
+	}
+	agent := o.Agent
+	if agent == "" {
+		agent = "claude"
+	}
+	name := o.Name
+	if name == "" {
+		name = agent
+	}
+	sess, err := m.DB.InsertSession(&store.Session{
+		ProjectID: o.ProjectID, TargetID: o.TargetID, Name: name, Agent: agent,
+		Model: o.Model, Workdir: workdir, Status: StatusStarting, Origin: "agentdeck",
+	})
+	if err != nil {
+		return nil, err
+	}
+	// the id is only known after the insert, so the tmux name is set here — and
+	// the `adk-s` prefix keeps interactive sessions clearly apart from the
+	// `adk-<attempt>` sessions a dispatched task owns
+	tmuxName := fmt.Sprintf("adk-s%d", sess.ID)
+	if err := m.DB.Update("sessions", sess.ID, map[string]any{
+		"tmux_session": tmuxName}); err != nil {
+		return nil, err
+	}
+	sess.TmuxSession = tmuxName
+
+	ex, err := m.Reg.For(target)
+	if err != nil {
+		return nil, err
+	}
+	cmd := m.Launcher.LaunchCommand(agent, workdir, tmuxName, o.Model, o.Resume)
+	r, err := ex.Run(ctx, cmd, executor.RunOpts{Timeout: 60})
+	if err != nil {
+		m.end(sess.ID, "dead")
+		return nil, err
+	}
+	if !r.OK() {
+		m.end(sess.ID, "dead")
+		return nil, executor.Errf("tmux launch failed: %s", strings.TrimSpace(r.Stderr))
+	}
+	if o.Prime != "" {
+		// the agent needs a moment to draw its prompt before it will accept a
+		// paste; a dropped prime is worse than a slightly slow start
+		go func() {
+			time.Sleep(4 * time.Second)
+			if err := m.SendText(context.Background(), sess.ID, o.Prime); err != nil {
+				m.Log.Warn("priming session failed", "session", sess.ID, "err", err)
+			}
+		}()
+	}
+	fresh, err := m.DB.Session(sess.ID)
+	if err != nil {
+		return sess, nil
+	}
+	m.publish(fresh)
+	m.Log.Info("session launched", "session", fresh.ID, "agent", agent,
+		"target", target.Name, "workdir", workdir)
+	return fresh, nil
+}
+
+func (m *Manager) end(id int64, status string) {
+	now := store.Now()
+	m.DB.Update("sessions", id, map[string]any{
+		"status": status, "ended_at": now, "updated_at": now})
+}
+
+// ---- driving -----------------------------------------------------------------
+
+// SendText types a message into a session and submits it — the phone-side
+// equivalent of typing at the terminal.
+func (m *Manager) SendText(ctx context.Context, id int64, text string) error {
+	sess, ex, err := m.resolve(id)
+	if err != nil {
+		return err
+	}
+	stage := fmt.Sprintf("/tmp/agentdeck-send-%d-%d", sess.ID, time.Now().UnixNano())
+	if err := ex.WriteFile(ctx, stage, []byte(text)); err != nil {
+		return err
+	}
+	r, err := ex.Run(ctx, SendTextCommand(sess.TmuxSession, stage),
+		executor.RunOpts{Timeout: 30})
+	if err != nil {
+		return err
+	}
+	if !r.OK() {
+		return executor.Errf("send failed: %s", strings.TrimSpace(r.Stderr))
+	}
+	return nil
+}
+
+// SendKey presses one allowlisted key in a session — Escape to interrupt a turn,
+// Enter to accept, and so on.
+func (m *Manager) SendKey(ctx context.Context, id int64, key string) error {
+	sess, ex, err := m.resolve(id)
+	if err != nil {
+		return err
+	}
+	cmd, ok := SendKeyCommand(sess.TmuxSession, key)
+	if !ok {
+		return fmt.Errorf("unknown key %q", key)
+	}
+	_, err = ex.Run(ctx, cmd, executor.RunOpts{Timeout: 20})
+	return err
+}
+
+// Kill ends a session's process and closes its record.
+func (m *Manager) Kill(ctx context.Context, id int64) error {
+	sess, ex, err := m.resolve(id)
+	if err != nil {
+		return err
+	}
+	if _, err := ex.Run(ctx, KillCommand(sess.TmuxSession),
+		executor.RunOpts{Timeout: 20}); err != nil {
+		return err
+	}
+	m.end(id, StatusDead)
+	if fresh, err := m.DB.Session(id); err == nil {
+		m.publish(fresh)
+	}
+	return nil
+}
+
+// Release stops tracking a session and LEAVES ITS PROCESS RUNNING.
+//
+// This is the counterpart to Adopt. Adoption is non-destructive — it just starts
+// watching a terminal the operator already had open — so letting go of one has
+// to be non-destructive too, or "add it to the board" quietly becomes "hand its
+// life over to the board".
+func (m *Manager) Release(id int64) error {
+	sess, err := m.DB.Session(id)
+	if err != nil {
+		return err
+	}
+	now := store.Now()
+	if err := m.DB.Update("sessions", sess.ID, map[string]any{
+		"status": StatusIdle, "ended_at": now, "updated_at": now}); err != nil {
+		return err
+	}
+	m.Bus.Publish("board", "session_dismissed", map[string]any{"id": id})
+	m.Log.Info("session released (process left running)", "session", id,
+		"tmux", sess.TmuxSession)
+	return nil
+}
+
+// Dismiss drops a dead session from the live list without touching any process.
+func (m *Manager) Dismiss(id int64) error {
+	sess, err := m.DB.Session(id)
+	if err != nil {
+		return err
+	}
+	m.end(sess.ID, StatusDead)
+	m.Bus.Publish("board", "session_dismissed", map[string]any{"id": id})
+	return nil
+}
+
+func (m *Manager) resolve(id int64) (*store.Session, executor.Executor, error) {
+	sess, err := m.DB.Session(id)
+	if err != nil {
+		return nil, nil, err
+	}
+	target, err := m.DB.Target(sess.TargetID)
+	if err != nil {
+		return nil, nil, err
+	}
+	ex, err := m.Reg.For(target)
+	if err != nil {
+		return nil, nil, err
+	}
+	return sess, ex, nil
+}

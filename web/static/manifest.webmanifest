@@ -1,0 +1,14 @@
+{
+  "name": "agentdeck",
+  "short_name": "agentdeck",
+  "description": "Mission control for AI coding agents on your own infrastructure.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#080b14",
+  "theme_color": "#080b14",
+  "orientation": "any",
+  "icons": [
+    { "src": "/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }
+  ]
+}

@@ -1,6 +1,6 @@
 <div align="center">
 
-# ▚▞ AgentDeck
+# AgentDeck
 
 **Mission control for AI coding agents — on your own infrastructure.**
 Describe a task from your phone. An agent picks it up on a box you own, works in an
@@ -8,11 +8,11 @@ isolated git worktree inside tmux, streams every step live, pings you for approv
 and hands you a reviewable diff.
 
 <!-- badges -->
-![status](https://img.shields.io/badge/status-v1.0-2ea44f)
+![status](https://img.shields.io/badge/status-v2.1.0-8b5cf6)
 ![license](https://img.shields.io/badge/license-MIT-blue)
-![python](https://img.shields.io/badge/python-3.12%2B-3776ab)
+![go](https://img.shields.io/badge/go-1.25%2B-00add8)
 ![docker](https://img.shields.io/badge/docker-ready-2496ed)
-![tests](https://img.shields.io/badge/tests-202%20passing-2ea44f)
+![binary](https://img.shields.io/badge/deploy-single%20binary-8b5cf6)
 ![PWA](https://img.shields.io/badge/PWA-mobile--first-19c37d)
 
 ![AgentDeck board](docs/screenshots/board.png)
@@ -29,6 +29,16 @@ model. No SaaS, no shipping your code to someone else's cloud.
 ---
 
 ## Why it's different
+
+**One binary, no runtime.** The control plane is a single static Go binary with
+the PWA and the agent-side hook scripts embedded. Copy it to a box and run it.
+
+**Tasks *and* sessions.** A task is work you hand off — dispatch, walk away,
+review a diff. A **session** is an agent you work *with*, for days: it lives in
+tmux, agentdeck watches its status and screen, you attach with one tap, type into
+it from your phone, and when its context fills up you ask it to write a handoff
+and hand the thread to a fresh one. It will also *discover and adopt* the Claude
+and Codex sessions you started yourself, without disturbing them.
 
 **Runs on your hardware.** A target is any box with SSH — or the machine
 AgentDeck itself runs on. Proxmox users get native extras (`pct` targets and
@@ -51,19 +61,23 @@ docker compose -f deploy/docker-compose.yml up -d    # → http://localhost:9110
 ```
 
 <details>
-<summary>…or run from source</summary>
+<summary>…or build the binary</summary>
 
 ```bash
-python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
-.venv/bin/python -m server                # → http://<host>:9110
+go build -o agentdeck ./cmd/agentdeck
+./agentdeck                                # → http://<host>:9110
 ```
+
+One static binary with the PWA, the agent-side hook scripts and a pure-Go SQLite
+driver embedded in it. Nothing to install alongside, nothing to `pip` at deploy
+time — copy the file and run it.
 </details>
 
 Kick the tires with **zero setup** — mock mode ships a full demo board with fake
 agents (no git/tmux/claude needed):
 
 ```bash
-AGENTDECK_MOCK=1 .venv/bin/python -m server
+AGENTDECK_MOCK=1 ./agentdeck
 ```
 
 Then register a target + project in the **Targets** tab (or `POST /api/targets` /
@@ -91,6 +105,14 @@ reachability, `git`, `tmux`, `python3`, and your agent's CLI.
 
 - **Board** — kanban (mobile PWA + desktop), quick-dispatch bar, drag-to-dispatch,
   live SSE timeline, mobile diff review, and a desktop **Deck** multi-pane cockpit.
+- **Sessions** — long-lived interactive agents, grouped by project. Live status
+  (working / wants you / idle) derived from the pane itself, uptime and idle time
+  taken from tmux's own clock, a preview of what is on screen, one-tap terminal
+  attach, send-a-message and interrupt from your phone, **discovery + adoption**
+  of agents you started by hand, and **handoff**: the agent writes a wrap for its
+  successor, which starts primed with it. The project outlives the context window.
+- **Import** — point it at where your code lives; it registers everything that
+  looks like a project (git repo, build manifest, or a HANDOFF.md).
 - **Targets** — `local` and `ssh` cover any machine; Proxmox users also get
   `pct` (no SSH needed) and `sandbox` (ephemeral container: clone → run →
   capture → destroy). Deep credentials probe included.
@@ -126,19 +148,28 @@ curl -X POST .../api/projects -d '{
 ## Tests
 
 ```bash
-.venv/bin/pytest      # 202 hermetic tests — unit + API + Playwright e2e (mock executor)
+go test ./...     # 241 hermetic tests: mock executor, a temp database each, no real infra
+pytest -q e2e     # 31 Playwright browser flows against a real built binary
 ```
 
 ## Layout
 
 ```
-server/          FastAPI control plane (SQLite, SSE, scheduler, executors)
-server/executor/ local | ssh | pct | sandbox | mock target executors
-hooks/hook.py    PreToolUse approval hook (stdlib-only, copied into worktrees)
-web/             mobile-first PWA (vanilla ES modules, no build step)
-tests/           unit / api / e2e (Playwright)
-DESIGN.md        full design doc — architecture, feature catalog, roadmap
+cmd/agentdeck/       the binary
+internal/api/        REST + hook endpoints, SSE streams, embedded PWA
+internal/scheduler/  promotes queued attempts, tails running ones, finalises
+internal/executor/   local | ssh | pct | sandbox | mock target executors
+internal/agents/     per-agent launch commands and stream parsers
+internal/hooks/      PreToolUse approval hook + agent kit (stdlib Python, embedded)
+internal/store/      SQLite schema and typed row accessors
+web/                 mobile-first PWA (vanilla ES modules, no build step)
+e2e/                 Playwright browser tests
+DESIGN.md            full design doc — architecture, feature catalog, roadmap
 ```
+
+Pair it with a memory store — `AGENTDECK_GRIMOIRE_URL` gives sessions a project
+briefing to start from and a place for handoffs to live. agentdeck works fine
+without one; the two compose, they do not depend on each other.
 
 Config via env: `AGENTDECK_PORT` (9110), `AGENTDECK_DB`, `AGENTDECK_BASE_URL`
 (URL targets use to reach this server for approval callbacks), `AGENTDECK_AUTH_TOKEN`

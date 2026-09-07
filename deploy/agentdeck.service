@@ -1,4 +1,5 @@
 # systemd unit for bare-metal installs (recommended on the homelab).
+#   go build -o /usr/local/bin/agentdeck ./cmd/agentdeck
 #   sudo cp deploy/agentdeck.service /etc/systemd/system/
 #   sudo systemctl enable --now agentdeck
 [Unit]
@@ -12,7 +13,10 @@ User=admin
 WorkingDirectory=/home/admin/projects/agentdeck
 # URL that TARGETS use to reach this server for approval callbacks
 Environment=AGENTDECK_BASE_URL=http://YOUR-SERVER-IP:9110
-ExecStart=/home/admin/projects/agentdeck/.venv/bin/python -m server
+# Agent binaries often live in ~/.local/bin, which is NOT on a unit's default
+# PATH — a probe reporting "codex: null" for an installed codex means this.
+Environment=PATH=/usr/local/bin:/usr/bin:/bin:/home/admin/.local/bin
+ExecStart=/usr/local/bin/agentdeck
 Restart=on-failure
 RestartSec=5
 

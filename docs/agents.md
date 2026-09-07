@@ -1,7 +1,8 @@
 # Agents
 
 AgentDeck drives more than one coding CLI. Everything CLI-specific lives in
-`server/agents.py` (plus `server/claude_runner.py` for Claude), so the run
+`internal/agents/` (`launch.go` and `parse.go`, plus `claude.go` for Claude
+Code's settings and permission rules), so the run
 protocol — worktree, tmux, events file, exit code — is identical whichever agent
 you pick.
 
@@ -66,9 +67,10 @@ Environment=AGENTDECK_CODEX_BIN=/home/you/.local/bin/codex
 
 ## Adding an agent
 
-Implement two functions in `server/agents.py`: build the inner shell command in
-`launch_command`, and map the CLI's output to AgentDeck's event types
-(`init` / `text` / `tool_use` / `tool_result` / `result`) in `parse_stream_lines`.
+Add a case to two functions in `internal/agents/`: build the inner shell command
+in `Launcher.Command` (launch.go), and map the CLI's output to AgentDeck's event
+types (`init` / `text` / `tool_use` / `tool_result` / `result`) in
+`ParseStreamLines` (parse.go).
 
 One trap worth inheriting: both codex and gemini read stdin even when the prompt
 is passed as an argument, and a tmux pane's stdin never reaches EOF — so the

@@ -78,10 +78,10 @@ backlog → queued → running → review → done
 └──────────────┬───────────────────────────────────────┘
         HTTPS / SSE / Web Push
 ┌──────────────┴───────────────────────────────────────┐
-│  control plane (FastAPI, AIServer)                    │
+│  control plane (one Go binary, AIServer)              │
 │  REST API · SSE bus · scheduler · approval broker     │
 │  SQLite (tasks/attempts/events/approvals/targets)     │
-│  executor layer: local | ssh (asyncssh) | mock        │
+│  executors: local | ssh | pct | sandbox | mock        │
 └───────┬───────────────┬───────────────┬──────────────┘
      ssh/exec        ssh/exec        subprocess
 ┌───────┴──────┐ ┌──────┴───────┐ ┌──────┴───────┐
@@ -95,24 +95,30 @@ backlog → queued → running → review → done
 
 ### 4.1 Control plane
 
-- **FastAPI + uvicorn**, single process, asyncio. SQLite (WAL) via `aiosqlite`-style thin wrapper. No ORM — explicit SQL, few tables.
+- **A single static Go binary**: `net/http` with the Go 1.22+ routing patterns, one process, goroutines. SQLite (WAL) through the pure-Go `modernc.org/sqlite` driver, so the build stays CGO-free and the binary runs on any base image. No ORM — explicit SQL, few tables. The PWA, the agent-side hook scripts and the schema are all `go:embed`ed, so a deploy is one file with nothing to install beside it.
 - **SSE event bus**: in-process pub/sub; clients subscribe to `/api/stream` (global board updates) and `/api/tasks/{id}/stream` (task timeline). SSE over WebSockets because it survives proxies/PWA background better. Events emitted while a client is disconnected are **not** replayed (no server-side buffer); instead the client resyncs on every (re)connect — the board refetches tasks+approvals in `onopen`, the task sheet refetches its event list. A 30s poll is the backstop. (A `Last-Event-ID` replay buffer is a possible future optimization; today resync-on-reconnect is the contract.)
-- **Scheduler loop** (asyncio task, 2s tick): promotes `queued` attempts when their target has a free slot; drives log tailing for running attempts; detects finished/dead sessions; captures result diff; transitions state; emits push notifications.
+- **Scheduler loop** (a goroutine, 2s tick): promotes `queued` attempts when their target has a free slot; drives log tailing for running attempts; detects finished/dead sessions; captures result diff; transitions state; emits push notifications.
 - **Server restarts are safe**: on boot, scan `running` attempts, re-attach tailers at the stored byte offset, reconcile tmux session existence (session gone + result file present → finalize; gone + no result → failed).
 
 ### 4.2 Executor layer
 
-```python
-class Executor(Protocol):
-    async def run(cmd: list[str] | str, cwd, timeout) -> ExecResult   # rc, stdout, stderr
-    async def read_file(path, offset) -> bytes                        # log tailing
-    async def write_file(path, data)                                  # hook settings, prompt files
-    async def check() -> TargetInfo                                   # git/tmux/agent versions, disk
+```go
+type Executor interface {
+    Run(ctx context.Context, cmd string, opts RunOpts) (Result, error) // rc, stdout, stderr
+    ReadFile(ctx context.Context, path string, offset int64) ([]byte, error) // log tailing
+    WriteFile(ctx context.Context, path string, data []byte) error // prompts, settings, context
+    Close() error
+}
 ```
 
-- `LocalExecutor`: `asyncio.create_subprocess_exec`.
-- `SSHExecutor`: asyncssh with connection reuse + keepalive; key auth only (no passwords in DB — key path or agent).
-- `MockExecutor`: scripted responses for the whole test suite; also powers `AGENTDECK_MOCK=1` demo mode so the UI is testable with zero infra.
+- `Local`: `os/exec` on the control plane host.
+- `SSH`: `golang.org/x/crypto/ssh` with connection reuse and a keepalive liveness
+  probe; key auth only (no passwords in the database — a key path or the agent).
+- `Pct`: `sudo pct exec` into an LXC on this Proxmox node — no SSH, no per-container keys.
+- `Mock`: scripted responses for the whole test suite; also powers
+  `AGENTDECK_MOCK=1` demo mode, so the UI is testable with zero infra. It emits
+  REAL `stream-json` shapes and calls the REAL hook endpoints over HTTP, so the
+  parser and the approval round trip are exercised end to end rather than stubbed.
 - Later: `PctExecutor` (`pct exec <vmid> --`) for LXCs on the same Proxmox node without per-container SSH; `DockerExecutor` (`docker exec`).
 - All higher layers (worktree, runner, diff) speak only to this interface — one code path for every target kind.
 
@@ -234,7 +240,7 @@ Legend: ✅ v0.1 (this build) · 🔜 v0.2–0.3 · 🗺️ v1.0+
 Three layers, all hermetic by default (MockExecutor; no network, no real agent):
 
 1. **Unit** (`tests/unit/`): stream-json parser (real captured samples + malformed/partial lines), task state machine (legal/illegal transitions), worktree/branch naming, approval token auth, policy matching, diff parsing.
-2. **API** (`tests/api/`): FastAPI TestClient + MockExecutor scripted scenarios — full lifecycle (create→dispatch→events flow→review→done), follow-up resume, cancel, approval round-trip incl. long-poll, restart-reconciliation, SSE delivery.
+2. **API** (`internal/api/*_test.go`): a real HTTP server + the mock executor — full lifecycle (create→dispatch→events flow→review→done), follow-up resume, cancel, approval round-trip incl. long-poll, restart-reconciliation, SSE delivery.
 3. **E2E Playwright** (`tests/e2e/`): real browser against a real server in `AGENTDECK_MOCK=1` mode — board renders, create task on phone viewport (390×844) and desktop (1440×900), dispatch, watch card move columns live, timeline streams, approval appears → approve → agent continues, diff renders, mark done. Screenshots on failure.
 4. **Real-dispatch smoke** (`tests/smoke/`, opt-in `AGENTDECK_SMOKE=1`): dispatches one trivial task via LocalExecutor against a scratch repo with the real `claude` CLI — proves the integration seam. Run manually / nightly, not in CI.
 
@@ -263,14 +269,53 @@ ownership per task, reviewer gates merges. BridgeMemory = markdown graph in
    `.agentdeck/memory/` markdown dir symlinked into every worktree; RAG hook to
    ecosystem-RAG for homelab installs.
 - **v0.3**: A/B attempts, templates, session replay, header auth, target dashboards.
-- **v0.5 (2026-07-14)**: **agent adapters** (`server/agents.py` seam: claude first-class; codex `exec --json` JSONL mapping and gemini plaintext mapping, both experimental; gated mode validated claude-only at task creation), **shared project memory** (agents leave notes via `adk.py add-note` → injected as a "Project memory" prefix into future dispatch prompts; REST list/delete; caps per attempt), **PctExecutor** (`sudo pct exec <vmid>` — Proxmox-native targets, zero SSH; verified with a real dispatch on LXC 101), capability probe now detects claude/codex/gemini per target, agent picker in UI. SHIPPED.
-  - ~~Ops note: subscription OAuth creds copied to targets go stale when the source refreshes (401)~~ **FIXED in v0.8.1** — agentdeck now provisions current auth at dispatch time (`server/credentials.py`): an `AGENTDECK_ANTHROPIC_API_KEY` is injected as `ANTHROPIC_API_KEY` (rotation-proof), or the control plane's *current* OAuth creds are pushed to the target before launch so an agent never runs on a rotated-out copy. Root cause was OAuth *refresh-token* rotation invalidating stale copies. The deep probe provisions-then-tests, so it self-heals.
+- **v0.5 (2026-07-14)**: **agent adapters** (`internal/agents/` seam: claude first-class; codex `exec --json` JSONL mapping and gemini plaintext mapping, both experimental; gated mode validated claude-only at task creation), **shared project memory** (agents leave notes via `adk.py add-note` → injected as a "Project memory" prefix into future dispatch prompts; REST list/delete; caps per attempt), **PctExecutor** (`sudo pct exec <vmid>` — Proxmox-native targets, zero SSH; verified with a real dispatch on LXC 101), capability probe now detects claude/codex/gemini per target, agent picker in UI. SHIPPED.
+  - ~~Ops note: subscription OAuth creds copied to targets go stale when the source refreshes (401)~~ **FIXED in v0.8.1** — agentdeck now provisions current auth at dispatch time (`internal/creds/`): an `AGENTDECK_ANTHROPIC_API_KEY` is injected as `ANTHROPIC_API_KEY` (rotation-proof), or the control plane's *current* OAuth creds are pushed to the target before launch so an agent never runs on a rotated-out copy. Root cause was OAuth *refresh-token* rotation invalidating stale copies. The deep probe provisions-then-tests, so it self-heals.
 - **v0.6 (2026-07-15) — ops**: systemd deploy (behind nginx+Authelia), worktree janitor (hourly + admin endpoint), deep target probe (`?deep=true` = real 1-token claude auth round-trip; `< /dev/null` because `claude -p` hangs on ssh exec channels), nightly smoke timer 04:30 with Discord report, dogfood projects (mttyd, pocketlab, gamarr). SHIPPED.
 - **v0.7 (2026-07-15) — ephemeral sandboxes**: target kind `sandbox` (host = Proxmox template vmid, template 110 cloned from LXC 101). Every attempt: linked-clone → start → fresh creds pushed → repo (git URL cloned, or path baked in template) → branch → agent with `IS_SANDBOX=1` (claude refuses bypassPermissions as root otherwise) → diff/verify captured to control plane → container destroyed (also on cancel/ghost/unreachable — no leaks). Follow-ups get fresh sandboxes with context in the prompt; reviewer gate skipped (worktree is gone). Ghost detection needs 2 consecutive strikes (transient read races). Verified live: clone→run→review→destroy, $0.29, zero leftovers. SHIPPED.
-- **v0.8 (2026-07-15) — any-model + integrations**: per-project `env` injected into the agent launch (KEY=val shell-quoted, validated) — the any-model door: `ANTHROPIC_BASE_URL`/`ANTHROPIC_AUTH_TOKEN` route Claude Code at any Anthropic-compatible endpoint (Ollama ≥0.20 native, LiteLLM, vLLM/llama.cpp gateways); `OPENAI_*`/`GEMINI_*` for the other agents. **MCP server** (`server/mcp_server.py`, FastMCP, 11 tools: board/projects/tasks/create/status/diff/approvals/decide/complete/request_changes) — registered with Claude Code, connects; exposable to the Discord bot via mcpo. Task **templates** (settings-backed, prefill new-task form) + **cost stats** (`/api/stats`, Spend card). Verified: real dispatch against local qwen3.6:35b-a3b on LXC 102 Ollama — transport/events/cost all worked; model too weak for agentic tool-use (empty diff, matches prior finding — a model limit, not a transport bug). SHIPPED.
+- **v0.8 (2026-07-15) — any-model + integrations**: per-project `env` injected into the agent launch (KEY=val shell-quoted, validated) — the any-model door: `ANTHROPIC_BASE_URL`/`ANTHROPIC_AUTH_TOKEN` route Claude Code at any Anthropic-compatible endpoint (Ollama ≥0.20 native, LiteLLM, vLLM/llama.cpp gateways); `OPENAI_*`/`GEMINI_*` for the other agents. **MCP server** (FastMCP then, `agentdeck mcp` since v2.0 — 10 tools: board/projects/tasks/create/status/diff/approvals/decide/complete/request_changes) — registered with Claude Code, connects; exposable to the Discord bot via mcpo. Task **templates** (settings-backed, prefill new-task form) + **cost stats** (`/api/stats`, Spend card). Verified: real dispatch against local qwen3.6:35b-a3b on LXC 102 Ollama — transport/events/cost all worked; model too weak for agentic tool-use (empty diff, matches prior finding — a model limit, not a transport bug). SHIPPED.
 
   **Steering (honest status):** true mid-run message injection into a live agent isn't a stable Claude Code CLI primitive yet. What agentdeck offers instead: (1) approve/deny/deny-with-reason mid-run via the hook loop, (2) cancel + re-dispatch, (3) request-changes follow-up that resumes session context, (4) one-click terminal attach to type directly into the tmux session. Real injection lands when the CLI exposes it.
 - **v1.0 (OSP-ready)**: docs site, repo hygiene (git init, LICENSE, CI), rename + publish. Feature set is essentially complete; remaining work is packaging.
+- **v2.0 (2026-09-06) — the Go rewrite**: the whole control plane rebuilt in Go, to sit alongside librarr/gamarr/sentinel in the same stack rather than beside them.
+  - **One static binary.** `go:embed` carries the PWA, the vendored font, and the two agent-side Python scripts (`hook.py`, `adk.py` — they stay stdlib Python because they run on the TARGET, where python3 is the one interpreter every box already has). SQLite is `modernc.org/sqlite`, so the build is CGO-free and the container base can be `debian-slim`. There is nothing to `pip install` at deploy time and no virtualenv to keep in sync with the unit file.
+  - **Nothing about the protocol changed.** Same REST shapes, same SSE channels, same `.agentdeck/` runtime layout, same database schema and migrations — an existing `agentdeck.db` opens unchanged, and the Homepage tile, the PWA embed and the MCP clients all keep working.
+  - **MCP moved into the binary** (`agentdeck mcp`, JSON-RPC on stdio, the same ten tools). FastMCP was the last runtime dependency; it is gone.
+  - **UI reskinned** to the house style shared with grimoire and librarr — dark slate with a violet accent, Inter, rounded panels — replacing the CRT-phosphor console. Every id, class and flow the tests assert on is unchanged, which is what let the browser suite port across with only selector-free edits.
+  - **Tests rewritten, coverage kept.** 199 Go tests (unit + API against a real HTTP server and the scripted target + real-git integration) plus 26 Playwright browser tests. The API tests each get their own temp database and their own `httptest` server, so the suite runs in ~18s with no shared state to leak between cases.
+  - Two seams got *better* in the port rather than merely equivalent: shell quoting is now one shared helper (`internal/shellq`) instead of three near-copies, and the executors expose an injectable command seam so the "must use `tail -c`, never `dd bs=1`" guarantee is asserted directly rather than inferred.
+
+### Sessions (v2.1)
+
+A task and a session are opposite lifecycles on the same machinery. A task's tmux
+session is created and destroyed around one unit of work. A session outlives many
+— you attach, work, detach, check it from a phone, come back tomorrow — and the
+durable unit is the PROJECT, not the conversation.
+
+- **Status is derived, never asserted.** Each tick captures the pane (one batched
+  command per target, not one per session) and decides from what is actually
+  there: an explicit "esc to interrupt" hint means working; a pane that changed
+  since the last poll means working; an unchanged pane at a prompt means it wants
+  you; anything else is `idle` rather than a confident guess. `last_activity_at`
+  is the honest number underneath and the UI always shows it.
+- **Discovery is the half a task board misses.** The sessions worth tracking were
+  usually started by hand, weeks ago. Discovery lists every agent process in tmux
+  on a target, joining panes to processes **on the tty** — `pane_current_command`
+  reports the login shell for an agent started from one.
+- **Adoption is non-destructive, and so is letting go.** Adopting attaches no
+  wrapper and restarts nothing. `DELETE` on an adopted session therefore
+  *releases* it — stops watching, leaves it running — and killing one takes an
+  explicit `?kill=true`. This asymmetry exists because the symmetric version
+  destroyed seven live conversations during development.
+- **Handoff is the answer to "keep one chat alive forever".** A conversation is
+  not a durable representation of a project: keep one for months and everything
+  important lives in whatever survived compaction. Instead the agent writes a
+  wrap (where we are / next / decisions / gotchas / state) to a file while it
+  still has the context; the wrap is stored, pushed into project memory and into
+  the memory provider, and a fresh session starts primed with it.
+- **Memory is a seam, not a dependency** (`internal/memory`). Grimoire is the
+  first-class provider; `none` is the default and fully supported. agentdeck owns
+  operational state; a memory store owns semantic state.
 
 ## 10. Risks & mitigations
 

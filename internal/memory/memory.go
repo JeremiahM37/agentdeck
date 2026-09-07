@@ -1,0 +1,218 @@
+// Package memory is agentdeck's seam onto a durable knowledge store.
+//
+// agentdeck owns OPERATIONAL state — what the agents are doing: sessions, tasks,
+// worktrees, diffs, costs. It deliberately does not own SEMANTIC state — what
+// the project knows: decisions, discoveries, conventions. That belongs in a
+// memory system, and the boundary is worth keeping: agentdeck is useful with no
+// memory provider at all, and a memory provider is useful with no agentdeck.
+//
+// The interface exists so that relationship stays a composition rather than a
+// dependency. Grimoire is the first-class provider; `none` is the default.
+package memory
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"fmt"
+	"io"
+	"net/http"
+	"net/url"
+	"strings"
+	"time"
+)
+
+// Fact is one durable thing a project knows.
+type Fact struct {
+	Text  string `json:"text"`
+	Topic string `json:"topic,omitempty"`
+	When  string `json:"when,omitempty"`
+}
+
+// Entry is something worth remembering, with the provenance that makes it
+// findable later. Every field here is operational context agentdeck already has
+// and a memory store otherwise never learns.
+type Entry struct {
+	Project  string
+	Session  string
+	Agent    string
+	Category string
+	Text     string
+}
+
+// Provider is a durable memory store.
+type Provider interface {
+	// Name is what the UI calls this provider.
+	Name() string
+	// Available reports whether the store is reachable right now. It must never
+	// block a dispatch: an unreachable store degrades context, it does not fail
+	// the work.
+	Available(ctx context.Context) bool
+	// Recall returns facts relevant to a project, best-effort and ranked.
+	Recall(ctx context.Context, project string, limit int) ([]Fact, error)
+	// Remember stores one durable fact.
+	Remember(ctx context.Context, e Entry) error
+}
+
+// None is the default provider: agentdeck works perfectly well without a memory
+// system, and says so rather than pretending to have one.
+type None struct{}
+
+// Name identifies the null provider.
+func (None) Name() string { return "none" }
+
+// Available is always false — there is nothing to reach.
+func (None) Available(context.Context) bool { return false }
+
+// Recall returns nothing.
+func (None) Recall(context.Context, string, int) ([]Fact, error) { return nil, nil }
+
+// Remember discards the entry.
+func (None) Remember(context.Context, Entry) error { return nil }
+
+// Grimoire talks to a Grimoire instance over its HTTP API.
+type Grimoire struct {
+	BaseURL string
+	Token   string // X-Grimoire-Admin, only needed for gated surfaces
+	Client  *http.Client
+}
+
+// NewGrimoire builds a Grimoire-backed provider.
+func NewGrimoire(baseURL, token string) *Grimoire {
+	return &Grimoire{
+		BaseURL: strings.TrimRight(baseURL, "/"),
+		Token:   token,
+		Client:  &http.Client{Timeout: 8 * time.Second},
+	}
+}
+
+// Name identifies the provider.
+func (g *Grimoire) Name() string { return "grimoire" }
+
+// Available pings the instance. Short timeout: this runs on the dispatch path.
+func (g *Grimoire) Available(ctx context.Context) bool {
+	req, err := http.NewRequestWithContext(ctx, "GET", g.BaseURL+"/api/health", nil)
+	if err != nil {
+		return false
+	}
+	resp, err := g.Client.Do(req)
+	if err != nil {
+		return false
+	}
+	defer resp.Body.Close()
+	io.Copy(io.Discard, resp.Body)
+	return resp.StatusCode == 200
+}
+
+// Recall asks Grimoire what it knows about a project.
+func (g *Grimoire) Recall(ctx context.Context, project string, limit int) ([]Fact, error) {
+	if limit <= 0 {
+		limit = 8
+	}
+	u := fmt.Sprintf("%s/api/memory?q=%s&limit=%d", g.BaseURL,
+		urlQuery(project), limit)
+	req, err := http.NewRequestWithContext(ctx, "GET", u, nil)
+	if err != nil {
+		return nil, err
+	}
+	g.auth(req)
+	resp, err := g.Client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 400 {
+		return nil, fmt.Errorf("grimoire recall: %s", resp.Status)
+	}
+	// Grimoire has returned both a bare list and a wrapped object across
+	// versions; accept either rather than breaking on an upgrade.
+	raw, _ := io.ReadAll(resp.Body)
+	var wrapped struct {
+		Memories []map[string]any `json:"memories"`
+		Results  []map[string]any `json:"results"`
+	}
+	items := []map[string]any{}
+	if err := json.Unmarshal(raw, &wrapped); err == nil {
+		items = append(items, wrapped.Memories...)
+		items = append(items, wrapped.Results...)
+	}
+	if len(items) == 0 {
+		var bare []map[string]any
+		if err := json.Unmarshal(raw, &bare); err == nil {
+			items = bare
+		}
+	}
+	out := make([]Fact, 0, len(items))
+	for _, m := range items {
+		text := firstString(m, "text", "fact", "body", "content")
+		if text == "" {
+			continue
+		}
+		out = append(out, Fact{Text: text,
+			Topic: firstString(m, "topic", "category"),
+			When:  firstString(m, "created_at", "updated_at", "when")})
+		if len(out) >= limit {
+			break
+		}
+	}
+	return out, nil
+}
+
+// Remember stores a fact with agentdeck's operational provenance attached.
+func (g *Grimoire) Remember(ctx context.Context, e Entry) error {
+	body, _ := json.Marshal(map[string]any{
+		"text":     e.Text,
+		"topic":    e.Project,
+		"agent":    "agentdeck",
+		"session":  e.Session,
+		"category": e.Category,
+	})
+	req, err := http.NewRequestWithContext(ctx, "POST", g.BaseURL+"/api/memory",
+		bytes.NewReader(body))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	g.auth(req)
+	resp, err := g.Client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	raw, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode >= 400 {
+		return fmt.Errorf("grimoire remember: %s — %s", resp.Status,
+			strings.TrimSpace(string(raw)))
+	}
+	return nil
+}
+
+func (g *Grimoire) auth(req *http.Request) {
+	if g.Token != "" {
+		req.Header.Set("X-Grimoire-Admin", g.Token)
+	}
+}
+
+// Prime renders recalled facts as a block to hand a fresh agent.
+func Prime(facts []Fact) string {
+	if len(facts) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString("## What this project already knows\n\n")
+	for _, f := range facts {
+		b.WriteString("- " + strings.TrimSpace(f.Text) + "\n")
+	}
+	return b.String()
+}
+
+func firstString(m map[string]any, keys ...string) string {
+	for _, k := range keys {
+		if v, ok := m[k].(string); ok && v != "" {
+			return v
+		}
+	}
+	return ""
+}
+
+func urlQuery(s string) string { return url.QueryEscape(s) }

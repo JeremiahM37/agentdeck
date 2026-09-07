@@ -1,0 +1,134 @@
+package store
+
+// Schema is the whole database. Plain SQL, WAL, homelab scale, zero magic.
+const Schema = `
+CREATE TABLE IF NOT EXISTS targets(
+  id INTEGER PRIMARY KEY, name TEXT UNIQUE NOT NULL,
+  kind TEXT NOT NULL DEFAULT 'ssh',            -- local | ssh | pct | sandbox | mock
+  host TEXT DEFAULT '', port INTEGER DEFAULT 22, user TEXT DEFAULT 'root',
+  key_path TEXT DEFAULT '', workroot TEXT DEFAULT '',
+  max_concurrent INTEGER DEFAULT 4, sandbox INTEGER DEFAULT 0,
+  status TEXT DEFAULT 'unknown', info_json TEXT DEFAULT '{}',
+  context_json TEXT DEFAULT '[]',              -- control-plane paths staged into every worktree
+  memory_dir TEXT DEFAULT '',                  -- opt-in shared Claude Code memory store
+  created_at REAL
+);
+CREATE TABLE IF NOT EXISTS projects(
+  id INTEGER PRIMARY KEY, name TEXT NOT NULL,
+  target_id INTEGER NOT NULL REFERENCES targets(id),
+  repo_path TEXT NOT NULL, default_base_branch TEXT DEFAULT 'main',
+  workroot_override TEXT DEFAULT '', policy_json TEXT DEFAULT '{}',
+  verify_cmd TEXT DEFAULT '', keep_worktrees INTEGER DEFAULT 0,
+  review_gate INTEGER DEFAULT 0, env_json TEXT DEFAULT '{}',
+  context_json TEXT DEFAULT '[]',              -- extra staged context, on top of the target's
+  mcp_json TEXT DEFAULT '{}',                  -- MCP servers handed to the agent
+  strict_mcp INTEGER DEFAULT 0,                -- ignore host MCP config entirely
+  permissions_json TEXT DEFAULT '{}',          -- permissions block for .agentdeck/settings.json
+  gate_matcher TEXT DEFAULT '',                -- PreToolUse matcher in gated mode ('' = all tools)
+  default_agent TEXT DEFAULT 'claude',         -- agent used by tasks that don't pick one
+  capability_profile TEXT DEFAULT 'restricted',
+  default_permission_mode TEXT DEFAULT '',
+  created_at REAL
+);
+CREATE TABLE IF NOT EXISTS tasks(
+  id INTEGER PRIMARY KEY, project_id INTEGER NOT NULL REFERENCES projects(id),
+  title TEXT NOT NULL, prompt TEXT DEFAULT '',
+  status TEXT NOT NULL DEFAULT 'backlog',
+  priority INTEGER DEFAULT 2, labels_json TEXT DEFAULT '[]',
+  agent TEXT DEFAULT 'claude', model TEXT DEFAULT '',
+  permission_mode TEXT DEFAULT 'acceptEdits', base_branch TEXT DEFAULT '',
+  parent_task_id INTEGER, created_by TEXT DEFAULT 'user',
+  created_by_attempt INTEGER,
+  created_at REAL, updated_at REAL
+);
+CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status);
+CREATE TABLE IF NOT EXISTS attempts(
+  id INTEGER PRIMARY KEY, task_id INTEGER NOT NULL REFERENCES tasks(id),
+  n INTEGER NOT NULL, status TEXT NOT NULL DEFAULT 'queued',
+  token TEXT NOT NULL DEFAULT '',
+  prompt TEXT DEFAULT '', resume_session TEXT DEFAULT '', model TEXT DEFAULT '',
+  sandbox_vmid TEXT DEFAULT '',
+  worktree_path TEXT DEFAULT '', branch TEXT DEFAULT '', tmux_session TEXT DEFAULT '',
+  session_id TEXT DEFAULT '', log_offset INTEGER DEFAULT 0,
+  started_at REAL, finished_at REAL, exit_code INTEGER,
+  result_json TEXT DEFAULT '{}', diff_stat_json TEXT DEFAULT '{}',
+  verify_json TEXT DEFAULT '{}'
+);
+CREATE INDEX IF NOT EXISTS idx_attempts_task ON attempts(task_id);
+CREATE TABLE IF NOT EXISTS events(
+  id INTEGER PRIMARY KEY, attempt_id INTEGER NOT NULL REFERENCES attempts(id),
+  seq INTEGER NOT NULL, ts REAL, type TEXT NOT NULL, payload_json TEXT DEFAULT '{}'
+);
+CREATE INDEX IF NOT EXISTS idx_events_attempt ON events(attempt_id, seq);
+CREATE TABLE IF NOT EXISTS approvals(
+  id INTEGER PRIMARY KEY, attempt_id INTEGER NOT NULL REFERENCES attempts(id),
+  tool_name TEXT NOT NULL, input_json TEXT DEFAULT '{}',
+  status TEXT NOT NULL DEFAULT 'pending',      -- pending|approved|denied|expired
+  decided_by TEXT DEFAULT '', note TEXT DEFAULT '',
+  created_at REAL, decided_at REAL
+);
+CREATE INDEX IF NOT EXISTS idx_approvals_status ON approvals(status);
+CREATE TABLE IF NOT EXISTS push_subscriptions(
+  id INTEGER PRIMARY KEY, endpoint TEXT UNIQUE NOT NULL, keys_json TEXT NOT NULL,
+  created_at REAL
+);
+-- A session is an INTERACTIVE agent you work with, as opposed to a task, which
+-- is work you hand off. It outlives any one conversation: the tmux session is
+-- the process, the row is the durable record, and a handoff carries the thread
+-- across a fresh context.
+CREATE TABLE IF NOT EXISTS sessions(
+  id INTEGER PRIMARY KEY,
+  project_id INTEGER REFERENCES projects(id),
+  target_id INTEGER NOT NULL REFERENCES targets(id),
+  name TEXT NOT NULL, agent TEXT NOT NULL DEFAULT 'claude', model TEXT DEFAULT '',
+  workdir TEXT NOT NULL, tmux_session TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'starting',  -- starting|running|waiting|idle|dead
+  origin TEXT NOT NULL DEFAULT 'agentdeck', -- agentdeck | discovered
+  pane_hash TEXT DEFAULT '', pane_tail TEXT DEFAULT '',
+  context_pct INTEGER,                      -- parsed from the agent's own footer
+  last_activity_at REAL, created_at REAL, updated_at REAL, ended_at REAL
+);
+CREATE INDEX IF NOT EXISTS idx_sessions_status ON sessions(status);
+-- One wrap per handoff: what the agent said it was doing, kept so the project
+-- survives the context window that produced it.
+CREATE TABLE IF NOT EXISTS session_wraps(
+  id INTEGER PRIMARY KEY,
+  session_id INTEGER NOT NULL REFERENCES sessions(id),
+  project_id INTEGER REFERENCES projects(id),
+  summary TEXT NOT NULL, transcript TEXT DEFAULT '',
+  next_session_id INTEGER, created_at REAL
+);
+CREATE INDEX IF NOT EXISTS idx_wraps_project ON session_wraps(project_id);
+CREATE TABLE IF NOT EXISTS settings(key TEXT PRIMARY KEY, value TEXT);
+CREATE TABLE IF NOT EXISTS memories(
+  id INTEGER PRIMARY KEY, project_id INTEGER NOT NULL REFERENCES projects(id),
+  note TEXT NOT NULL, created_by_attempt INTEGER, created_at REAL
+);
+CREATE INDEX IF NOT EXISTS idx_memories_project ON memories(project_id);
+`
+
+// migrations are additive: they bring a database created by an older build up to
+// the current schema. Each is expected to fail with "duplicate column" once the
+// column exists, which is not an error.
+var migrations = []string{
+	"ALTER TABLE targets ADD COLUMN context_json TEXT DEFAULT '[]'",
+	"ALTER TABLE targets ADD COLUMN memory_dir TEXT DEFAULT ''",
+	"ALTER TABLE projects ADD COLUMN verify_cmd TEXT DEFAULT ''",
+	"ALTER TABLE projects ADD COLUMN keep_worktrees INTEGER DEFAULT 0",
+	"ALTER TABLE projects ADD COLUMN review_gate INTEGER DEFAULT 0",
+	"ALTER TABLE projects ADD COLUMN env_json TEXT DEFAULT '{}'",
+	"ALTER TABLE projects ADD COLUMN context_json TEXT DEFAULT '[]'",
+	"ALTER TABLE projects ADD COLUMN mcp_json TEXT DEFAULT '{}'",
+	"ALTER TABLE projects ADD COLUMN strict_mcp INTEGER DEFAULT 0",
+	"ALTER TABLE projects ADD COLUMN permissions_json TEXT DEFAULT '{}'",
+	"ALTER TABLE projects ADD COLUMN gate_matcher TEXT DEFAULT ''",
+	"ALTER TABLE projects ADD COLUMN default_agent TEXT DEFAULT 'claude'",
+	"ALTER TABLE projects ADD COLUMN capability_profile TEXT DEFAULT 'restricted'",
+	"ALTER TABLE projects ADD COLUMN default_permission_mode TEXT DEFAULT ''",
+	"ALTER TABLE tasks ADD COLUMN parent_task_id INTEGER",
+	"ALTER TABLE tasks ADD COLUMN created_by TEXT DEFAULT 'user'",
+	"ALTER TABLE tasks ADD COLUMN created_by_attempt INTEGER",
+	"ALTER TABLE attempts ADD COLUMN model TEXT DEFAULT ''",
+	"ALTER TABLE attempts ADD COLUMN sandbox_vmid TEXT DEFAULT ''",
+	"ALTER TABLE attempts ADD COLUMN verify_json TEXT DEFAULT '{}'",
+}

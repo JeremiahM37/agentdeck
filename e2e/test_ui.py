@@ -1,0 +1,506 @@
+"""Browser flows: the whole operator loop, on both a phone and a desktop."""
+import pytest
+from playwright.sync_api import expect
+
+from conftest import DESKTOP, PHONE
+
+
+def _new_task(page, title, prompt="fix it", perm=None):
+    page.click("#fab")
+    page.fill("#f-title", title)
+    page.fill("#f-prompt", prompt)
+    if perm:
+        page.select_option("#f-perm", perm)
+    page.click("#f-go")
+
+
+def test_board_renders(page, server):
+    page.goto(server)
+    expect(page.locator(".brand h1")).to_contain_text("agent")
+    expect(page.locator(".col-head")).to_have_count(6)
+    for name in ["backlog", "queued", "running", "review", "done", "failed"]:
+        expect(page.locator(f".col.s-{name}")).to_be_visible()
+    expect(page.locator("#fab")).to_be_visible()
+    expect(page.locator("#conn-label")).to_have_text("LIVE", timeout=10000)
+
+
+@pytest.mark.parametrize("page", [PHONE], indirect=True, ids=["phone"])
+def test_phone_board_is_one_column_with_a_status_strip(page, server):
+    """Six 86vw columns meant ~2100px of sideways scrolling on a 390px screen."""
+    page.goto(server)
+    expect(page.locator("#conn-label")).to_have_text("LIVE", timeout=10000)
+    expect(page.locator(".colstrip .colchip")).to_have_count(6)
+    expect(page.locator(".col")).to_have_count(1)
+    assert page.evaluate("document.body.scrollWidth <= window.innerWidth"), \
+        "the board must not scroll sideways on a phone"
+
+
+@pytest.mark.parametrize("page", [PHONE], indirect=True, ids=["phone"])
+def test_phone_lands_on_work_that_wants_a_decision(page, server):
+    """It used to open on an empty BACKLOG with the live card three swipes away."""
+    page.goto(server)
+    expect(page.locator("#conn-label")).to_have_text("LIVE", timeout=10000)
+    _new_task(page, "PHONE focus", "add health endpoint")
+    expect(page.locator(".col.s-review .card", has_text="PHONE focus")) \
+        .to_be_visible(timeout=20000)
+    expect(page.locator(".colchip.s-review.on")).to_be_visible()
+
+
+def test_full_flow_dispatch_review_diff_done(page, server):
+    page.goto(server)
+    _new_task(page, "E2E ship it", "add health endpoint")
+    card = page.locator(".card", has_text="E2E ship it")
+    # the card lands on the board and travels to review as the agent works
+    expect(card).to_be_visible(timeout=10000)
+    expect(page.locator(".col.s-review .card", has_text="E2E ship it")) \
+        .to_be_visible(timeout=20000)
+
+    # open detail: the live timeline captured the agent's events
+    page.locator(".col.s-review .card", has_text="E2E ship it").click()
+    expect(page.locator("#sheet .statpill")).to_have_text("review")
+    expect(page.locator("#sheet .ev.e-init")).to_be_visible()
+    expect(page.locator("#sheet .ev.e-tool_use")).to_be_visible()
+    expect(page.locator("#sheet .ev.e-result")).to_be_visible()
+
+    # diff viewer
+    page.click("#actions button:has-text('Diff')")
+    expect(page.locator(".dfile summary", has_text="app.py")).to_be_visible()
+    expect(page.locator(".dl-add", has_text="hello, agentdeck").first).to_be_visible()
+
+    # mark done → the card moves to the done column
+    page.click("#actions button:has-text('Mark done')")
+    expect(page.locator(".col.s-done .card", has_text="E2E ship it")) \
+        .to_be_visible(timeout=10000)
+
+
+@pytest.mark.parametrize("page", [PHONE], indirect=True, ids=["phone"])
+def test_approval_flow_from_phone(page, server):
+    page.goto(server)
+    _new_task(page, "E2E gated deploy", "deploy [mock:approval]", perm="default")
+    expect(page.locator("#appr-badge")).to_be_visible(timeout=15000)
+    page.click(".tab[data-tab='approvals']")
+    row = page.locator(".rowcard", has_text="Bash")
+    expect(row.first).to_be_visible()
+    expect(row.first.locator("pre")).to_contain_text("rm -rf build/")
+    row.first.locator("button:has-text('Approve')").first.click()
+    # the agent continues and finishes
+    page.click(".tab[data-tab='board']")
+    expect(page.locator(".col.s-review .card", has_text="E2E gated deploy")) \
+        .to_be_visible(timeout=20000)
+
+
+def test_targets_tab_probe(page, server):
+    page.goto(server)
+    page.click(".tab[data-tab='targets']")
+    # scope by heading: project cards name their target too, so a bare has_text
+    # would match both the target card and every project pointed at it
+    row = page.locator(".rowcard").filter(
+        has=page.locator("h3", has_text="lxc-101-project-env"))
+    expect(row).to_be_visible()
+    row.locator("button:has-text('Probe')").click()
+    expect(row.locator(".sub", has_text="claude")).to_be_visible(timeout=10000)
+
+
+def test_targets_tab_shows_project_capability(page, server):
+    """The parity settings had no UI at all — they could only be set by curl."""
+    page.goto(server)
+    page.click(".tab[data-tab='targets']")
+    card = page.locator(".rowcard").filter(has=page.locator("h3", has_text="demo-app"))
+    expect(card).to_be_visible()
+    expect(card.locator(".cap-sel")).to_have_value("restricted")
+    card.locator(".cap-sel").select_option("parity")
+    expect(card.locator(".cap-info")).to_contain_text("bash: unrestricted", timeout=10000)
+    # leave the shared server as we found it
+    card.locator(".cap-sel").select_option("restricted")
+    expect(card.locator(".cap-info")).to_contain_text("⚠", timeout=10000)
+
+
+@pytest.mark.parametrize("page", [PHONE], indirect=True, ids=["phone"])
+def test_new_task_sheet_states_the_agent_capability(page, server):
+    """You should know the agent will be crippled BEFORE spending a dispatch."""
+    # pin the profile and the picked project: the server is shared, so another
+    # test's toggle would otherwise decide what this one asserts
+    pid = page.request.get(f"{server}/api/projects").json()[0]["id"]
+    page.request.patch(f"{server}/api/projects/{pid}",
+                       data={"capability_profile": "restricted"})
+    page.goto(server)
+    page.click("#fab")
+    page.select_option("#f-project", str(pid))
+    expect(page.locator("#f-cap-hint")).to_contain_text("restricted", timeout=10000)
+    expect(page.locator("#f-cap-hint .cap-note")).to_contain_text("denied with no prompt")
+
+
+def test_quickbar_instant_dispatch(page, server):
+    page.goto(server)
+    page.fill("#qb-input", "quick: bump the version")
+    page.press("#qb-input", "Enter")
+    expect(page.locator(".card", has_text="quick: bump the version")) \
+        .to_be_visible(timeout=10000)
+    expect(page.locator(".col.s-review .card", has_text="quick: bump")) \
+        .to_be_visible(timeout=20000)
+
+
+def test_drag_card_to_queued_dispatches(page, server):
+    page.goto(server)
+    page.click("#fab")
+    page.fill("#f-title", "Drag me")
+    page.fill("#f-prompt", "dragged task")
+    page.click("#f-save")     # backlog, not dispatched
+    card = page.locator(".col.s-backlog .card", has_text="Drag me")
+    expect(card).to_be_visible(timeout=10000)
+    card.drag_to(page.locator(".col.s-queued .col-body"))
+    expect(page.locator(".col.s-review .card", has_text="Drag me")) \
+        .to_be_visible(timeout=20000)
+
+
+def test_verify_badge_shows_on_card(page, server):
+    page.goto(server)
+    page.evaluate("""async () => {
+      const projects = await fetch('/api/projects').then(r => r.json());
+      await fetch(`/api/projects/${projects[0].id}`, {
+        method: 'PATCH', headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({verify_cmd: 'mockverify-pass'})});
+    }""")
+    page.fill("#qb-input", "verified change please")
+    page.press("#qb-input", "Enter")
+    card = page.locator(".col.s-review .card", has_text="verified change")
+    expect(card).to_be_visible(timeout=20000)
+    expect(card.locator(".chip", has_text="verified")).to_be_visible(timeout=10000)
+
+
+def test_approval_card_has_always_allow(page, server):
+    page.goto(server)
+    _new_task(page, "E2E always allow", "risky [mock:approval]", perm="default")
+    expect(page.locator("#appr-badge")).to_be_visible(timeout=15000)
+    page.click(".tab[data-tab='approvals']")
+    row = page.locator(".rowcard", has_text="Bash").first
+    expect(row.locator("button", has_text="∞ Always")).to_be_visible()
+    row.locator("button:has-text('Approve')").first.click()
+    page.click(".tab[data-tab='board']")
+    expect(page.locator(".col.s-review .card", has_text="E2E always allow")) \
+        .to_be_visible(timeout=20000)
+
+
+def test_board_filter_narrows_cards(page, server):
+    page.goto(server)
+    page.fill("#qb-input", "alpha unique thing")
+    page.press("#qb-input", "Enter")
+    page.fill("#qb-input", "beta other thing")
+    page.press("#qb-input", "Enter")
+    expect(page.locator(".card", has_text="alpha unique")).to_be_visible(timeout=10000)
+    expect(page.locator(".card", has_text="beta other")).to_be_visible(timeout=10000)
+    page.fill("#qb-filter", "alpha")
+    expect(page.locator(".card", has_text="beta other")).to_have_count(0)
+    expect(page.locator(".card", has_text="alpha unique")).to_be_visible()
+    page.fill("#qb-filter", "")
+    expect(page.locator(".card", has_text="beta other")).to_be_visible()
+
+
+def test_deck_view_streams_panes(page, server):
+    page.goto(server)
+    # high priority so this task sorts to the top of the deck and is not evicted
+    # by the 16-pane cap once the shared server has accumulated tasks
+    proj = page.evaluate("async () => (await (await fetch('/api/projects')).json())[0].id")
+    page.evaluate(f"""async () => {{
+      const t = await (await fetch('/api/tasks', {{method:'POST',
+        headers:{{'Content-Type':'application/json'}},
+        body: JSON.stringify({{project_id:{proj}, title:'deck watch me work',
+          prompt:'stream it', priority:4}})}})).json();
+      await fetch(`/api/tasks/${{t.id}}/dispatch`, {{method:'POST',
+        headers:{{'Content-Type':'application/json'}}, body:'{{}}'}});
+    }}""")
+    expect(page.locator(".card", has_text="deck watch me")).to_be_visible(timeout=15000)
+    page.click(".tab[data-tab='deck']")
+    pane = page.locator(".pane", has_text="deck watch me")
+    expect(pane).to_be_visible(timeout=15000)
+    expect(pane.locator(".pane-line").first).to_be_visible(timeout=15000)
+
+
+def test_settings_ui_saves_sinks(page, server):
+    page.goto(server)
+    page.click(".tab[data-tab='targets']")
+    page.fill("#s-ntfy-server", "https://ntfy.sh")
+    page.fill("#s-ntfy-topic", "adk-e2e")
+    page.click("#s-save")
+    expect(page.locator(".toast", has_text="Sinks saved")).to_be_visible()
+    page.reload()
+    page.click(".tab[data-tab='targets']")
+    expect(page.locator("#s-ntfy-topic")).to_have_value("adk-e2e", timeout=5000)
+
+
+def test_multi_attempt_badge_not_mislabeled_ab(page, server):
+    """A retry produces 2 attempts but is NOT a parallel A/B run — the card must
+    not claim 'A/B'."""
+    page.goto(server)
+    _new_task(page, "Retry me", "do it")
+    expect(page.locator(".col.s-review .card", has_text="Retry me")) \
+        .to_be_visible(timeout=20000)
+    page.evaluate("""async () => {
+      const ts = await (await fetch('/api/tasks')).json();
+      const t = ts.find(x => x.title === 'Retry me');
+      await fetch(`/api/tasks/${t.id}/dispatch`, {method:'POST',
+        headers:{'Content-Type':'application/json'}, body:'{}'});
+    }""")
+    card = page.locator(".card", has_text="Retry me")
+    expect(card.locator(".chip", has_text="×2")).to_be_visible(timeout=20000)
+    assert page.locator(".card", has_text="Retry me").locator("text=A/B").count() == 0
+
+
+def test_foreground_resync_refetches(page, server):
+    """Returning to foreground (or an SSE reconnect, the shared path) must resync
+    the board — otherwise a phone that missed events shows stale state."""
+    page.goto(server)
+    page.wait_for_selector("#board")
+    page.wait_for_timeout(500)
+    hits = []
+    page.on("request", lambda r: hits.append(r.url)
+            if r.url.rstrip("/").endswith("/api/tasks") else None)
+    # faithfully simulate a phone returning to foreground. Headless Chromium
+    # reports 'hidden' by default, which the handler correctly ignores — so force
+    # 'visible' as a real unlock would.
+    page.evaluate("""() => {
+      Object.defineProperty(document, 'visibilityState',
+        { get: () => 'visible', configurable: true });
+      document.dispatchEvent(new Event('visibilitychange'));
+    }""")
+    page.wait_for_timeout(700)
+    assert len(hits) >= 1, "foreground/reconnect did not resync /api/tasks"
+
+
+def test_token_auth_ui_works(browser, auth_server):
+    """With a bearer configured: no token → 401 (the UI cannot load data); token
+    in localStorage → the board renders and SSE goes LIVE."""
+    ctx = browser.new_context(viewport=DESKTOP)
+    pg = ctx.new_page()
+    try:
+        pg.goto(auth_server)
+        status = pg.evaluate("async () => (await fetch('/api/tasks')).status")
+        assert status == 401, f"expected 401 without a token, got {status}"
+        pg.evaluate("localStorage.setItem('adk-token','secret123')")
+        pg.reload()
+        expect(pg.locator(".col-head")).to_have_count(6, timeout=10000)
+        # SSE authenticates through the query token, the only way EventSource can
+        expect(pg.locator("#conn-label")).to_have_text("LIVE", timeout=10000)
+    finally:
+        ctx.close()
+
+
+def test_delete_task_from_ui(page, server):
+    """Delete removes the card (via the task_deleted SSE event) and closes the
+    sheet."""
+    page.goto(server)
+    _new_task(page, "UI delete target", "noop")
+    card = page.locator(".card", has_text="UI delete target")
+    expect(card).to_be_visible(timeout=15000)
+    card.first.click()
+    page.on("dialog", lambda d: d.accept())
+    page.click("#actions button:has-text('Delete')")
+    expect(page.locator(".card", has_text="UI delete target")).to_have_count(0, timeout=10000)
+    expect(page.locator("#sheet")).to_be_hidden()
+
+
+def test_running_task_card_no_console_crash(page, server):
+    """A running task has no diff yet (diff_stat is {} server-side). The card must
+    render without throwing — a JS error here aborted the whole column render."""
+    errors = []
+    page.on("console", lambda m: errors.append(m.text) if m.type == "error" else None)
+    page.on("pageerror", lambda e: errors.append(str(e)))
+    page.goto(server)
+    _new_task(page, "Long runner", "work [mock:slow]")
+    expect(page.locator(".col.s-running .card", has_text="Long runner")) \
+        .to_be_visible(timeout=10000)
+    expect(page.locator(".col-head")).to_have_count(6)
+    assert not [e for e in errors if "reduce" in e or "is not a function" in e], errors
+
+
+def test_deck_persists_streams_across_updates(page, server):
+    """The Deck reconciles panes incrementally — one task's status change must not
+    tear down and reopen every pane's SSE. A persisting pane must be the SAME DOM
+    node before and after."""
+    marker = "DeckPersistA-uniqmark"
+    page.goto(server)
+    proj = page.evaluate("async () => (await (await fetch('/api/projects')).json())[0].id")
+    page.evaluate(f"""async () => {{
+      const t = await (await fetch('/api/tasks', {{method:'POST',
+        headers:{{'Content-Type':'application/json'}},
+        body: JSON.stringify({{project_id:{proj}, title:'{marker}',
+          prompt:'slow one [mock:slow]', priority:4}})}})).json();
+      await fetch(`/api/tasks/${{t.id}}/dispatch`, {{method:'POST',
+        headers:{{'Content-Type':'application/json'}}, body:'{{}}'}});
+    }}""")
+    expect(page.locator(".card", has_text=marker)).to_be_visible(timeout=15000)
+    page.click(".tab[data-tab='deck']")
+    expect(page.locator(".pane", has_text=marker)).to_be_visible(timeout=15000)
+    page.evaluate(f"""() => {{
+      const p = [...document.querySelectorAll('.pane')]
+        .find(e => e.textContent.includes('{marker}'));
+      p.dataset.adkMark = 'orig';
+    }}""")
+    page.evaluate(f"""async () => {{
+      const t = await (await fetch('/api/tasks', {{method:'POST',
+        headers:{{'Content-Type':'application/json'}},
+        body: JSON.stringify({{project_id:{proj}, title:'DeckPersistB', prompt:'quick'}})}})).json();
+      await fetch(`/api/tasks/${{t.id}}/dispatch`, {{method:'POST',
+        headers:{{'Content-Type':'application/json'}}, body:'{{}}'}});
+    }}""")
+    expect(page.locator(".pane", has_text="DeckPersistB")).to_be_visible(timeout=20000)
+    still = page.evaluate(f"""() => {{
+      const p = [...document.querySelectorAll('.pane')]
+        .find(e => e.textContent.includes('{marker}'));
+      return p ? p.dataset.adkMark : 'PANE-GONE';
+    }}""")
+    assert still == "orig", f"deck pane A was recreated on another task's update: {still}"
+
+
+def test_fable_dispatch_requires_confirmation(page, server):
+    """Fable 5 is the highest-usage model — dispatching on it must prompt, and
+    dismissing the prompt must abort."""
+    page.goto(server)
+    page.click("#fab")
+    page.fill("#f-title", "Fable guarded task")
+    page.fill("#f-model", "fable")
+    seen = []
+    page.once("dialog", lambda d: (seen.append(d.message), d.dismiss()))
+    page.click("#f-go")
+    page.wait_for_timeout(800)
+    assert seen and "fable" in seen[0].lower(), seen
+    expect(page.locator(".card", has_text="Fable guarded task")).to_have_count(0)
+
+    page.once("dialog", lambda d: d.accept())
+    page.click("#f-go")
+    expect(page.locator(".card", has_text="Fable guarded task")).to_be_visible(timeout=10000)
+
+
+def test_agent_toggle_reshapes_the_form(page, server):
+    """Switching to codex must disable gated mode and hide the A/B row — both are
+    Claude-only, and offering them produces a dispatch that fails later for
+    reasons the operator cannot see."""
+    page.goto(server)
+    page.click("#fab")
+    expect(page.locator("#f-agent button.on")).to_have_text("Claude Code")
+
+    page.click("#f-agent button[data-agent='codex']")
+    expect(page.locator("#f-agent button.on")).to_have_text("Codex")
+    assert page.eval_on_selector("#f-agent", "e => e.dataset.value") == "codex"
+    assert page.eval_on_selector("#f-perm option[value='default']", "e => e.disabled") is True
+    expect(page.locator("#f-ab-row")).to_be_hidden()
+
+    page.click("#f-agent button[data-agent='claude']")
+    assert page.eval_on_selector("#f-perm option[value='default']", "e => e.disabled") is False
+    expect(page.locator("#f-ab-row")).to_be_visible()
+
+
+def test_codex_task_dispatches_from_the_toggle(page, server):
+    page.goto(server)
+    page.click("#fab")
+    page.fill("#f-title", "Codex toggle task")
+    page.click("#f-agent button[data-agent='codex']")
+    page.click("#f-save")
+    card = page.locator(".card", has_text="Codex toggle task")
+    expect(card).to_be_visible(timeout=10000)
+    expect(card.locator(".chip", has_text="codex")).to_be_visible()
+
+
+def test_pwa_assets(page, server):
+    page.goto(server)
+    for asset in ("/manifest.webmanifest", "/sw.js", "/icon.svg", "/style.css", "/fonts.css"):
+        assert page.evaluate(f"fetch('{asset}').then(r=>r.ok)"), asset
+
+
+def test_mobile_board_has_no_page_level_horizontal_overflow(browser, server):
+    """The quickbar filter once pushed the document wider than a phone viewport,
+    so the whole page wobbled sideways while scrolling."""
+    ctx = browser.new_context(viewport=PHONE)
+    pg = ctx.new_page()
+    try:
+        pg.goto(server)
+        pg.wait_for_selector(".card, .col", timeout=10000)
+        scroll_w = pg.evaluate("() => document.documentElement.scrollWidth")
+        assert scroll_w <= PHONE["width"] + 1, \
+            f"page overflows horizontally on phones ({scroll_w}px)"
+    finally:
+        ctx.close()
+
+
+# ---- sessions: the interactive half of the board ----------------------------
+
+def test_sessions_tab_starts_and_shows_a_session(page, server):
+    """A session is an agent you work WITH — its card leads with how long it has
+    been quiet and what is on its screen."""
+    page.goto(server)
+    page.click(".tab[data-tab='sessions']")
+    expect(page.locator("#sess-new")).to_be_visible()
+
+    page.click("#sess-new")
+    page.fill("#ns-name", "long haul")
+    page.click("#ns-go")
+
+    card = page.locator(".scard", has_text="long haul")
+    expect(card).to_be_visible(timeout=15000)
+    # the two things a task card never needs
+    expect(card.locator(".sidle")).to_contain_text("quiet", timeout=15000)
+    expect(card.locator(".spane")).to_contain_text("mock agent", timeout=15000)
+    # and the primary action is getting into the real terminal
+    expect(card.locator("button", has_text="Attach")).to_be_visible()
+    expect(page.locator("#sess-badge")).to_be_visible(timeout=10000)
+
+
+def test_session_send_reaches_the_pane(page, server):
+    page.goto(server)
+    page.click(".tab[data-tab='sessions']")
+    page.click("#sess-new")
+    page.fill("#ns-name", "chatty")
+    page.click("#ns-go")
+    card = page.locator(".scard", has_text="chatty")
+    expect(card).to_be_visible(timeout=15000)
+
+    page.once("dialog", lambda d: d.accept("where are we?"))
+    card.locator("button", has_text="Say…").click()
+    expect(card.locator(".spane")).to_contain_text("where are we?", timeout=15000)
+
+
+def test_discover_offers_to_adopt_a_hand_started_agent(page, server):
+    """The sessions worth tracking are usually the ones you started yourself."""
+    page.goto(server)
+    page.click(".tab[data-tab='sessions']")
+    page.click("#sess-discover")
+    row = page.locator(".cand", has_text="legacy-claude").first
+    expect(row).to_be_visible(timeout=15000)
+    row.locator("button", has_text="Adopt").click()
+    card = page.locator(".scard", has_text="legacy-claude")
+    expect(card).to_be_visible(timeout=15000)
+    expect(card.locator(".chip", has_text="adopted")).to_be_visible()
+
+
+def test_import_registers_projects_from_a_scan(page, server):
+    """An empty board is why a tool like this gets abandoned in week one."""
+    page.goto(server)
+    page.click(".tab[data-tab='targets']")
+    expect(page.locator("#imp-root")).to_be_visible()
+    page.fill("#imp-root", "/mock/does-not-exist")
+    page.click("#imp-scan")
+    # the mock target has no filesystem, so this proves the flow reports an
+    # empty result honestly rather than pretending to find something
+    expect(page.locator("#imp-out")).to_contain_text("Nothing project-shaped", timeout=10000)
+
+
+def test_adopted_session_offers_release_not_just_kill(page, server):
+    """Adoption is non-destructive, so letting go has to be too — an agent you
+    started yourself must not be killed by a button labelled like a delete."""
+    page.goto(server)
+    page.click(".tab[data-tab='sessions']")
+    page.click("#sess-discover")
+    row = page.locator(".cand", has_text="legacy-claude").first
+    expect(row).to_be_visible(timeout=15000)
+    row.locator("button", has_text="Adopt").click()
+    card = page.locator(".scard", has_text="legacy-claude")
+    expect(card).to_be_visible(timeout=15000)
+    # the safe action is present and unconfirmed; the destructive one is separate
+    expect(card.locator("button", has_text="Stop tracking")).to_be_visible()
+    expect(card.locator("button", has_text="Kill")).to_be_visible()
+
+    card.locator("button", has_text="Stop tracking").click()
+    expect(page.locator(".scard", has_text="legacy-claude")).to_have_count(0, timeout=10000)
+    # released, not killed: discovery finds the terminal again
+    page.click("#sess-discover")
+    expect(page.locator(".cand", has_text="legacy-claude").first).to_be_visible(timeout=15000)

@@ -1,5 +1,5 @@
 # Verify agentdeck is actually in a working state. Run: verify run .verify.yaml
-# (service is systemd-managed and already running; we verify the live instance)
+# (the service is systemd-managed and already running; we verify the live instance)
 backend: web
 
 launch:
@@ -11,9 +11,18 @@ options:
     viewport: [1280, 800]
 
 steps:
-  - name: full test suite passes
+  - name: go suite passes
     actions:
-      - shell: cd /home/admin/projects/agentdeck && .venv/bin/pytest -q
+      - shell: go test ./... -count=1
+    expect:
+      no_log_contains: "FAIL"
+
+  - name: browser end-to-end passes
+    actions:
+      - shell: >
+          go build -o /tmp/agentdeck-verify ./cmd/agentdeck &&
+          AGENTDECK_BIN=/tmp/agentdeck-verify
+          /home/admin/projects/agentdeck/.venv/bin/python -m pytest -q e2e
     expect:
       no_log_contains: "failed"
 
@@ -28,21 +37,31 @@ steps:
       - wait: 2.5
     expect:
       vision: >
-        a dark terminal-styled kanban board titled AGENTDECK with six columns
-        (backlog, queued, running, review, done, failed), a quick-dispatch input
-        bar at the top, and a LIVE connection indicator; no error text, no blank
-        white screen
+        a dark slate kanban board with violet accents titled agentdeck, showing six
+        columns (backlog, queued, running, review, done, failed), a quick-dispatch
+        input bar at the top, and a LIVE connection indicator; no error text, no
+        blank white screen
 
-  # Deterministic sink-settings coverage (Discord/ntfy inputs, Save button,
-  # Spend card) lives in tests/e2e + tests/api; here we just confirm the tab
-  # renders content in a real browser without erroring. The small local vision
-  # model is unreliable at enumerating specific labeled fields, so we keep the
-  # visual assert coarse and let the deterministic tests own the detail.
+  - name: sessions tab lists live agents
+    actions:
+      - click: { selector: ".tab[data-tab='sessions']" }
+      - wait: 2.5
+    expect:
+      vision: >
+        a list of interactive agent session cards, each showing a name, a status
+        like working or wants you, how long it has been quiet, a preview of
+        terminal output, and an Attach button; not a blank page, not an error
+
+  # Deterministic coverage of the sink settings (Discord/ntfy inputs, Save button,
+  # Spend card) lives in the Go and Playwright suites; here we only confirm the tab
+  # renders in a real browser without erroring. The small local vision model is
+  # unreliable at enumerating specific labelled fields, so the visual assert stays
+  # coarse and the deterministic tests own the detail.
   - name: targets tab renders
     actions:
       - click: { selector: ".tab[data-tab='targets']" }
       - wait: 1.5
     expect:
       vision: >
-        a settings/configuration screen with cards and buttons; not a blank
-        white page, not a stack trace, not an error message
+        a settings/configuration screen with cards and buttons; not a blank white
+        page, not a stack trace, not an error message

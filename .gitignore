@@ -1,9 +1,13 @@
-# venv / caches
+# build output
+/agentdeck
+/agentdeck-*
+*.test
+
+# python (the e2e suite + the agent-side scripts) caches
 .venv/
 __pycache__/
 *.pyc
 .pytest_cache/
-*.egg-info/
 
 # runtime state (never commit)
 agentdeck.db*

@@ -1,0 +1,519 @@
+package executor
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"fmt"
+	"io"
+	"net/http"
+	"regexp"
+	"strings"
+	"sync"
+	"time"
+)
+
+// MockDiff is the patch every mock attempt "produces".
+const MockDiff = `diff --git a/app.py b/app.py
+index 83db48f..bf2f3f4 100644
+--- a/app.py
++++ b/app.py
+@@ -1,4 +1,7 @@
+ def main():
+-    print("hello")
++    print("hello, agentdeck")
++
++def health():
++    return {"ok": True}
+`
+
+// MockNumstat is the matching --numstat output.
+const MockNumstat = "4\t1\tapp.py\n"
+
+// Mock is a scripted fake target. It powers the whole hermetic test suite and
+// AGENTDECK_MOCK=1 demo mode, and emits REAL claude stream-json shapes so the
+// parser is exercised end to end rather than stubbed out.
+//
+// Scenario markers in the prompt:
+//
+//	[mock:approval]        agent requests a hook approval mid-run (real HTTP)
+//	[mock:fail]            agent exits non-zero
+//	[mock:slow]            agent takes ~3x longer
+//	[mock:subtask]         agent files a follow-up card through the task hook
+//	[mock:note]            agent leaves a project note
+//	[mock:approve-verdict] agent ends with VERDICT: APPROVE
+//	[mock:reject-verdict]  agent ends with VERDICT: REQUEST_CHANGES
+type Mock struct {
+	mu     sync.Mutex
+	fs     map[string][]byte
+	cmdLog []string
+	agents map[string]*mockAgent
+	panes  map[string]*mockPane
+
+	// Delay paces the fake agent between events.
+	Delay time.Duration
+	// HTTP is the client the fake agent uses for hook callbacks. Tests point it
+	// at their httptest server's transport; production demo mode uses the default.
+	HTTP *http.Client
+}
+
+type mockAgent struct {
+	cancel context.CancelFunc
+	done   chan struct{}
+}
+
+// NewMock builds a mock executor.
+func NewMock(delay time.Duration) *Mock {
+	if delay <= 0 {
+		delay = 400 * time.Millisecond
+	}
+	return &Mock{
+		fs:     map[string][]byte{},
+		agents: map[string]*mockAgent{},
+		// an agent the operator started themselves, weeks ago, that agentdeck
+		// knows nothing about — the case session discovery exists for
+		panes: map[string]*mockPane{"legacy-claude": {
+			workdir: "/mock/demo-app",
+			psArgs:  "claude --continue --model opus",
+			lines:   []string{"...", "❯ "},
+		}},
+		Delay: delay,
+		HTTP:  &http.Client{Timeout: 30 * time.Second},
+	}
+}
+
+// CmdLog returns a copy of every command this executor was asked to run.
+func (m *Mock) CmdLog() []string {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return append([]string(nil), m.cmdLog...)
+}
+
+// Files returns a copy of the fake filesystem, for assertions about what was
+// actually staged onto the target.
+func (m *Mock) Files() map[string][]byte {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := make(map[string][]byte, len(m.fs))
+	for k, v := range m.fs {
+		out[k] = append([]byte(nil), v...)
+	}
+	return out
+}
+
+var (
+	sessionRe = regexp.MustCompile(`-s (\S+)`)
+	targetRe  = regexp.MustCompile(`-t (\S+)`)
+	cdRe      = regexp.MustCompile(`cd (\S+) &&`)
+	urlRe     = regexp.MustCompile(`AGENTDECK_URL=(\S+)`)
+	tokenRe   = regexp.MustCompile(`AGENTDECK_TOKEN=(\S+)`)
+)
+
+// Run interprets the command against the scripted target.
+func (m *Mock) Run(ctx context.Context, cmd string, opts RunOpts) (Result, error) {
+	m.mu.Lock()
+	m.cmdLog = append(m.cmdLog, cmd)
+	m.mu.Unlock()
+
+	switch {
+	case strings.HasPrefix(cmd, "sudo pvesh get /cluster/nextid"):
+		return Result{0, "9001\n", ""}, nil
+	case hasAnyPrefix(cmd, "sudo pct clone", "sudo pct start", "sudo pct stop",
+		"sudo pct destroy", "sudo pct push", "sudo pct exec"):
+		return Result{0, "", ""}, nil
+	case strings.HasPrefix(cmd, "git clone"):
+		return Result{0, "", ""}, nil
+	case strings.HasPrefix(cmd, "rm -f "):
+		m.mu.Lock()
+		for _, tok := range strings.Fields(cmd)[2:] {
+			delete(m.fs, tok)
+		}
+		m.mu.Unlock()
+		return Result{0, "", ""}, nil
+	case strings.HasPrefix(cmd, "tmux new-session"):
+		sess := strings.Trim(firstGroup(sessionRe, cmd), "'")
+		wt := firstGroup(cdRe, cmd)
+		if wt == "" {
+			wt = "/mock"
+		}
+		if interactiveSession(cmd) {
+			m.startPane(sess, strings.Trim(wt, "'"))
+		} else {
+			m.startAgent(sess, wt)
+		}
+		return Result{0, "", ""}, nil
+	case strings.Contains(cmd, "capture-pane"):
+		return m.handlePoll(cmd), nil
+	case strings.Contains(cmd, "tmux list-panes -a"):
+		return m.handleDiscover(), nil
+	case strings.Contains(cmd, "tmux load-buffer"):
+		return m.handleSendText(cmd), nil
+	case sendKeysRe.MatchString(cmd):
+		return m.handleSendKey(cmd), nil
+	case strings.Contains(cmd, "tmux display-message"):
+		name := strings.Trim(firstGroup(targetRe, cmd), "'")
+		m.mu.Lock()
+		_, known := m.panes[name]
+		m.mu.Unlock()
+		if !known {
+			return Result{1, "", "can't find session"}, nil
+		}
+		// a session that has been up for a while, so adoption's clock is testable
+		now := time.Now().Unix()
+		return Result{0, fmt.Sprintf("%d %d\n", now-7200, now-600), ""}, nil
+	case strings.HasPrefix(cmd, "tmux has-session"):
+		name := strings.Trim(firstGroup(targetRe, cmd), "'")
+		if m.alive(name) {
+			return Result{0, "", ""}, nil
+		}
+		m.mu.Lock()
+		_, isPane := m.panes[name]
+		m.mu.Unlock()
+		if isPane {
+			return Result{0, "", ""}, nil
+		}
+		return Result{1, "", ""}, nil
+	case strings.HasPrefix(cmd, "tmux kill-session"):
+		name := strings.Trim(firstGroup(targetRe, cmd), "'")
+		m.killAgent(name)
+		m.mu.Lock()
+		delete(m.panes, name)
+		m.mu.Unlock()
+		return Result{0, "", ""}, nil
+	case strings.Contains(cmd, "diff --numstat"):
+		return Result{0, MockNumstat, ""}, nil
+	case strings.Contains(cmd, "diff --no-color") || gitDiffRe.MatchString(cmd):
+		return Result{0, MockDiff, ""}, nil
+	case strings.Contains(cmd, "status --porcelain"):
+		return Result{0, " M app.py\n", ""}, nil
+	case strings.Contains(cmd, "--version") || strings.HasPrefix(cmd, "df "):
+		return Result{0, "mock 1.0", ""}, nil
+	case strings.HasPrefix(cmd, `claude -p "Reply with exactly: ok"`):
+		// the deep probe MUST redirect stdin: `claude -p` reads to EOF and an ssh
+		// exec channel never EOFs, so without it the probe hangs until timeout
+		if !strings.Contains(cmd, "< /dev/null") {
+			return Result{}, Errf("deep probe must redirect stdin (ssh hang): %s", cmd)
+		}
+		return Result{0, "ok", ""}, nil
+	case strings.Contains(cmd, "mockverify-fail"):
+		return Result{1, "", "2 failed, 3 passed"}, nil
+	case strings.Contains(cmd, "mockverify-pass"):
+		return Result{0, "5 passed in 0.1s", ""}, nil
+	case strings.Contains(cmd, "git add -A && git commit"):
+		return Result{0, "[adk 1a2b3c4] mock commit", ""}, nil
+	case strings.HasPrefix(cmd, "git") && strings.Contains(cmd, " push "):
+		return Result{0, "branch pushed (mock)", ""}, nil
+	case strings.HasPrefix(cmd, "gh pr create"):
+		return Result{0, "https://github.com/mock/repo/pull/7", ""}, nil
+	}
+	// git worktree add, mkdir, exclude appends, memory links, …
+	return Result{0, "", ""}, nil
+}
+
+var gitDiffRe = regexp.MustCompile(`\bgit\b.*\bdiff\b`)
+
+// ReadFile reads from the fake filesystem.
+func (m *Mock) ReadFile(_ context.Context, path string, offset int64) ([]byte, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	data := m.fs[path]
+	if offset >= int64(len(data)) {
+		return nil, nil
+	}
+	return append([]byte(nil), data[offset:]...), nil
+}
+
+// WriteFile writes to the fake filesystem.
+func (m *Mock) WriteFile(_ context.Context, path string, data []byte) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.fs[path] = append([]byte(nil), data...)
+	return nil
+}
+
+// Close cancels every fake agent still running.
+func (m *Mock) Close() error {
+	m.mu.Lock()
+	agents := make([]*mockAgent, 0, len(m.agents))
+	for _, a := range m.agents {
+		agents = append(agents, a)
+	}
+	m.agents = map[string]*mockAgent{}
+	m.mu.Unlock()
+	for _, a := range agents {
+		a.cancel()
+	}
+	return nil
+}
+
+// Probe answers the capability check without shelling out.
+func (m *Mock) Probe() map[string]any {
+	return map[string]any{
+		"git": "git version 2.43 (mock)", "tmux": "tmux 3.4 (mock)",
+		"claude": "2.0.0 (mock)", "python3": "Python 3.12 (mock)",
+		"disk_free": "42G",
+	}
+}
+
+func (m *Mock) alive(sess string) bool {
+	m.mu.Lock()
+	a, ok := m.agents[sess]
+	m.mu.Unlock()
+	if !ok {
+		return false
+	}
+	select {
+	case <-a.done:
+		return false
+	default:
+		return true
+	}
+}
+
+func (m *Mock) killAgent(sess string) {
+	m.mu.Lock()
+	a, ok := m.agents[sess]
+	m.mu.Unlock()
+	if ok {
+		a.cancel()
+		<-a.done
+	}
+}
+
+func (m *Mock) startAgent(sess, wt string) {
+	ctx, cancel := context.WithCancel(context.Background())
+	a := &mockAgent{cancel: cancel, done: make(chan struct{})}
+	m.mu.Lock()
+	m.agents[sess] = a
+	m.mu.Unlock()
+	go func() {
+		defer close(a.done)
+		m.runAgent(ctx, sess, wt)
+	}()
+}
+
+// ---- the fake agent ---------------------------------------------------------
+
+func (m *Mock) append(path string, line map[string]any) {
+	b, _ := json.Marshal(line)
+	m.mu.Lock()
+	m.fs[path] = append(m.fs[path], append(b, '\n')...)
+	m.mu.Unlock()
+}
+
+func (m *Mock) read(path string) []byte {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return append([]byte(nil), m.fs[path]...)
+}
+
+func (m *Mock) runAgent(ctx context.Context, sess, wt string) {
+	rt := wt + "/.agentdeck"
+	events := rt + "/events.jsonl"
+	prompt := string(m.read(rt + "/prompt.md"))
+	pace := m.Delay
+	if strings.Contains(prompt, "[mock:slow]") {
+		pace *= 3
+	}
+	sid := "mock-sess-" + sess
+
+	sleep := func() bool {
+		select {
+		case <-ctx.Done():
+			return false
+		case <-time.After(pace):
+			return true
+		}
+	}
+
+	m.append(events, map[string]any{
+		"type": "system", "subtype": "init", "session_id": sid,
+		"model": "claude-mock", "tools": []string{"Bash", "Edit", "Write"}})
+	if !sleep() {
+		return
+	}
+	m.append(events, map[string]any{"type": "assistant", "message": map[string]any{
+		"content": []any{map[string]any{"type": "text",
+			"text": "Reading the codebase and planning the change."}}}})
+	if !sleep() {
+		return
+	}
+
+	if strings.Contains(prompt, "[mock:subtask]") {
+		m.hookPost(ctx, rt, "/api/hook/tasks", map[string]any{
+			"title":    "Agent follow-up: add tests",
+			"prompt":   "Write tests for the new health() endpoint.",
+			"dispatch": false})
+	}
+	if strings.Contains(prompt, "[mock:note]") {
+		m.hookPost(ctx, rt, "/api/hook/notes", map[string]any{
+			"note": "Auth uses bcrypt; integration tests live in tests/."})
+	}
+
+	if strings.Contains(prompt, "[mock:approval]") {
+		if !m.requestApproval(ctx, rt) {
+			m.append(events, map[string]any{"type": "assistant", "message": map[string]any{
+				"content": []any{map[string]any{"type": "text",
+					"text": "Action denied by operator — stopping."}}}})
+			m.finish(rt, sid, 0, "Stopped: operator denied the action.")
+			return
+		}
+	}
+
+	m.append(events, map[string]any{"type": "assistant", "message": map[string]any{
+		"content": []any{map[string]any{"type": "tool_use", "id": "tu_1", "name": "Edit",
+			"input": map[string]any{"file_path": "app.py", "old_string": "hello",
+				"new_string": "hello, agentdeck"}}}}})
+	if !sleep() {
+		return
+	}
+	m.append(events, map[string]any{"type": "user", "message": map[string]any{
+		"content": []any{map[string]any{"type": "tool_result", "tool_use_id": "tu_1",
+			"content": "Edit applied"}}}})
+	if !sleep() {
+		return
+	}
+
+	if strings.Contains(prompt, "[mock:fail]") {
+		m.append(events, map[string]any{"type": "assistant", "message": map[string]any{
+			"content": []any{map[string]any{"type": "text",
+				"text": "Hit an unrecoverable error."}}}})
+		m.finish(rt, sid, 1, "error")
+		return
+	}
+	result := "Done: updated app.py and added health()."
+	switch {
+	case strings.Contains(prompt, "[mock:reject-verdict]"):
+		result = "Reviewed the diff. VERDICT: REQUEST_CHANGES — rename health() and add a test."
+	case strings.Contains(prompt, "[mock:approve-verdict]"):
+		result = "Reviewed the diff. VERDICT: APPROVE — clean, focused change."
+	}
+	m.finish(rt, sid, 0, result)
+}
+
+func (m *Mock) finish(rt, sid string, rc int, result string) {
+	subtype := "success"
+	if rc != 0 {
+		subtype = "error"
+	}
+	m.append(rt+"/events.jsonl", map[string]any{
+		"type": "result", "subtype": subtype, "total_cost_usd": 0.0123,
+		"duration_ms": 3456, "num_turns": 3, "result": result, "session_id": sid})
+	m.mu.Lock()
+	m.fs[rt+"/exit_code"] = []byte(fmt.Sprintf("%d\n", rc))
+	m.mu.Unlock()
+}
+
+// hookPost simulates the agent using .agentdeck/adk.py.
+func (m *Mock) hookPost(ctx context.Context, rt, path string, payload map[string]any) {
+	env := parseEnvFile(string(m.read(rt + "/env")))
+	url, token := env["ADK_URL"], env["ADK_TOKEN"]
+	if url == "" || token == "" {
+		return
+	}
+	payload["token"] = token
+	body, _ := json.Marshal(payload)
+	req, err := http.NewRequestWithContext(ctx, "POST", strings.TrimRight(url, "/")+path,
+		bytes.NewReader(body))
+	if err != nil {
+		return
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := m.HTTP.Do(req)
+	if err == nil {
+		io.Copy(io.Discard, resp.Body)
+		resp.Body.Close()
+	}
+}
+
+// requestApproval exercises the REAL hook flow: it reads the generated
+// settings.json for its URL and token, posts, then long-polls for a decision.
+func (m *Mock) requestApproval(ctx context.Context, rt string) bool {
+	var settings struct {
+		Hooks struct {
+			PreToolUse []struct {
+				Hooks []struct {
+					Command string `json:"command"`
+				} `json:"hooks"`
+			} `json:"PreToolUse"`
+		} `json:"hooks"`
+	}
+	if err := json.Unmarshal(m.read(rt+"/settings.json"), &settings); err != nil ||
+		len(settings.Hooks.PreToolUse) == 0 || len(settings.Hooks.PreToolUse[0].Hooks) == 0 {
+		return true // no hooks configured (permission mode is not 'default')
+	}
+	hookCmd := settings.Hooks.PreToolUse[0].Hooks[0].Command
+	url, token := firstGroup(urlRe, hookCmd), firstGroup(tokenRe, hookCmd)
+	if url == "" || token == "" {
+		return true
+	}
+	base := strings.TrimRight(url, "/")
+
+	body, _ := json.Marshal(map[string]any{"token": token, "tool_name": "Bash",
+		"tool_input": map[string]any{"command": "rm -rf build/ && make deploy"}})
+	req, _ := http.NewRequestWithContext(ctx, "POST", base+"/api/hook/approval",
+		bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := m.HTTP.Do(req)
+	if err != nil {
+		return false
+	}
+	var created struct {
+		ID int64 `json:"id"`
+	}
+	json.NewDecoder(resp.Body).Decode(&created)
+	resp.Body.Close()
+
+	for i := 0; i < 600; i++ {
+		if ctx.Err() != nil {
+			return false
+		}
+		r, err := http.NewRequestWithContext(ctx, "GET",
+			fmt.Sprintf("%s/api/hook/approval/%d/decision", base, created.ID), nil)
+		if err != nil {
+			return false
+		}
+		dres, err := m.HTTP.Do(r)
+		if err != nil {
+			return false
+		}
+		var d struct {
+			Status string `json:"status"`
+		}
+		json.NewDecoder(dres.Body).Decode(&d)
+		dres.Body.Close()
+		switch d.Status {
+		case "approved":
+			return true
+		case "denied", "expired":
+			return false
+		}
+	}
+	return false
+}
+
+func parseEnvFile(s string) map[string]string {
+	out := map[string]string{}
+	for _, line := range strings.Split(s, "\n") {
+		if k, v, ok := strings.Cut(strings.TrimSpace(line), "="); ok {
+			out[k] = v
+		}
+	}
+	return out
+}
+
+func firstGroup(re *regexp.Regexp, s string) string {
+	if m := re.FindStringSubmatch(s); m != nil {
+		return m[1]
+	}
+	return ""
+}
+
+func hasAnyPrefix(s string, prefixes ...string) bool {
+	for _, p := range prefixes {
+		if strings.HasPrefix(s, p) {
+			return true
+		}
+	}
+	return false
+}
