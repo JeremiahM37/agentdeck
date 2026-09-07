@@ -813,3 +813,84 @@ def test_a_shell_into_the_project_is_one_click(page, server):
 
     # opening the shell must not have navigated away from the board
     expect(page.locator("#pj-list")).to_be_visible()
+
+
+def test_a_routine_can_be_saved_and_run_with_one_button(page, server):
+    """The job you keep asking for, saved: one button across every project."""
+    page.goto(server)
+    page.click("#qb-routines")
+    expect(page.locator("#rt-list")).to_be_visible(timeout=10000)
+
+    page.click("summary")
+    page.fill("#rt-name", "PR sweep")
+    page.select_option("#rt-projects", index=0)
+    page.fill("#rt-prompt", "Review every open PR, test it end to end, merge when CI is green")
+    page.click("#rt-save")
+
+    card = page.locator("#rt-list .rowcard", has_text="PR sweep")
+    expect(card).to_be_visible(timeout=10000)
+    expect(card).to_contain_text("manual only")
+
+    before = page.evaluate("fetch('/api/tasks').then(r=>r.json()).then(t=>t.length)")
+    card.locator("button", has_text="Run now").click()
+    page.wait_for_timeout(2500)
+    after = page.evaluate("fetch('/api/tasks').then(r=>r.json()).then(t=>t.length)")
+    assert after > before, f"running the routine created no tasks ({before} -> {after})"
+
+
+def test_a_scheduled_routine_shows_when_it_next_runs(page, server):
+    page.goto(server)
+    page.click("#qb-routines")
+    page.click("summary")
+    page.fill("#rt-name", "Nightly sweep")
+    page.select_option("#rt-projects", index=0)
+    page.fill("#rt-prompt", "nightly work")
+    page.fill("#rt-schedule", "daily at 09:00")
+    page.click("#rt-save")
+
+    card = page.locator("#rt-list .rowcard", has_text="Nightly sweep")
+    expect(card).to_be_visible(timeout=10000)
+    expect(card).to_contain_text("daily at 09:00")
+    expect(card).to_contain_text("next")
+    # a scheduled routine can be paused without deleting it
+    expect(card.locator("button", has_text="Pause")).to_be_visible()
+
+    # a schedule it cannot read is refused rather than silently ignored
+    page.fill("#rt-name", "Broken")
+    page.select_option("#rt-projects", index=0)
+    page.fill("#rt-prompt", "x")
+    page.fill("#rt-schedule", "0 9 * * *")
+    page.click("#rt-save")
+    page.wait_for_timeout(1500)
+    expect(page.locator("#rt-list .rowcard", has_text="Broken")).to_have_count(0)
+
+
+def test_finished_cards_can_be_swept_off_the_board(page, server):
+    """Deleting eighty cards one at a time is not a thing anyone does."""
+    page.goto(server)
+    _new_task(page, "Sweep me", "do a thing")
+    # it has to actually finish before it can be swept
+    expect(page.locator(".col.s-review .card", has_text="Sweep me")).to_be_visible(timeout=30000)
+    status = page.evaluate("""async () => {
+        const tasks = await (await fetch('/api/tasks')).json();
+        const t = tasks.find(x => x.title === 'Sweep me');
+        const r = await fetch(`/api/tasks/${t.id}/complete`, {method:'POST',
+            headers:{'Content-Type':'application/json'}, body:'{}'});
+        return r.status;
+    }""")
+    assert status == 200, f"completing the task returned {status}"
+    # reload so the board shows what the server actually has, the way a person
+    # would see it before deciding to clear
+    page.reload()
+    expect(page.locator(".card", has_text="Sweep me")).to_be_visible(timeout=15000)
+
+    seen = []
+    page.on("dialog", lambda d: (seen.append(d.message), d.accept()))
+    page.click("#qb-clear")
+    page.wait_for_timeout(2500)
+
+    assert seen, "clearing must confirm first"
+    assert "cannot be undone" in seen[0] or "Cancel" in seen[0], seen[0]
+    gone = page.evaluate("""fetch('/api/tasks').then(r=>r.json())
+        .then(t => !t.some(x => x.title === 'Sweep me'))""")
+    assert gone, "the finished card is still on the board"

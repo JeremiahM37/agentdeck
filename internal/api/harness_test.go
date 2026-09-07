@@ -177,6 +177,13 @@ func (h *harness) post(path string, body any, want int) obj {
 	return out
 }
 
+func (h *harness) patch(path string, body any, want int) obj {
+	h.t.Helper()
+	var out obj
+	h.decode("PATCH", path, body, want, &out)
+	return out
+}
+
 // ---- fixtures -----------------------------------------------------------
 
 // seeded is the demo board mock mode ships with.

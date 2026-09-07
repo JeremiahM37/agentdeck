@@ -72,6 +72,10 @@ func New(cfg *config.Config, log *slog.Logger) (*App, error) {
 		Terminals: terms, Push: pushSender, Cfg: cfg, Log: log,
 		Sessions: sessMgr, Memory: mem,
 	}
+	// a routine is a saved task, so the API layer owns firing it; the scheduler
+	// only says when one is due
+	sched.Routines = srv.RunDueRoutines
+
 	app := &App{Cfg: cfg, DB: db, Bus: b, Notifier: notifier, Broker: br, Reg: reg,
 		Sched: sched, Sessions: sessMgr, Memory: mem, Terminals: terms,
 		Server: srv, Log: log}

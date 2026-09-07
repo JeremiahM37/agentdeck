@@ -189,8 +189,12 @@ function renderBoard() {
       <input id="qb-input" placeholder="Describe it, hit ⏎ — instant dispatch" autocomplete="off">
       <button id="qb-mic" title="voice">🎤</button>
       <input id="qb-filter" placeholder="Filter…" autocomplete="off">
+      <button id="qb-routines" title="saved jobs you can run with one button">▶ Routines</button>
+      <button id="qb-clear" title="sweep finished cards off the board">🧹</button>
     </div>
     <div id="board"></div>`;
+  $("#qb-routines").onclick = () => { state.sheet = { kind: "routines" }; renderSheet(); };
+  $("#qb-clear").onclick = clearBoard;
   $("#qb-filter").value = state.filter || "";
   $("#qb-filter").oninput = (e) => { state.filter = e.target.value; renderColumns(); };
   const sel = $("#qb-project");
@@ -1142,6 +1146,162 @@ function evRow(e) {
   return el;
 }
 
+/* ---------- clearing finished cards ---------- */
+
+// A board that has run for a month is mostly history. Clearing is offered by
+// what is actually on it, and never touches work that is still live — a card in
+// review is waiting on you, and a running one has an agent attached.
+async function clearBoard() {
+  const counts = {};
+  for (const t of state.tasks || []) counts[t.status] = (counts[t.status] || 0) + 1;
+  const finished = ["done", "failed", "cancelled"].filter((s) => counts[s]);
+  if (!finished.length) return toast("Nothing finished to clear");
+
+  const parts = finished.map((s) => `${counts[s]} ${s}`);
+  const total = finished.reduce((n, s) => n + counts[s], 0);
+  let statuses = finished;
+  // when there are both, let the choice be made rather than assumed
+  if (finished.length > 1 && counts.failed) {
+    const onlyFailed = confirm(
+      `Clear ${parts.join(" and ")}?\n\n` +
+      "OK: clear all of them.\n" +
+      `Cancel: clear only the ${counts.failed} failed.`);
+    statuses = onlyFailed ? finished : ["failed"];
+  } else if (!confirm(`Clear ${parts.join(" and ")}? This cannot be undone.`)) {
+    return;
+  }
+  try {
+    const r = await api("/tasks/clear", { method: "POST", body: { statuses } });
+    toast(`Cleared ${r.cleared} card${r.cleared === 1 ? "" : "s"}`);
+    await refreshTasks();
+  } catch (e) { toast(e.message, true); }
+  void total;
+}
+
+/* ---------- routines: the job you keep asking for ---------- */
+
+function renderRoutines(sheet) {
+  sheet.innerHTML = `
+    <div class="sheet-grip"><i></i></div>
+    <div class="sheet-head"><h2>Routines</h2><button class="x">✕</button></div>
+    <div class="sub" style="color:var(--ink-dim);font-size:12.5px">
+      A job you keep asking for, saved. One button runs it across every project
+      you picked; give it a schedule and it runs itself.
+    </div>
+    <div id="rt-list"></div>
+    <details style="margin-top:14px">
+      <summary style="cursor:pointer;padding:8px 0">+ New routine</summary>
+      <label class="f">Name</label>
+      <input class="f" id="rt-name" placeholder="PR sweep">
+      <label class="f">Projects</label>
+      <select class="f" id="rt-projects" multiple size="6">${state.projects.map((p) =>
+        `<option value="${p.id}">${esc(p.name)}</option>`).join("")}</select>
+      <div class="subhint">One task per project, every time it runs.</div>
+      <label class="f">What should the agent do?</label>
+      <textarea class="f" id="rt-prompt" rows="5" placeholder="Go through every open pull request…"></textarea>
+      <label class="f">Schedule</label>
+      <input class="f" id="rt-schedule" placeholder="leave empty to run only when you press it">
+      <div class="subhint">every 6h &middot; hourly &middot; daily at 09:00 &middot; weekly on mon at 08:30</div>
+      <label class="f">Permission mode</label>
+      <select class="f" id="rt-perm">
+        <option value="acceptEdits">acceptEdits</option>
+        <option value="bypassPermissions">bypassPermissions</option>
+        <option value="plan">plan</option>
+        <option value="default">default</option>
+      </select>
+      <div class="btnrow" style="margin-top:14px">
+        <button class="b ok grow" id="rt-save">Save routine</button>
+      </div>
+    </details>`;
+  $(".x", sheet).onclick = closeSheet;
+
+  const draw = async () => {
+    const box = $("#rt-list", sheet);
+    let rows = [];
+    try { rows = await api("/routines"); } catch { }
+    if (!rows.length) {
+      box.innerHTML = `<div class="hint">No routines yet.<br><br>
+        If you have typed the same request at an agent twice, it belongs here.</div>`;
+      return;
+    }
+    box.innerHTML = "";
+    for (const r of rows) {
+      const el = document.createElement("div");
+      el.className = "rowcard";
+      const names = r.project_ids
+        .map((id) => (state.projects.find((p) => p.id === id) || {}).name)
+        .filter(Boolean);
+      const when = r.schedule
+        ? `${esc(r.schedule)}${r.next_run_at ? " · next " + fmtWhen(r.next_run_at) : ""}`
+        : "manual only";
+      el.innerHTML = `
+        <h3></h3>
+        <div class="sub">${esc(names.join(", ") || "no projects")}</div>
+        <div class="sub" style="margin-top:4px">${when}${
+          r.last_run_at ? " · last ran " + fmtDuration(Date.now() / 1000 - r.last_run_at) + " ago" : ""}</div>
+        <div class="btnrow"></div>`;
+      $("h3", el).textContent = r.name + (r.enabled ? "" : " (off)");
+      const row = $(".btnrow", el);
+      const act = (label, cls, fn) => {
+        const b = document.createElement("button");
+        b.className = `b ${cls}`; b.textContent = label; b.onclick = fn;
+        row.appendChild(b);
+      };
+      act("▶ Run now", "ok grow", async () => {
+        try {
+          const out = await api(`/routines/${r.id}/run`, { method: "POST" });
+          toast(`Started ${out.tasks.length} task${out.tasks.length === 1 ? "" : "s"}` +
+            (out.failed.length ? ` · ${out.failed.length} could not run` : ""));
+          if (out.failed.length) console.warn("routine failures", out.failed);
+          await refreshTasks();
+        } catch (e) { toast(e.message, true); }
+      });
+      if (r.schedule) {
+        act(r.enabled ? "Pause" : "Resume", "", async () => {
+          try {
+            await api(`/routines/${r.id}`, { method: "PATCH", body: { enabled: !r.enabled } });
+            draw();
+          } catch (e) { toast(e.message, true); }
+        });
+      }
+      act("Delete", "no", async () => {
+        if (!confirm(`Delete the routine "${r.name}"?\n\n` +
+          "The tasks it already created stay on the board.")) return;
+        try { await api(`/routines/${r.id}`, { method: "DELETE" }); draw(); }
+        catch (e) { toast(e.message, true); }
+      });
+      box.appendChild(el);
+    }
+  };
+  draw();
+
+  $("#rt-save", sheet).onclick = async () => {
+    const picked = [...$("#rt-projects", sheet).selectedOptions].map((o) => +o.value);
+    if (!picked.length) return toast("Pick at least one project", true);
+    try {
+      await api("/routines", { method: "POST", body: {
+        name: $("#rt-name", sheet).value.trim(),
+        prompt: $("#rt-prompt", sheet).value.trim(),
+        project_ids: picked,
+        schedule: $("#rt-schedule", sheet).value.trim(),
+        permission_mode: $("#rt-perm", sheet).value,
+      } });
+      $("#rt-name", sheet).value = ""; $("#rt-prompt", sheet).value = "";
+      $("#rt-schedule", sheet).value = "";
+      toast("Routine saved");
+      draw();
+    } catch (e) { toast(e.message, true); }
+  };
+}
+
+// fmtWhen renders an epoch as a short local time, for "next run".
+function fmtWhen(epoch) {
+  const d = new Date(epoch * 1000);
+  const today = new Date().toDateString() === d.toDateString();
+  return today ? d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
+    : d.toLocaleString([], { weekday: "short", hour: "2-digit", minute: "2-digit" });
+}
+
 /* ---------- projects: finding and removing the dead ones ---------- */
 
 // Eighty-one projects is a wall of cards. What is actually needed is finding
@@ -1334,6 +1494,7 @@ function renderSheet() {
   if (state.sheet.kind === "new") return renderNewTask(sheet);
   if (state.sheet.kind === "new-session") return renderNewSession(sheet);
   if (state.sheet.kind === "discover") return renderDiscover(sheet);
+  if (state.sheet.kind === "routines") return renderRoutines(sheet);
   if (state.sheet.kind === "project") {
     sheet.innerHTML = `<div class="sheet-grip"><i></i></div>
       <div class="sheet-head"><h2>Project</h2><button class="x">✕</button></div>`;

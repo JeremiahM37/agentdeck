@@ -106,6 +106,23 @@ CREATE TABLE IF NOT EXISTS memories(
   note TEXT NOT NULL, created_by_attempt INTEGER, created_at REAL
 );
 CREATE INDEX IF NOT EXISTS idx_memories_project ON memories(project_id);
+CREATE TABLE IF NOT EXISTS routines(
+  id INTEGER PRIMARY KEY,
+  name TEXT NOT NULL,
+  prompt TEXT NOT NULL DEFAULT '',
+  title TEXT NOT NULL DEFAULT '',
+  project_ids TEXT NOT NULL DEFAULT '[]',
+  agent TEXT NOT NULL DEFAULT '',
+  model TEXT NOT NULL DEFAULT '',
+  permission_mode TEXT NOT NULL DEFAULT '',
+  schedule TEXT NOT NULL DEFAULT '',
+  enabled INTEGER NOT NULL DEFAULT 1,
+  dispatch INTEGER NOT NULL DEFAULT 1,
+  last_run_at REAL,
+  next_run_at REAL,
+  created_at REAL NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_routines_due ON routines(enabled, next_run_at);
 `
 
 // migrations are additive: they bring a database created by an older build up to

@@ -85,6 +85,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/tasks/{id}", s.getTask)
 	mux.HandleFunc("PATCH /api/tasks/{id}", s.patchTask)
 	mux.HandleFunc("DELETE /api/tasks/{id}", s.deleteTask)
+	mux.HandleFunc("POST /api/tasks/clear", s.clearTasks)
 	mux.HandleFunc("POST /api/tasks/{id}/dispatch", s.dispatchTask)
 	mux.HandleFunc("POST /api/tasks/{id}/followup", s.followupTask)
 	mux.HandleFunc("POST /api/tasks/{id}/complete", s.completeTask)
@@ -133,6 +134,13 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/settings", s.getSettings)
 	mux.HandleFunc("PUT /api/settings", s.putSettings)
 	mux.HandleFunc("POST /api/settings/test-notification", s.testNotification)
+	// ---- routines: a saved job, one button, optionally scheduled ----
+	mux.HandleFunc("GET /api/routines", s.listRoutines)
+	mux.HandleFunc("POST /api/routines", s.createRoutine)
+	mux.HandleFunc("PATCH /api/routines/{id}", s.patchRoutine)
+	mux.HandleFunc("DELETE /api/routines/{id}", s.deleteRoutine)
+	mux.HandleFunc("POST /api/routines/{id}/run", s.runRoutine)
+
 	mux.HandleFunc("GET /api/templates", s.getTemplates)
 	mux.HandleFunc("PUT /api/templates", s.putTemplates)
 	mux.HandleFunc("GET /api/stats", s.stats)

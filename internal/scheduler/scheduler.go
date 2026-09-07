@@ -76,6 +76,11 @@ type Scheduler struct {
 	// SSH connections.
 	Sessions SessionPoller
 
+	// Routines fires any scheduled routine that is due. Injected rather than
+	// implemented here because creating a task is the API layer's job, and a
+	// routine is exactly a task someone saved.
+	Routines func(context.Context)
+
 	mu              sync.Mutex
 	pollErrors      map[int64]int
 	ghostStrikes    map[int64]int
@@ -143,6 +148,9 @@ func (s *Scheduler) Tick(ctx context.Context) {
 	if s.Sessions != nil && store.Now()-s.lastSessionPoll >= s.Cfg.SessionPoll.Seconds() {
 		s.lastSessionPoll = store.Now()
 		s.Sessions.Poll(ctx)
+	}
+	if s.Routines != nil {
+		s.Routines(ctx)
 	}
 	s.promoteQueued(ctx)
 

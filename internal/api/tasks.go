@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net/http"
@@ -330,7 +331,16 @@ func (s *Server) deleteTask(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	ctx := r.Context()
+	s.removeTask(r.Context(), task)
+	writeJSON(w, 200, map[string]any{"deleted": task.ID})
+}
+
+// removeTask tears down one task completely: anything still running is stopped,
+// its worktrees are reclaimed, and every row and file that referenced it goes.
+//
+// Shared with the bulk clear rather than reimplemented there — a second copy of
+// this would be the one that forgets the worktrees and quietly fills the disk.
+func (s *Server) removeTask(ctx context.Context, task *store.Task) {
 	proj, _ := s.DB.Project(task.ProjectID)
 	var target *store.Target
 	if proj != nil {
@@ -368,7 +378,69 @@ func (s *Server) deleteTask(w http.ResponseWriter, r *http.Request) {
 	s.DB.Exec(`UPDATE tasks SET parent_task_id=NULL WHERE parent_task_id=?`, task.ID)
 	s.DB.Exec(`DELETE FROM tasks WHERE id=?`, task.ID)
 	s.Bus.Publish("board", "task_deleted", map[string]any{"id": task.ID})
-	writeJSON(w, 200, map[string]any{"deleted": task.ID})
+}
+
+// clearIn asks for a sweep of finished cards off the board.
+type clearIn struct {
+	// Statuses defaults to the finished ones. Naming a live status is refused
+	// unless Force is set, because clearing a running task kills its agent.
+	Statuses  []string `json:"statuses"`
+	ProjectID *int64   `json:"project_id"`
+	Force     bool     `json:"force"`
+}
+
+// finishedStatuses are the ones a card can be in when there is nothing left to
+// do with it — what "clear the board" means without having to say so.
+var finishedStatuses = []string{"done", "failed", "cancelled"}
+
+// clearTasks sweeps finished cards off the board.
+//
+// A board that has run for a month is mostly history, and deleting eighty cards
+// one at a time is not a thing anyone does — so they pile up and the board stops
+// being glanceable, which is the only thing it is for.
+func (s *Server) clearTasks(w http.ResponseWriter, r *http.Request) {
+	var in clearIn
+	if err := decodeBody(r, &in); err != nil {
+		httpError(w, 422, "%s", err.Error())
+		return
+	}
+	statuses := in.Statuses
+	if len(statuses) == 0 {
+		statuses = finishedStatuses
+	}
+	for _, st := range statuses {
+		if !oneOf(st, "queued", "running", "review", "done", "failed", "cancelled") {
+			httpError(w, 422, "unknown status %q", st)
+			return
+		}
+		// review is waiting on YOU, and queued/running have an agent attached;
+		// none of them are what "clear finished work" means
+		if !oneOf(st, finishedStatuses...) && !in.Force {
+			httpError(w, 409, "%q is not finished work — clearing it would discard "+
+				"a task that is still live. Pass force:true if that is what you mean", st)
+			return
+		}
+	}
+
+	where := "status IN (" + strings.TrimSuffix(strings.Repeat("?,", len(statuses)), ",") + ")"
+	args := make([]any, 0, len(statuses)+1)
+	for _, st := range statuses {
+		args = append(args, st)
+	}
+	if in.ProjectID != nil {
+		where += " AND project_id=?"
+		args = append(args, *in.ProjectID)
+	}
+	tasks, err := s.DB.TasksWhere(where, args...)
+	if err != nil {
+		respondErr(w, err)
+		return
+	}
+	for _, task := range tasks {
+		s.removeTask(r.Context(), task)
+	}
+	s.Log.Info("cleared finished tasks", "count", len(tasks), "statuses", statuses)
+	writeJSON(w, 200, map[string]any{"cleared": len(tasks), "statuses": statuses})
 }
 
 type commitIn struct {
