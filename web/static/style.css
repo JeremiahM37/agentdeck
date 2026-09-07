@@ -595,3 +595,9 @@ textarea.f { min-height: 118px; resize: vertical; line-height: 1.6; }
 .pjmeta { font-size: 11px; color: var(--ink-dim); margin-top: 2px; }
 .pjpath { font-size: 10.5px; color: var(--ink-dim); opacity: .7; overflow: hidden;
   text-overflow: ellipsis; white-space: nowrap; }
+
+/* A checkbox row is a sentence, not a field label. The uppercase treatment that
+   suits "PROJECT" turns "Retire continuing inference research once the handoff
+   is written" into shouting, with the session's own name hardest to read. */
+label.f.check { text-transform: none; letter-spacing: normal;
+  font: 400 13px/1.45 var(--sans); color: var(--ink); }

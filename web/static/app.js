@@ -592,7 +592,7 @@ function renderHandoff(sheet) {
       <div class="subhint" id="ho-agent-hint"></div>
       <label class="f">Model</label>
       <input class="f" id="ho-model" list="adk-models" placeholder="default" autocomplete="off">
-      <label class="f" style="display:flex;align-items:center;gap:9px;cursor:pointer;margin-top:12px">
+      <label class="f check" style="display:flex;align-items:center;gap:9px;cursor:pointer;margin-top:12px">
         <input type="checkbox" id="ho-kill" checked style="width:auto;margin:0">
         <span>Retire <span class="hs-name2"></span> once the handoff is written</span>
       </label>
@@ -609,7 +609,7 @@ function renderHandoff(sheet) {
   api("/agents").then((specs) => {
     agentBox.innerHTML = specs.map((a) =>
       `<option value="${esc(a.name)}">${esc(a.name)}${
-        a.name === sess.agent ? " — same agent, fresh context" : ""}</option>`).join("");
+        a.name === sess.agent ? " — same agent, clean context" : ""}</option>`).join("");
     agentBox.value = sess.agent;
     syncAgent(specs);
     agentBox.onchange = () => syncAgent(specs);
@@ -736,7 +736,7 @@ function renderNewSession(sheet) {
       <option value="resume">Resume the agent's own last conversation</option>
     </select>
     <div class="subhint" id="ns-hint"></div>
-    <label class="f" style="display:flex;align-items:center;gap:9px;cursor:pointer">
+    <label class="f check" style="display:flex;align-items:center;gap:9px;cursor:pointer">
       <input type="checkbox" id="ns-yolo" checked style="width:auto;margin:0">
       <span>Yolo — no approval prompts</span>
     </label>
