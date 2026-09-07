@@ -10,6 +10,7 @@ import (
 	"path"
 	"regexp"
 	"strings"
+	"time"
 
 	"github.com/JeremiahM37/agentdeck/internal/executor"
 	"github.com/JeremiahM37/agentdeck/internal/memory"
@@ -765,7 +766,19 @@ func (s *Server) listModels(w http.ResponseWriter, r *http.Request) {
 		out[spec.Name] = []string{}
 	}
 	if _, ok := out["claude"]; ok {
+		// Claude Code takes shorthands rather than a catalog, and offers no way
+		// to ask, so these are the one list agentdeck does carry.
 		out["claude"] = append([]string{}, ClaudeModels...)
+	}
+	// ask each agent that can be asked; a stale hardcoded list is exactly the
+	// bug this replaces, so the tool's own answer wins
+	for _, spec := range s.agentSpecs() {
+		if _, wanted := out[spec.Name]; !wanted {
+			continue
+		}
+		if found := s.probeModels(r.Context(), spec); len(found) > 0 {
+			out[spec.Name] = found
+		}
 	}
 	// whatever you have actually run, so a model you use once is offered forever
 	for _, table := range []string{"sessions", "tasks"} {
@@ -792,6 +805,59 @@ func (s *Server) listModels(w http.ResponseWriter, r *http.Request) {
 		rows.Close()
 	}
 	writeJSON(w, 200, out)
+}
+
+// modelCacheTTL keeps the picker from shelling out to every agent on a remote
+// target each time a sheet opens. Model line-ups do not change by the minute.
+const modelCacheTTL = 10 * time.Minute
+
+type modelCacheEntry struct {
+	models []string
+	at     time.Time
+}
+
+// probeModels asks an agent for its own catalog, on the control plane, cached.
+//
+// Failure is silent and returns nothing: an agent that is not installed, or a
+// CLI whose catalog command changed, must degrade to "no suggestions" rather
+// than break the form you were about to launch from.
+func (s *Server) probeModels(ctx context.Context, spec sessions.Spec) []string {
+	probe := s.Sessions.Resolve(spec).ModelsProbe()
+	if probe == "" {
+		return nil
+	}
+	s.modelMu.Lock()
+	if s.modelCache == nil {
+		s.modelCache = map[string]modelCacheEntry{}
+	}
+	if hit, ok := s.modelCache[spec.Name]; ok && time.Since(hit.at) < modelCacheTTL {
+		s.modelMu.Unlock()
+		return hit.models
+	}
+	s.modelMu.Unlock()
+
+	target, err := s.DB.Target(s.defaultTargetID())
+	if err != nil {
+		return nil
+	}
+	ex, err := s.Reg.For(target)
+	if err != nil {
+		return nil
+	}
+	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	defer cancel()
+	r, err := ex.Run(ctx, probe, executor.RunOpts{Timeout: 15})
+	if err != nil || !r.OK() {
+		return nil
+	}
+	models := sessions.ParseModelCatalog(r.Stdout)
+	if len(models) == 0 {
+		return nil
+	}
+	s.modelMu.Lock()
+	s.modelCache[spec.Name] = modelCacheEntry{models: models, at: time.Now()}
+	s.modelMu.Unlock()
+	return models
 }
 
 func contains(list []string, want string) bool {

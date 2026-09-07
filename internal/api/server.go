@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/JeremiahM37/agentdeck/internal/broker"
@@ -43,6 +44,10 @@ type Server struct {
 	Push      *push.Sender
 	Cfg       *config.Config
 	Log       *slog.Logger
+
+	// modelCache holds each agent's self-reported model catalog; see probeModels.
+	modelMu    sync.Mutex
+	modelCache map[string]modelCacheEntry
 }
 
 // Handler builds the full router, including auth and the embedded web app.

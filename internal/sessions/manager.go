@@ -314,6 +314,10 @@ func nzs(v, def string) string {
 }
 
 // specs is the agent set, falling back to the built-ins when none is injected.
+// Resolve fills a spec's binary in from configuration, so a caller sees the
+// command that would actually run rather than the name it was defined with.
+func (m *Manager) Resolve(s Spec) Spec { return m.Launcher.resolve(s) }
+
 func (m *Manager) specs() []Spec {
 	if m.Specs == nil {
 		return Builtins()
