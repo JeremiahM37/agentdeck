@@ -974,6 +974,34 @@ def test_handoff_lets_you_choose_which_agent_picks_it_up(page, server):
     assert agent == "codex", f"the successor is running {agent!r}, not codex"
 
 
+def test_running_build_identifies_the_serving_binary(page, server):
+    page.goto(server)
+    page.click(".tab[data-tab='targets']")
+    health = page.request.get(server + "/api/health").json()
+    build = health["build"]
+    expect(page.locator("#running-build")).to_contain_text(health["version"])
+    expect(page.locator("#running-build")).to_contain_text(build["revision"][:12] or "revision unknown")
+    label = "local changes" if build["modified"] is True else "clean" if build["modified"] is False else "build status unknown"
+    expect(page.locator("#running-build")).to_contain_text(label)
+
+
+@pytest.mark.parametrize("status,message", [
+    ("unavailable", "Memory unavailable. Work can continue using the repository and saved handoffs."),
+    ("empty", "No relevant memory found for this project."),
+    ("partial", "Memory is partially unavailable. Some context could not be retrieved; work can continue."),
+])
+def test_session_preview_shows_memory_status(page, server, status, message):
+    page.route("**/api/projects/*/brief", lambda route: route.fulfill(json={
+        "brief": "test brief", "memory": {"status": status, "message": message}
+    }))
+    page.goto(server)
+    page.click(".tab[data-tab='sessions']")
+    page.click("#sess-new")
+    page.select_option("#ns-start", "brief")
+    expect(page.locator("#ns-memory-status")).to_have_text(message)
+    expect(page.locator("#ns-go")).to_be_enabled()
+
+
 def test_a_routine_can_be_edited(page, server):
     """A saved job you cannot change is one you delete and retype."""
     page.goto(server)

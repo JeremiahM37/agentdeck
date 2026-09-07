@@ -204,6 +204,11 @@ func (s *Server) repoDocs(ctx context.Context, proj *store.Project) []string {
 // first because it is the one the project maintains deliberately; recalled facts
 // are last because they are the least specific.
 func (s *Server) projectBrief(ctx context.Context, proj *store.Project) string {
+	brief, _ := s.projectBriefWithMemory(ctx, proj)
+	return brief
+}
+
+func (s *Server) projectBriefWithMemory(ctx context.Context, proj *store.Project) (string, memory.Brief) {
 	var parts []string
 
 	if docs := s.repoDocs(ctx, proj); len(docs) > 0 {
@@ -231,14 +236,11 @@ func (s *Server) projectBrief(ctx context.Context, proj *store.Project) string {
 		parts = append(parts, strings.TrimRight(b.String(), "\n"))
 	}
 
-	if s.Memory != nil && s.Memory.Available(ctx) {
-		if facts, err := s.Memory.Recall(ctx, proj.Name, 8); err == nil {
-			if block := memory.Prime(facts); block != "" {
-				parts = append(parts, strings.TrimRight(block, "\n"))
-			}
-		}
+	recalled := memory.LoadBrief(ctx, s.Memory, proj.Name)
+	if block := recalled.Prompt(); block != "" {
+		parts = append(parts, block)
 	}
-	return strings.Join(parts, "\n\n")
+	return strings.Join(parts, "\n\n"), recalled
 }
 
 // previewBrief shows exactly what a new session on this project would be handed.
@@ -255,9 +257,9 @@ func (s *Server) previewBrief(w http.ResponseWriter, r *http.Request) {
 		httpError(w, 404, "no such project")
 		return
 	}
-	brief := s.projectBrief(r.Context(), proj)
+	brief, recalled := s.projectBriefWithMemory(r.Context(), proj)
 	writeJSON(w, 200, map[string]any{
-		"project": proj.Name, "brief": brief, "chars": len(brief),
+		"project": proj.Name, "brief": brief, "chars": len(brief), "memory": recalled,
 		"docs": s.repoDocs(r.Context(), proj),
 	})
 }

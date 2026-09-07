@@ -748,6 +748,7 @@ function renderNewSession(sheet) {
       <option value="resume">Resume the agent's own last conversation</option>
     </select>
     <div class="subhint" id="ns-hint"></div>
+    <div class="subhint" id="ns-memory-status" role="status"></div>
     <label class="f check" style="display:flex;align-items:center;gap:9px;cursor:pointer">
       <input type="checkbox" id="ns-yolo" checked style="width:auto;margin:0">
       <span>Yolo — no approval prompts</span>
@@ -832,13 +833,27 @@ function renderNewSession(sheet) {
   projBox.onchange = syncProjHint;
 
   const hint = $("#ns-hint");
+  let briefRequest = 0;
   const syncHint = () => {
+    const request = ++briefRequest;
     const mode = $("#ns-start").value;
     hint.textContent = mode === "brief"
       ? "Pulls the project's durable memory and its last handoff into the first message."
       : mode === "resume"
       ? "Reopens the agent's own previous conversation in this directory."
       : "";
+    const status = $("#ns-memory-status");
+    status.textContent = "";
+    if (mode === "brief" && projBox.value) {
+      status.textContent = "Checking project memory…";
+      api(`/projects/${projBox.value}/brief`).then((r) => {
+        if (request !== briefRequest) return;
+        status.textContent = r.memory?.message || "Memory status unavailable";
+        status.dataset.status = r.memory?.status || "unavailable";
+      }).catch(() => {
+        if (request === briefRequest) status.textContent = "Could not preview project context. You can still start the session.";
+      });
+    }
   };
   $("#ns-start").onchange = syncHint;
   $("#ns-yolo").onchange = () => api("/agents").then(syncYolo).catch(() => {});
@@ -986,6 +1001,17 @@ async function renderTargets() {
   // fetch BEFORE building the form — a late response must never clobber typed input
   let settings = {};
   try { settings = await api("/settings"); } catch {}
+  const buildCard = document.createElement("div");
+  buildCard.className = "rowcard";
+  buildCard.id = "running-build";
+  buildCard.innerHTML = '<h3>Running build</h3><div class="sub">Loading…</div>';
+  list.appendChild(buildCard);
+  api("/health").then((h) => {
+    const b = h.build || {};
+    const status = b.modified === true ? "local changes" : b.modified === false ? "clean" : "build status unknown";
+    buildCard.querySelector(".sub").textContent = `${h.version} · ${b.revision ? b.revision.slice(0, 12) : "revision unknown"} · ${status}`;
+    buildCard.title = b.revision || "VCS metadata was not recorded in this binary.";
+  }).catch(() => { buildCard.querySelector(".sub").textContent = "Build information unavailable"; });
   for (const t of state.targets) {
     const el = document.createElement("div");
     el.className = "rowcard";

@@ -35,7 +35,7 @@ var (
 	loadBufferRe  = regexp.MustCompile(`tmux load-buffer -b agentdeck '?([^' ]+)'?`)
 	pasteTargetRe = regexp.MustCompile(`paste-buffer -b agentdeck -t '?([^' ]+)'?`)
 	sendKeysRe    = regexp.MustCompile(`^tmux send-keys -t '?([^' ]+)'? (\S+)$`)
-	handoffPathRe = regexp.MustCompile(`(/tmp/agentdeck-handoff-\d+\.md)`)
+	handoffPathRe = regexp.MustCompile(`(/tmp/agentdeck-handoff-\d+(?:-[a-f0-9]+)?\.md)`)
 )
 
 // interactiveSession decides whether a `tmux new-session` is starting an
@@ -112,7 +112,7 @@ func (m *Mock) handleSendText(cmd string) Result {
 		time.Sleep(m.Delay)
 		if path := handoffPathRe.FindStringSubmatch(text); path != nil {
 			m.mu.Lock()
-			m.fs[path[1]] = []byte(mockHandoff)
+			m.fs[path[1]] = []byte(mockHandoff + "\n<!-- agentdeck:complete " + path[1] + " -->\n")
 			m.mu.Unlock()
 		}
 		m.mu.Lock()

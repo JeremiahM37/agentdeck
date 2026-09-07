@@ -2,6 +2,8 @@ package sessions
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"fmt"
 	"strings"
 	"time"
@@ -30,7 +32,12 @@ Cover, briefly and concretely:
 - STATE: branches, worktrees, running processes, uncommitted work
 
 Write it for someone with no memory of this conversation but full access to the
-repo. Facts over narrative. When the file is written, reply with exactly: WRAPPED`, path)
+repo. Facts over narrative.
+Write to %s.partial first. After all sections are complete, append this exact
+completion marker on its own final line:
+%s
+Then atomically rename the completed file to %s. Do not publish the final path
+until writing is finished. Reply with exactly: WRAPPED`, path, path, handoffMarker(path), path)
 }
 
 // ResumePrompt primes a fresh session with its predecessor's wrap.
@@ -121,7 +128,11 @@ func (m *Manager) runHandoff(ctx context.Context, sess *store.Session, o Handoff
 	if err != nil {
 		return err
 	}
-	path := fmt.Sprintf("/tmp/agentdeck-handoff-%d.md", sess.ID)
+	nonce := make([]byte, 16)
+	if _, err := rand.Read(nonce); err != nil {
+		return err
+	}
+	path := fmt.Sprintf("/tmp/agentdeck-handoff-%d-%s.md", sess.ID, hex.EncodeToString(nonce))
 	// clear any wrap left by an earlier handoff on this session, or we would
 	// happily "capture" the previous one and call it current
 	if _, err := ex.Run(ctx, "rm -f "+path, executor.RunOpts{Timeout: 20}); err != nil {
@@ -140,9 +151,11 @@ func (m *Manager) runHandoff(ctx context.Context, sess *store.Session, o Handoff
 		case <-time.After(3 * time.Second):
 		}
 		raw, err := ex.ReadFile(ctx, path, 0)
-		if err == nil && len(strings.TrimSpace(string(raw))) > 40 {
-			wrap = string(raw)
-			break
+		if err == nil {
+			if completed, ok := completedHandoff(raw, path); ok {
+				wrap = completed
+				break
+			}
 		}
 	}
 	if wrap == "" {
@@ -210,14 +223,10 @@ func (m *Manager) runHandoff(ctx context.Context, sess *store.Session, o Handoff
 // projectPrime pulls what the memory provider knows about a project, so a fresh
 // session starts with the project's knowledge and not just its predecessor's.
 func (m *Manager) projectPrime(ctx context.Context, projectName string) string {
-	if m.Memory == nil || projectName == "" || !m.Memory.Available(ctx) {
+	if projectName == "" {
 		return ""
 	}
-	facts, err := m.Memory.Recall(ctx, projectName, 8)
-	if err != nil {
-		return ""
-	}
-	return memory.Prime(facts)
+	return memory.LoadBrief(ctx, m.Memory, projectName).Prompt()
 }
 
 func firstNonEmpty(vals ...string) string {
@@ -235,4 +244,18 @@ func clipRunes(s string, n int) string {
 		return s
 	}
 	return string(r[:n]) + "…"
+}
+
+// The final marker is bound to a unique request path, so neither a partial file
+// nor a late writer from a previous attempt can complete this handoff.
+func handoffMarker(path string) string { return "<!-- agentdeck:complete " + path + " -->" }
+
+func completedHandoff(raw []byte, path string) (string, bool) {
+	text := strings.TrimSpace(string(raw))
+	marker := "\n" + handoffMarker(path)
+	if !strings.HasSuffix(text, marker) {
+		return "", false
+	}
+	body := strings.TrimSpace(strings.TrimSuffix(text, marker))
+	return body, body != ""
 }

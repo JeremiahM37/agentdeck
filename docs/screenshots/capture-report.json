@@ -1,0 +1,34 @@
+{
+  "screenshots": [
+    "board.png",
+    "timeline.png",
+    "diff.png",
+    "sessions.png",
+    "handoff.png",
+    "session-start.png",
+    "deck.png",
+    "approvals.png",
+    "mobile-approval.png",
+    "routines.png",
+    "routine-edit.png",
+    "targets.png",
+    "project-settings.png",
+    "spend.png",
+    "mobile-board.png",
+    "mobile.png",
+    "mobile-routines.png"
+  ],
+  "checks": [
+    "Created two targets and three projects from an empty database",
+    "Both target probes succeeded through the UI",
+    "Routine create/edit/pause/resume/run: exactly one task per selected project, no duplicate routine",
+    "Cleared a finished column without removing projects or routines",
+    "Cross-agent handoff saved a complete wrap and preserved the predecessor when requested",
+    "Fresh session launched with an explicit memory status and provenance-bearing brief",
+    "Phone approval unblocked the agent and released the target slot for queued work",
+    "Project capability changes persisted; spend totals populated from actual scripted attempts",
+    "Projects, routines, and completed task history survived a service restart"
+  ],
+  "grimoire": true,
+  "sample_data": true
+}

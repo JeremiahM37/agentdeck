@@ -600,3 +600,66 @@ func TestDiscoveryFindsARealTmuxSession(t *testing.T) {
 		}
 	}
 }
+
+// A real tmux session receives the request; a partial write must not save a
+// wrap, kill that session, or launch its successor. Only publication of the
+// completed file may do those things.
+func TestRealHandoffWaitsForCompletedPublication(t *testing.T) {
+	r := newInteractiveRig(t)
+	sess := r.launchSession(map[string]any{"project_id": r.project, "name": "handoff-real"})
+	r.waitForLog(r.repo, "cwd:", 5*time.Second)
+	code, raw := r.do("POST", fmt.Sprintf("/api/sessions/%d/handoff", sess.ID), map[string]any{"successor": true, "kill_old": true})
+	if code != 202 {
+		t.Fatalf("%d %s", code, raw)
+	}
+	log := r.waitForLog(r.repo, "completion marker", 5*time.Second)
+	start := strings.Index(log, "/tmp/agentdeck-handoff-")
+	if start < 0 {
+		t.Fatal(log)
+	}
+	end := strings.Index(log[start:], ".md")
+	if end < 0 {
+		t.Fatal(log)
+	}
+	path := log[start : start+end+3]
+	t.Cleanup(func() { os.Remove(path); os.Remove(path + ".partial") })
+	body := "## WHERE WE ARE\nThe real file is still being written.\n## NEXT\nKeep the existing session alive.\n"
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// Cross a full handoff read interval, exercising the old >40-byte bug.
+	time.Sleep(3500 * time.Millisecond)
+	wraps, err := r.app.DB.Wraps(r.project, 10)
+	if err != nil || len(wraps) != 0 || !tmuxAlive(sess.TmuxSession) {
+		t.Fatalf("partial publication finalized: wraps=%v err=%v", wraps, err)
+	}
+	final := body + "<!-- agentdeck:complete " + path + " -->\n"
+	if err := os.WriteFile(path+".partial", []byte(final), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(path+".partial", path); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(8 * time.Second)
+	for time.Now().Before(deadline) {
+		wraps, _ = r.app.DB.Wraps(r.project, 10)
+		if len(wraps) > 0 && wraps[0].NextSessionID != nil {
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	if len(wraps) != 1 || wraps[0].NextSessionID == nil {
+		t.Fatalf("completed handoff not finalized: %+v", wraps)
+	}
+	next, err := r.app.DB.Session(*wraps[0].NextSessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { exec.Command("tmux", "kill-session", "-t", next.TmuxSession).Run() })
+	if tmuxAlive(sess.TmuxSession) || !tmuxAlive(next.TmuxSession) {
+		t.Fatal("completion did not transfer the session")
+	}
+	if strings.Contains(wraps[0].Summary, "agentdeck:complete") {
+		t.Fatal("protocol marker leaked into saved memory")
+	}
+}
