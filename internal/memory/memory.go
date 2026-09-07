@@ -24,9 +24,10 @@ import (
 
 // Fact is one durable thing a project knows.
 type Fact struct {
-	Text  string `json:"text"`
-	Topic string `json:"topic,omitempty"`
-	When  string `json:"when,omitempty"`
+	Text  string  `json:"text"`
+	Topic string  `json:"topic,omitempty"`
+	When  string  `json:"when,omitempty"`
+	Score float64 `json:"score,omitempty"`
 }
 
 // Entry is something worth remembering, with the provenance that makes it
@@ -75,14 +76,21 @@ type Grimoire struct {
 	BaseURL string
 	Token   string // X-Grimoire-Admin, only needed for gated surfaces
 	Client  *http.Client
+	// MinScore is the relevance floor. A similarity search always returns its
+	// best N matches, and when a store holds little about a project those are
+	// whatever else is in it — measured here, a real match scored 0.37 while
+	// unrelated queries all landed at 0.06-0.10. Without a floor every project
+	// gets the same two facts and a brief that looks informed and is not.
+	MinScore float64
 }
 
 // NewGrimoire builds a Grimoire-backed provider.
 func NewGrimoire(baseURL, token string) *Grimoire {
 	return &Grimoire{
-		BaseURL: strings.TrimRight(baseURL, "/"),
-		Token:   token,
-		Client:  &http.Client{Timeout: 8 * time.Second},
+		BaseURL:  strings.TrimRight(baseURL, "/"),
+		Token:    token,
+		Client:   &http.Client{Timeout: 8 * time.Second},
+		MinScore: 0.2,
 	}
 }
 
@@ -148,7 +156,14 @@ func (g *Grimoire) Recall(ctx context.Context, project string, limit int) ([]Fac
 		if text == "" {
 			continue
 		}
-		out = append(out, Fact{Text: text,
+		score, scored := m["score"].(float64)
+		// a scored result below the floor is noise, not knowledge; an unscored
+		// store (an older Grimoire, or a different provider) is taken at face
+		// value rather than silently dropped
+		if scored && score < g.MinScore {
+			continue
+		}
+		out = append(out, Fact{Text: text, Score: score,
 			Topic: firstString(m, "topic", "category"),
 			When:  firstString(m, "created_at", "updated_at", "when")})
 		if len(out) >= limit {
