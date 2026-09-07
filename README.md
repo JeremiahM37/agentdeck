@@ -111,6 +111,11 @@ reachability, `git`, `tmux`, `python3`, and your agent's CLI.
   attach, send-a-message and interrupt from your phone, **discovery + adoption**
   of agents you started by hand, and **handoff**: the agent writes a wrap for its
   successor, which starts primed with it. The project outlives the context window.
+- **Blank rooms** — start any agent CLI in a throwaway git repository with no
+  project attached, for work that does not have a name yet. When it turns into
+  something, promote it: the directory it has been working in becomes the
+  project's repository, so nothing moves, the tmux session keeps running, and
+  the project is immediately dispatchable.
 - **Import** — point it at where your code lives; it registers everything that
   looks like a project (git repo, build manifest, or a HANDOFF.md).
 - **Targets** — `local` and `ssh` cover any machine; Proxmox users also get
@@ -152,9 +157,19 @@ curl -X POST .../api/projects -d '{
 ## Tests
 
 ```bash
-go test ./...     # 265 hermetic tests: mock executor, a temp database each, no real infra
-pytest -q e2e     # 35 Playwright browser flows against a real built binary
+go test ./...     # 334 tests, a temp database each
+pytest -q e2e     # 36 Playwright browser flows against a real built binary
 ```
+
+Most of those run against a mock executor — no git, tmux or agent binary — so
+they are fast and hermetic. A handful deliberately do not: `e2e_real_test.go`
+dispatches into a real git worktree, starts a real tmux session, runs a real
+process and reads back its real diff and exit code, and `restart_test.go` runs
+two App lifetimes over one database file. Those are the tests that catch what
+mocks accept: argv that a real shell truncates, a launch race that only exists
+once a process starts, a base branch that `git init` did not create. They skip
+themselves if `git` or `tmux` is missing.
+
 
 ## Layout
 
