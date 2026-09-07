@@ -688,3 +688,31 @@ def test_attach_opens_a_same_origin_terminal(page, server):
     # and that path must actually serve ttyd through the proxy
     resp = page.request.get(server + url)
     assert resp.ok, f"{url} -> {resp.status}"
+
+
+def test_yolo_is_offered_and_on_by_default(page, server):
+    """Yolo is the default because you are sitting in the terminal watching the
+    agent — but it must be visible and switchable, not silent."""
+    page.goto(server)
+    page.click(".tab[data-tab='sessions']")
+    page.click("#sess-new")
+
+    yolo = page.locator("#ns-yolo")
+    expect(yolo).to_be_visible()
+    assert yolo.is_checked(), "yolo should be on by default"
+    expect(page.locator("#ns-yolo-hint")).to_contain_text("without stopping to ask")
+
+    # unticking says what changes, so the choice is legible
+    yolo.uncheck()
+    page.wait_for_timeout(300)
+    expect(page.locator("#ns-yolo-hint")).to_contain_text("stops and asks")
+
+
+@pytest.mark.parametrize("page", [PHONE], indirect=True, ids=["phone"])
+def test_yolo_toggle_fits_on_a_phone(page, server):
+    page.goto(server)
+    page.click(".tab[data-tab='sessions']")
+    page.click("#sess-new")
+    box = page.locator("#ns-yolo").bounding_box()
+    assert box["x"] >= 0 and box["x"] + box["width"] <= PHONE["width"] + 1, box
+    assert page.evaluate("() => document.documentElement.scrollWidth") <= PHONE["width"] + 1

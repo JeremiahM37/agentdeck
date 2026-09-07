@@ -81,6 +81,10 @@ type sessionIn struct {
 	// Scratch starts the agent in a fresh throwaway directory instead of a
 	// project — an empty room. What it becomes is decided later, by promoting it.
 	Scratch bool `json:"scratch"`
+	// Yolo runs the agent without its approval prompts. A pointer because absent
+	// means "the default", which is ON for interactive sessions: you are sitting
+	// in the terminal watching it. Send false to be asked for confirmations.
+	Yolo *bool `json:"yolo"`
 }
 
 func (s *Server) createSession(w http.ResponseWriter, r *http.Request) {
@@ -133,10 +137,15 @@ func (s *Server) createSession(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
+	// yolo is on unless the caller says otherwise
+	yolo := true
+	if in.Yolo != nil {
+		yolo = *in.Yolo
+	}
 	sess, err := s.Sessions.Launch(r.Context(), sessions.LaunchOpts{
 		ProjectID: in.ProjectID, TargetID: in.TargetID, Name: in.Name,
 		Agent: in.Agent, Model: in.Model, Workdir: in.Workdir,
-		Resume: in.Resume, Prime: prime, Scratch: in.Scratch,
+		Resume: in.Resume, Prime: prime, Scratch: in.Scratch, Yolo: yolo,
 		// a project's env is how a session reaches a local model, exactly as it
 		// is for a dispatched task
 		Env: s.Sessions.ProjectEnv(in.ProjectID),

@@ -21,7 +21,8 @@ func (specLauncher) LaunchCommand(agent, workdir, tmuxName, model string,
 	if !ok {
 		return ""
 	}
-	return spec.LaunchCommand(workdir, tmuxName, model, resume, prompt, "")
+	return spec.LaunchCommand(Start{Workdir: workdir, TmuxName: tmuxName,
+		Model: model, Resume: resume, Prompt: prompt})
 }
 
 func TestLaunchCommandIsInteractiveNotHeadless(t *testing.T) {
@@ -369,8 +370,8 @@ func TestCustomAgentLaunches(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	cmd := spec.LaunchCommand("/srv/repo", "adk-s3", "qwen3.6:35b-a3b", false,
-		"where are we?", env)
+	cmd := spec.LaunchCommand(Start{Workdir: "/srv/repo", TmuxName: "adk-s3",
+		Model: "qwen3.6:35b-a3b", Prompt: "where are we?", EnvPrefix: env})
 	for _, want := range []string{
 		"aider --no-auto-commits", "--model qwen3.6:35b-a3b", "where are we?",
 		"OPENAI_API_BASE=http://ollama:11434/v1", "cd /srv/repo", "exec bash",
@@ -384,7 +385,7 @@ func TestCustomAgentLaunches(t *testing.T) {
 // An agent with no model switch must ignore a model rather than invent a flag.
 func TestSpecWithoutAModelFlagIgnoresTheModel(t *testing.T) {
 	spec := Spec{Name: "x", Command: "x"}
-	cmd := spec.LaunchCommand("/r", "s", "opus", false, "", "")
+	cmd := spec.LaunchCommand(Start{Workdir: "/r", TmuxName: "s", Model: "opus"})
 	if strings.Contains(cmd, "opus") {
 		t.Fatalf("a model was passed to a CLI with no model flag: %s", cmd)
 	}

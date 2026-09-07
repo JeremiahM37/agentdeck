@@ -449,3 +449,46 @@ func TestAModelYouHaveUsedIsSuggestedAgain(t *testing.T) {
 		}
 	}
 }
+
+// Yolo is on unless the caller says otherwise — the request that omits it is
+// the common one, so that default is worth pinning.
+func TestYoloIsOnByDefaultAndCanBeTurnedOff(t *testing.T) {
+	for name, tc := range map[string]struct {
+		body     obj
+		wantFlag bool
+	}{
+		"omitted means on": {obj{"agent": "claude", "scratch": true}, true},
+		"explicitly on":    {obj{"agent": "claude", "scratch": true, "yolo": true}, true},
+		"explicitly off":   {obj{"agent": "claude", "scratch": true, "yolo": false}, false},
+	} {
+		h := newHarness(t)
+		code, body := h.request("POST", "/api/sessions", tc.body, nil)
+		if code != 201 {
+			t.Fatalf("%s: %d %s", name, code, body)
+		}
+		cmd := strings.Join(h.mock().CmdLog(), "\n")
+		got := strings.Contains(cmd, "bypassPermissions")
+		if got != tc.wantFlag {
+			t.Errorf("%s: yolo flag present=%v want=%v\n%s", name, got, tc.wantFlag, cmd)
+		}
+	}
+}
+
+// The picker has to know which agents can do it, or the checkbox lies.
+func TestAgentsReportWhetherTheyHaveAYoloMode(t *testing.T) {
+	h := newHarness(t)
+	code, body := h.request("GET", "/api/agents", nil, nil)
+	if code != 200 {
+		t.Fatalf("%d %s", code, body)
+	}
+	var specs []struct {
+		Name     string   `json:"name"`
+		YoloArgs []string `json:"yolo_args"`
+	}
+	json.Unmarshal(body, &specs)
+	for _, s := range specs {
+		if len(s.YoloArgs) == 0 {
+			t.Errorf("builtin %q reports no yolo mode; the UI would grey it out", s.Name)
+		}
+	}
+}

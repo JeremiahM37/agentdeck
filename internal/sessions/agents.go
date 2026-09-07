@@ -34,6 +34,10 @@ type Spec struct {
 	// Env is agent-wide environment, layered under the project's own. This is
 	// the local-model door for a CLI that wants its endpoint in the environment.
 	Env map[string]string `json:"env,omitempty"`
+	// YoloArgs drop the CLI's approval prompts so the agent just works. Every
+	// coding CLI spells this differently and some cannot do it at all; empty
+	// means this agent has no such mode and the toggle is not offered for it.
+	YoloArgs []string `json:"yolo_args,omitempty"`
 	// ModelsCommand asks the CLI what models it has. `{bin}` is replaced with the
 	// resolved binary. Model line-ups change faster than agentdeck ships, and a
 	// list of names written down here is wrong the moment a vendor renames one —
@@ -49,13 +53,16 @@ type Spec struct {
 func Builtins() []Spec {
 	return []Spec{
 		{Name: "claude", Command: "claude", ModelFlag: "--model",
-			ResumeArgs: []string{"--continue"}, PromptArg: true, Builtin: true},
+			ResumeArgs: []string{"--continue"}, PromptArg: true, Builtin: true,
+			YoloArgs: []string{"--permission-mode", "bypassPermissions"}},
 		{Name: "codex", Command: "codex", ModelFlag: "-m",
 			ResumeArgs: []string{"resume", "--last"}, PromptArg: true, Builtin: true,
-			ModelsCommand: "{bin} debug models"},
+			ModelsCommand: "{bin} debug models",
+			YoloArgs:      []string{"--dangerously-bypass-approvals-and-sandbox"}},
 		// gemini's interactive mode takes no opening message on the command
 		// line, so its prime is typed in once the pane settles
-		{Name: "gemini", Command: "gemini", ModelFlag: "-m", Builtin: true},
+		{Name: "gemini", Command: "gemini", ModelFlag: "-m", Builtin: true,
+			YoloArgs: []string{"--yolo"}},
 	}
 }
 
@@ -137,22 +144,41 @@ func Find(specs []Spec, name string) (Spec, bool) {
 }
 
 // LaunchCommand renders the tmux invocation that starts this agent.
-func (s Spec) LaunchCommand(workdir, tmuxName, model string, resume bool, prompt, envPrefix string) string {
+// Start is everything that varies between one launch of an agent and the next.
+type Start struct {
+	Workdir   string
+	TmuxName  string
+	Model     string
+	Resume    bool
+	Prompt    string
+	EnvPrefix string
+	// Yolo runs the agent without its approval prompts. On by default for
+	// interactive sessions: you are sitting in the terminal watching it, which
+	// is the supervision, and being asked to confirm every edit in a session you
+	// opened on purpose is just friction. An agent with no YoloArgs ignores it.
+	Yolo bool
+}
+
+// LaunchCommand builds the tmux command that starts one interactive session.
+func (s Spec) LaunchCommand(o Start) string {
 	parts := []string{s.Command}
 	parts = append(parts, s.Args...)
-	if resume && len(s.ResumeArgs) > 0 {
+	if o.Resume && len(s.ResumeArgs) > 0 {
 		parts = append(parts, s.ResumeArgs...)
 	}
-	if model != "" && s.ModelFlag != "" {
-		parts = append(parts, s.ModelFlag, model)
+	if o.Yolo && len(s.YoloArgs) > 0 {
+		parts = append(parts, s.YoloArgs...)
 	}
-	if prompt != "" && s.PromptArg {
-		parts = append(parts, shellq.Quote(prompt))
+	if o.Model != "" && s.ModelFlag != "" {
+		parts = append(parts, s.ModelFlag, o.Model)
+	}
+	if o.Prompt != "" && s.PromptArg {
+		parts = append(parts, shellq.Quote(o.Prompt))
 	}
 	inner := fmt.Sprintf("cd %s && %s%s; exec bash",
-		shellq.Quote(workdir), envPrefix, strings.Join(parts, " "))
+		shellq.Quote(o.Workdir), o.EnvPrefix, strings.Join(parts, " "))
 	return fmt.Sprintf("tmux new-session -d -s %s %s",
-		shellq.Quote(tmuxName), shellq.Quote(inner))
+		shellq.Quote(o.TmuxName), shellq.Quote(inner))
 }
 
 func validEnvName(k string) bool {

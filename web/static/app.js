@@ -637,6 +637,11 @@ function renderNewSession(sheet) {
       <option value="resume">Resume the agent's own last conversation</option>
     </select>
     <div class="subhint" id="ns-hint"></div>
+    <label class="f" style="display:flex;align-items:center;gap:9px;cursor:pointer">
+      <input type="checkbox" id="ns-yolo" checked style="width:auto;margin:0">
+      <span>Yolo — no approval prompts</span>
+    </label>
+    <div class="subhint" id="ns-yolo-hint"></div>
     <label class="f">First message (optional)</label>
     <textarea class="f" id="ns-prime" placeholder="Typed in once the agent is up."></textarea>
     <div class="btnrow" style="margin-top:20px">
@@ -677,6 +682,22 @@ function renderNewSession(sheet) {
     if (a && !a.resume_args) bits.push("cannot resume its own history");
     $("#ns-agent-hint").textContent = bits.join(" · ");
     syncModelList();
+    syncYolo(specs);
+  }
+  // On by default: you are sitting in the terminal watching it, and confirming
+  // every edit in a session you opened on purpose is friction rather than
+  // safety. Untick it when the agent is loose in something you care about.
+  function syncYolo(specs) {
+    const a = specs.find((x) => x.name === agentBox.value);
+    const box = $("#ns-yolo");
+    const supported = !a || (a.yolo_args && a.yolo_args.length);
+    box.disabled = !supported;
+    if (!supported) box.checked = false;
+    $("#ns-yolo-hint").textContent = !supported
+      ? `${agentBox.value} has no way to skip its prompts — it will ask.`
+      : box.checked
+      ? "The agent acts without stopping to ask. You are the supervision."
+      : "The agent stops and asks before it edits or runs anything.";
   }
   // a blank room is for work that has no name yet; what it becomes is decided
   // afterwards, from the session card
@@ -709,6 +730,7 @@ function renderNewSession(sheet) {
       : "";
   };
   $("#ns-start").onchange = syncHint;
+  $("#ns-yolo").onchange = () => api("/agents").then(syncYolo).catch(() => {});
   syncProjHint();
   $("#ns-go").onclick = async () => {
     const mode = $("#ns-start").value;
@@ -722,6 +744,7 @@ function renderNewSession(sheet) {
         model: $("#ns-model").value.trim(),
         resume: mode === "resume",
         brief: mode === "brief",
+        yolo: $("#ns-yolo").checked,
         prime: $("#ns-prime").value.trim(),
       } });
       closeSheet();

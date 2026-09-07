@@ -70,6 +70,9 @@ type LaunchOpts struct {
 	// Prime is typed into the session once it is up — a project briefing, or a
 	// predecessor's handoff.
 	Prime string
+	// Yolo runs the agent without approval prompts. Defaulted on by the API for
+	// interactive sessions — see Start.Yolo.
+	Yolo bool
 	// Scratch asks for a throwaway working directory on the target instead of a
 	// project's repository: an empty room to think in. The directory is a real
 	// git repository, so whatever the work turns into can later be promoted to a
@@ -160,7 +163,9 @@ func (m *Manager) Launch(ctx context.Context, o LaunchOpts) (*store.Session, err
 		m.end(sess.ID, "dead")
 		return nil, err
 	}
-	cmd := spec.LaunchCommand(workdir, tmuxName, o.Model, o.Resume, argPrompt, envPrefix)
+	cmd := spec.LaunchCommand(Start{
+		Workdir: workdir, TmuxName: tmuxName, Model: o.Model, Resume: o.Resume,
+		Prompt: argPrompt, EnvPrefix: envPrefix, Yolo: o.Yolo})
 	r, err := ex.Run(ctx, cmd, executor.RunOpts{Timeout: 60})
 	if err != nil {
 		m.end(sess.ID, "dead")
