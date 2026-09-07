@@ -2,6 +2,8 @@
 const $ = (s, el = document) => el.querySelector(s);
 const $$ = (s, el = document) => [...el.querySelectorAll(s)];
 const COLUMNS = ["backlog", "queued", "running", "review", "done", "failed"];
+// the columns where a card is history rather than work in progress
+const FINISHED_COLUMNS = ["done", "failed"];
 
 const state = {
   tab: "board", tasks: [], projects: [], targets: [], approvals: [], sessions: [],
@@ -154,6 +156,7 @@ function card(t) {
   const v = t.attempt?.verify;
   const review = t.attempt?.result?.review;
   el.innerHTML = `
+    <button class="card-x" title="delete this card">✕</button>
     <div class="t"></div>
     <div class="meta">
       <span class="chip">${esc(t.project_name)}</span>
@@ -178,6 +181,9 @@ function card(t) {
     </div>`;
   $(".t", el).textContent = t.title;
   el.onclick = () => openTaskSheet(t.id);
+  // stopPropagation, or deleting a card would also open the sheet for the card
+  // that is on its way out
+  $(".card-x", el).onclick = (ev) => { ev.stopPropagation(); deleteCard(t); };
   return el;
 }
 
@@ -189,12 +195,10 @@ function renderBoard() {
       <input id="qb-input" placeholder="Describe it, hit ⏎ — instant dispatch" autocomplete="off">
       <button id="qb-mic" title="voice">🎤</button>
       <input id="qb-filter" placeholder="Filter…" autocomplete="off">
-      <button id="qb-routines" title="saved jobs you can run with one button">▶ Routines</button>
-      <button id="qb-clear" title="sweep finished cards off the board">🧹</button>
+      <button id="qb-routines" title="Routines — saved jobs you can run with one button">⟲</button>
     </div>
     <div id="board"></div>`;
   $("#qb-routines").onclick = () => { state.sheet = { kind: "routines" }; renderSheet(); };
-  $("#qb-clear").onclick = clearBoard;
   $("#qb-filter").value = state.filter || "";
   $("#qb-filter").oninput = (e) => { state.filter = e.target.value; renderColumns(); };
   const sel = $("#qb-project");
@@ -289,9 +293,12 @@ function renderColumns() {
   for (const col of COLUMNS) {
     const c = document.createElement("div");
     c.className = `col s-${col}`;
+    const clearable = FINISHED_COLUMNS.includes(col) && byCol[col].length;
     c.innerHTML = `
-      <div class="col-head"><span class="dot"></span>${col}<span class="cnt">${byCol[col].length}</span></div>
+      <div class="col-head"><span class="dot"></span>${col}<span class="cnt">${byCol[col].length}</span>${
+        clearable ? `<button class="col-clear" title="clear every ${col} card">clear</button>` : ""}</div>
       <div class="col-body"></div>`;
+    if (clearable) $(".col-clear", c).onclick = () => clearColumn(col, byCol[col].length);
     attachDrop(c, col);
     fillColumn($(".col-body", c), col, byCol[col]);
     board.appendChild(c);
@@ -324,7 +331,12 @@ function renderPhoneBoard(board, byCol) {
 
   const wrap = document.createElement("div");
   wrap.className = `col s-${col} solo`;
-  wrap.innerHTML = '<div class="col-body"></div>';
+  const clearable = FINISHED_COLUMNS.includes(col) && byCol[col].length;
+  wrap.innerHTML = `${clearable
+    ? `<div class="col-head solo-head">${col}<span class="cnt">${byCol[col].length}</span>` +
+      `<button class="col-clear" title="clear every ${col} card">clear</button></div>`
+    : ""}<div class="col-body"></div>`;
+  if (clearable) $(".col-clear", wrap).onclick = () => clearColumn(col, byCol[col].length);
   attachDrop(wrap, col);
   fillColumn($(".col-body", wrap), col, byCol[col]);
   board.appendChild(wrap);
@@ -1243,34 +1255,30 @@ function evRow(e) {
 
 /* ---------- clearing finished cards ---------- */
 
-// A board that has run for a month is mostly history. Clearing is offered by
-// what is actually on it, and never touches work that is still live — a card in
-// review is waiting on you, and a running one has an agent attached.
-async function clearBoard() {
-  const counts = {};
-  for (const t of state.tasks || []) counts[t.status] = (counts[t.status] || 0) + 1;
-  const finished = ["done", "failed", "cancelled"].filter((s) => counts[s]);
-  if (!finished.length) return toast("Nothing finished to clear");
-
-  const parts = finished.map((s) => `${counts[s]} ${s}`);
-  const total = finished.reduce((n, s) => n + counts[s], 0);
-  let statuses = finished;
-  // when there are both, let the choice be made rather than assumed
-  if (finished.length > 1 && counts.failed) {
-    const onlyFailed = confirm(
-      `Clear ${parts.join(" and ")}?\n\n` +
-      "OK: clear all of them.\n" +
-      `Cancel: clear only the ${counts.failed} failed.`);
-    statuses = onlyFailed ? finished : ["failed"];
-  } else if (!confirm(`Clear ${parts.join(" and ")}? This cannot be undone.`)) {
-    return;
-  }
+// A board that has run for a month is mostly history. Clearing lives on the
+// column it clears, so which cards go is the thing you clicked rather than a
+// choice made in a dialog.
+async function clearColumn(status, count) {
+  if (!confirm(`Clear ${count} ${status} card${count === 1 ? "" : "s"}?\n\n` +
+    "The work itself is untouched — this removes the record from the board.")) return;
   try {
-    const r = await api("/tasks/clear", { method: "POST", body: { statuses } });
-    toast(`Cleared ${r.cleared} card${r.cleared === 1 ? "" : "s"}`);
+    const r = await api("/tasks/clear", { method: "POST", body: { statuses: [status] } });
+    toast(`Cleared ${r.cleared} ${status} card${r.cleared === 1 ? "" : "s"}`);
     await refreshTasks();
   } catch (e) { toast(e.message, true); }
-  void total;
+}
+
+// deleteCard is the ✕ on a card. Finished work goes without ceremony — it is a
+// record, not a thing in flight. Anything still live asks first, because
+// deleting it stops a running agent.
+async function deleteCard(t) {
+  const live = !FINISHED_COLUMNS.includes(t.status) && t.status !== "cancelled";
+  if (live && !confirm(`Delete "${t.title}"?\n\n` +
+    `It is ${t.status} — deleting it stops the agent and discards the attempt.`)) return;
+  try {
+    await api(`/tasks/${t.id}`, { method: "DELETE" });
+    await refreshTasks();
+  } catch (e) { toast(e.message, true); }
 }
 
 /* ---------- routines: the job you keep asking for ---------- */
@@ -1284,8 +1292,8 @@ function renderRoutines(sheet) {
       you picked; give it a schedule and it runs itself.
     </div>
     <div id="rt-list"></div>
-    <details style="margin-top:14px">
-      <summary style="cursor:pointer;padding:8px 0">+ New routine</summary>
+    <details id="rt-form" style="margin-top:14px">
+      <summary id="rt-legend" style="cursor:pointer;padding:8px 0">+ New routine</summary>
       <label class="f">Name</label>
       <input class="f" id="rt-name" placeholder="PR sweep">
       <label class="f">Projects</label>
@@ -1297,6 +1305,11 @@ function renderRoutines(sheet) {
       <label class="f">Schedule</label>
       <input class="f" id="rt-schedule" placeholder="leave empty to run only when you press it">
       <div class="subhint">every 6h &middot; hourly &middot; daily at 09:00 &middot; weekly on mon at 08:30</div>
+      <label class="f">Agent</label>
+      <select class="f" id="rt-agent"></select>
+      <label class="f">Model</label>
+      <input class="f" id="rt-model" list="adk-models" placeholder="the project's default" autocomplete="off">
+      <datalist id="adk-models"></datalist>
       <label class="f">Permission mode</label>
       <select class="f" id="rt-perm">
         <option value="acceptEdits">acceptEdits</option>
@@ -1306,9 +1319,25 @@ function renderRoutines(sheet) {
       </select>
       <div class="btnrow" style="margin-top:14px">
         <button class="b ok grow" id="rt-save">Save routine</button>
+        <button class="b" id="rt-cancel" hidden>Cancel</button>
       </div>
     </details>`;
   $(".x", sheet).onclick = closeSheet;
+
+  // the agent set is the operator's, and the model list is whatever that agent
+  // actually reports — same source as the session sheet
+  const agentBox = $("#rt-agent", sheet);
+  const syncModels = () => {
+    const list = (state.models || {})[agentBox.value] || [];
+    $("#adk-models", sheet).innerHTML = list.map((m) => `<option>${esc(m)}</option>`).join("");
+    $("#rt-model", sheet).disabled = !(state.models || {})[agentBox.value];
+  };
+  api("/agents").then((specs) => {
+    agentBox.innerHTML = `<option value="">the project's default</option>` +
+      specs.map((a) => `<option value="${esc(a.name)}">${esc(a.name)}</option>`).join("");
+    agentBox.onchange = syncModels;
+    syncModels();
+  }).catch(() => { agentBox.innerHTML = '<option value="">default</option>'; });
 
   const draw = async () => {
     const box = $("#rt-list", sheet);
@@ -1326,12 +1355,14 @@ function renderRoutines(sheet) {
       const names = r.project_ids
         .map((id) => (state.projects.find((p) => p.id === id) || {}).name)
         .filter(Boolean);
+      const how = [r.agent || "project default", r.model].filter(Boolean).join(" · ");
       const when = r.schedule
         ? `${esc(r.schedule)}${r.next_run_at ? " · next " + fmtWhen(r.next_run_at) : ""}`
         : "manual only";
       el.innerHTML = `
         <h3></h3>
         <div class="sub">${esc(names.join(", ") || "no projects")}</div>
+        <div class="sub" style="margin-top:4px">${esc(how)}</div>
         <div class="sub" style="margin-top:4px">${when}${
           r.last_run_at ? " · last ran " + fmtDuration(Date.now() / 1000 - r.last_run_at) + " ago" : ""}</div>
         <div class="btnrow"></div>`;
@@ -1359,6 +1390,7 @@ function renderRoutines(sheet) {
           } catch (e) { toast(e.message, true); }
         });
       }
+      act("Edit", "", () => loadForEdit(r));
       act("Delete", "no", async () => {
         if (!confirm(`Delete the routine "${r.name}"?\n\n` +
           "The tasks it already created stay on the board.")) return;
@@ -1370,20 +1402,56 @@ function renderRoutines(sheet) {
   };
   draw();
 
+  // editing reuses the form rather than a second one: a routine is small enough
+  // that "the fields it has" is the whole editor, and two forms drift apart
+  let editing = null;
+  function loadForEdit(r) {
+    editing = r.id;
+    $("#rt-form", sheet).open = true;
+    $("#rt-name", sheet).value = r.name;
+    $("#rt-prompt", sheet).value = r.prompt;
+    $("#rt-schedule", sheet).value = r.schedule;
+    $("#rt-perm", sheet).value = r.permission_mode || "acceptEdits";
+    agentBox.value = r.agent || "";
+    syncModels();
+    $("#rt-model", sheet).value = r.model || "";
+    for (const opt of $("#rt-projects", sheet).options) {
+      opt.selected = r.project_ids.includes(+opt.value);
+    }
+    $("#rt-legend", sheet).textContent = `Editing "${r.name}"`;
+    $("#rt-save", sheet).textContent = "Save changes";
+    $("#rt-cancel", sheet).hidden = false;
+    $("#rt-form", sheet).scrollIntoView({ block: "nearest", behavior: "smooth" });
+  }
+  function resetForm() {
+    editing = null;
+    for (const id of ["rt-name", "rt-prompt", "rt-schedule", "rt-model"]) $("#" + id, sheet).value = "";
+    agentBox.value = "";
+    syncModels();
+    for (const opt of $("#rt-projects", sheet).options) opt.selected = false;
+    $("#rt-legend", sheet).textContent = "+ New routine";
+    $("#rt-save", sheet).textContent = "Save routine";
+    $("#rt-cancel", sheet).hidden = true;
+  }
+  $("#rt-cancel", sheet).onclick = resetForm;
+
   $("#rt-save", sheet).onclick = async () => {
     const picked = [...$("#rt-projects", sheet).selectedOptions].map((o) => +o.value);
     if (!picked.length) return toast("Pick at least one project", true);
+    const body = {
+      name: $("#rt-name", sheet).value.trim(),
+      prompt: $("#rt-prompt", sheet).value.trim(),
+      project_ids: picked,
+      schedule: $("#rt-schedule", sheet).value.trim(),
+      permission_mode: $("#rt-perm", sheet).value,
+      agent: agentBox.value,
+      model: $("#rt-model", sheet).disabled ? "" : $("#rt-model", sheet).value.trim(),
+    };
     try {
-      await api("/routines", { method: "POST", body: {
-        name: $("#rt-name", sheet).value.trim(),
-        prompt: $("#rt-prompt", sheet).value.trim(),
-        project_ids: picked,
-        schedule: $("#rt-schedule", sheet).value.trim(),
-        permission_mode: $("#rt-perm", sheet).value,
-      } });
-      $("#rt-name", sheet).value = ""; $("#rt-prompt", sheet).value = "";
-      $("#rt-schedule", sheet).value = "";
-      toast("Routine saved");
+      if (editing) await api(`/routines/${editing}`, { method: "PATCH", body });
+      else await api("/routines", { method: "POST", body });
+      toast(editing ? "Routine updated" : "Routine saved");
+      resetForm();
       draw();
     } catch (e) { toast(e.message, true); }
   };

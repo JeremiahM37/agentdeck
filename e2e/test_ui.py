@@ -865,12 +865,17 @@ def test_a_scheduled_routine_shows_when_it_next_runs(page, server):
     expect(page.locator("#rt-list .rowcard", has_text="Broken")).to_have_count(0)
 
 
-def test_finished_cards_can_be_swept_off_the_board(page, server):
-    """Deleting eighty cards one at a time is not a thing anyone does."""
+def test_a_card_has_an_x_and_a_column_has_a_clear(page, server):
+    """Deleting one card should be one click on that card, and clearing a
+    column should live on the column it clears — not a dialog asking which."""
     page.goto(server)
     _new_task(page, "Sweep me", "do a thing")
-    # it has to actually finish before it can be swept
     expect(page.locator(".col.s-review .card", has_text="Sweep me")).to_be_visible(timeout=30000)
+
+    # the x is on the card itself
+    card = page.locator(".card", has_text="Sweep me")
+    expect(card.locator(".card-x")).to_have_count(1)
+
     status = page.evaluate("""async () => {
         const tasks = await (await fetch('/api/tasks')).json();
         const t = tasks.find(x => x.title === 'Sweep me');
@@ -878,22 +883,55 @@ def test_finished_cards_can_be_swept_off_the_board(page, server):
             headers:{'Content-Type':'application/json'}, body:'{}'});
         return r.status;
     }""")
-    assert status == 200, f"completing the task returned {status}"
-    # reload so the board shows what the server actually has, the way a person
-    # would see it before deciding to clear
+    assert status == 200, f"completing returned {status}"
     page.reload()
-    expect(page.locator(".card", has_text="Sweep me")).to_be_visible(timeout=15000)
+    expect(page.locator(".col.s-done .card", has_text="Sweep me")).to_be_visible(timeout=15000)
 
-    seen = []
-    page.on("dialog", lambda d: (seen.append(d.message), d.accept()))
-    page.click("#qb-clear")
-    page.wait_for_timeout(2500)
-
-    assert seen, "clearing must confirm first"
-    assert "cannot be undone" in seen[0] or "Cancel" in seen[0], seen[0]
+    # finished work goes without a confirmation — it is a record, not work
+    dialogs = []
+    page.on("dialog", lambda d: (dialogs.append(d.message), d.accept()))
+    page.locator(".col.s-done .card", has_text="Sweep me").locator(".card-x").click()
+    page.wait_for_timeout(2000)
+    assert not dialogs, f"deleting a finished card should not nag: {dialogs}"
     gone = page.evaluate("""fetch('/api/tasks').then(r=>r.json())
         .then(t => !t.some(x => x.title === 'Sweep me'))""")
-    assert gone, "the finished card is still on the board"
+    assert gone, "the card is still there"
+
+
+def test_clearing_a_column_lives_on_that_column(page, server):
+    page.goto(server)
+    for title in ("First", "Second"):
+        _new_task(page, title, "x")
+        expect(page.locator(".col.s-review .card", has_text=title)).to_be_visible(timeout=30000)
+    page.evaluate("""async () => {
+        const tasks = await (await fetch('/api/tasks')).json();
+        for (const t of tasks.filter(x => ['First','Second'].includes(x.title))) {
+            await fetch(`/api/tasks/${t.id}/complete`, {method:'POST',
+                headers:{'Content-Type':'application/json'}, body:'{}'});
+        }
+    }""")
+    page.reload()
+    head = page.locator(".col.s-done .col-head")
+    expect(head.locator(".col-clear")).to_be_visible(timeout=15000)
+
+    page.on("dialog", lambda d: d.accept())
+    head.locator(".col-clear").click()
+    page.wait_for_timeout(2500)
+    left = page.evaluate("""fetch('/api/tasks').then(r=>r.json())
+        .then(t => t.filter(x => x.status === 'done').length)""")
+    assert left == 0, f"{left} done cards survived clearing the column"
+
+
+def test_the_quickbar_has_no_unstyled_buttons(page, server):
+    """Two native buttons in a styled bar looked exactly as bad as that sounds."""
+    page.goto(server)
+    page.wait_for_timeout(1000)
+    for i in range(page.locator("#quickbar > *").count()):
+        el = page.locator("#quickbar > *").nth(i)
+        bg = el.evaluate("e => getComputedStyle(e).backgroundColor")
+        # every control in the bar sits on the panel colour, never browser default
+        assert bg not in ("rgb(255, 255, 255)", "rgba(0, 0, 0, 0)", "buttonface"), \
+            f"quickbar child {i} is unstyled: {bg}"
 
 
 def test_handoff_lets_you_choose_which_agent_picks_it_up(page, server):
@@ -934,3 +972,36 @@ def test_handoff_lets_you_choose_which_agent_picks_it_up(page, server):
         return s ? s.agent : null;
     })""")
     assert agent == "codex", f"the successor is running {agent!r}, not codex"
+
+
+def test_a_routine_can_be_edited(page, server):
+    """A saved job you cannot change is one you delete and retype."""
+    page.goto(server)
+    page.click("#qb-routines")
+    page.click("#rt-legend")
+    page.fill("#rt-name", "Editable")
+    page.select_option("#rt-projects", index=0)
+    page.fill("#rt-prompt", "original prompt")
+    page.click("#rt-save")
+
+    card = page.locator("#rt-list .rowcard", has_text="Editable")
+    expect(card).to_be_visible(timeout=10000)
+
+    card.locator("button", has_text="Edit").click()
+    # the form is filled with what is already there, not blank
+    expect(page.locator("#rt-name")).to_have_value("Editable")
+    expect(page.locator("#rt-prompt")).to_have_value("original prompt")
+    expect(page.locator("#rt-legend")).to_contain_text("Editing")
+
+    page.fill("#rt-name", "Renamed")
+    page.fill("#rt-schedule", "daily at 07:00")
+    page.click("#rt-save")
+
+    expect(page.locator("#rt-list .rowcard", has_text="Renamed")).to_be_visible(timeout=10000)
+    expect(page.locator("#rt-list .rowcard", has_text="Editable")).to_have_count(0)
+    expect(page.locator("#rt-list .rowcard", has_text="Renamed")).to_contain_text("daily at 07:00")
+    # editing must update in place, not leave a second copy behind. Counted by
+    # name, not globally: this server is shared with every other test here.
+    n = page.evaluate("""fetch('/api/routines').then(r=>r.json())
+        .then(x => x.filter(r => ['Editable','Renamed'].includes(r.name)).length)""")
+    assert n == 1, f"editing duplicated the routine ({n} copies)"

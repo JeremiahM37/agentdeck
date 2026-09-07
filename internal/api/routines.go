@@ -116,6 +116,14 @@ func (s *Server) patchRoutine(w http.ResponseWriter, r *http.Request) {
 		raw, _ := json.Marshal(in.ProjectIDs)
 		fields["project_ids"] = string(raw)
 	}
+	// the same validation the create path does — an agent that does not exist
+	// saves happily and then fails at dispatch, hours later, on a schedule
+	if in.Agent != "" {
+		if _, ok := sessions.Find(s.agentSpecs(), in.Agent); !ok {
+			httpError(w, 400, "unknown agent %q — define it in /api/agents", in.Agent)
+			return
+		}
+	}
 	for key, val := range map[string]string{
 		"agent": in.Agent, "model": in.Model, "permission_mode": in.PermissionMode,
 	} {

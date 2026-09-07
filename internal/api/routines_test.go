@@ -445,3 +445,58 @@ func TestClearingCanBeScopedToAProject(t *testing.T) {
 		t.Error("clearing one project removed another project's history")
 	}
 }
+
+// A routine that always runs on whatever the project defaults to cannot be the
+// cheap one for a sweep and the expensive one for a hard review.
+func TestARoutineCarriesItsAgentAndModel(t *testing.T) {
+	h := newHarness(t)
+	created := h.post("/api/routines", obj{
+		"name": "astra sweep", "prompt": prReview,
+		"project_ids": []int64{h.seededProjectID()},
+		"agent":       "codex", "model": "gpt-6-astra",
+	}, 201)
+	if created.str("agent") != "codex" || created.str("model") != "gpt-6-astra" {
+		t.Fatalf("%v", created)
+	}
+
+	out := h.post(fmt.Sprintf("/api/routines/%d/run", int64(created.num("id"))), obj{}, 200)
+	var res struct {
+		Tasks []int64 `json:"tasks"`
+	}
+	raw, _ := json.Marshal(out)
+	json.Unmarshal(raw, &res)
+	if len(res.Tasks) != 1 {
+		t.Fatalf("expected one task: %v", out)
+	}
+	task, err := h.App.DB.Task(res.Tasks[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if task.Agent != "codex" || task.Model != "gpt-6-astra" {
+		t.Errorf("the routine's agent and model did not reach its task: %q / %q",
+			task.Agent, task.Model)
+	}
+}
+
+// Editing a routine must be able to change them, including back to the
+// project's default.
+func TestARoutinesAgentAndModelAreEditable(t *testing.T) {
+	h := newHarness(t)
+	created := h.post("/api/routines", obj{
+		"name": "switchable", "prompt": prReview,
+		"project_ids": []int64{h.seededProjectID()},
+		"agent":       "codex", "model": "gpt-5.6-sol",
+	}, 201)
+	id := int64(created.num("id"))
+
+	moved := h.patch(fmt.Sprintf("/api/routines/%d", id),
+		obj{"agent": "claude", "model": "opus"}, 200)
+	if moved.str("agent") != "claude" || moved.str("model") != "opus" {
+		t.Errorf("%v", moved)
+	}
+	// and an agent that does not exist is refused rather than saved
+	if code, body := h.request("PATCH", fmt.Sprintf("/api/routines/%d", id),
+		obj{"agent": "nope"}, nil); code != 400 && code != 422 {
+		t.Errorf("expected a refusal for an unknown agent, got %d %s", code, body)
+	}
+}
