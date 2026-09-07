@@ -95,6 +95,7 @@ func (s *Server) Handler() http.Handler {
 
 	// ---- sessions: the interactive half of the board ----
 	mux.HandleFunc("GET /api/agents", s.listAgents)
+	mux.HandleFunc("GET /api/models", s.listModels)
 	mux.HandleFunc("PUT /api/agents", s.putAgents)
 	mux.HandleFunc("GET /api/sessions", s.listSessions)
 	mux.HandleFunc("POST /api/sessions", s.createSession)

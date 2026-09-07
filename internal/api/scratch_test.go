@@ -374,3 +374,78 @@ func TestDeletingAPromotedProjectUnassignsItsSessions(t *testing.T) {
 		t.Errorf("the session disappeared from the board: %s", body)
 	}
 }
+
+// The model field is free text and always has been — the list only ever
+// suggested. Offering Claude's shorthands under codex was worse than offering
+// nothing, which is what sent someone looking for a model that was never
+// missing.
+func TestModelSuggestionsArePerAgent(t *testing.T) {
+	h := newHarness(t)
+	models := h.get("/api/models")
+
+	claude, ok := models["claude"].([]any)
+	if !ok || len(claude) == 0 {
+		t.Fatalf("claude should suggest its shorthands: %v", models["claude"])
+	}
+	var names []string
+	for _, m := range claude {
+		names = append(names, fmt.Sprint(m))
+	}
+	if !strings.Contains(strings.Join(names, ","), "opus") {
+		t.Errorf("claude models: %v", names)
+	}
+	// codex names its models differently and the set moves, so there is nothing
+	// honest to hardcode — but it must still be a key, or the UI cannot tell
+	// "no suggestions" from "no model switch"
+	got, present := models["codex"]
+	if !present {
+		t.Fatal("codex takes -m, so it must appear with an (empty) list")
+	}
+	for _, m := range got.([]any) {
+		if strings.Contains("fable opus sonnet haiku", fmt.Sprint(m)) {
+			t.Errorf("codex was offered a Claude model name: %v", m)
+		}
+	}
+	// gemini has a model flag too; an agent without one must be absent entirely
+	if code, body := h.request("PUT", "/api/agents", []obj{
+		{"name": "claude", "command": "claude", "model_flag": "--model"},
+		{"name": "noswitch", "command": "noswitch"},
+	}, nil); code != 200 {
+		t.Fatalf("defining agents: %d %s", code, body)
+	}
+	if _, present := h.get("/api/models")["noswitch"]; present {
+		t.Error("an agent with no model flag must not be offered a model list")
+	}
+}
+
+// A model you have actually run is the best suggestion there is, whatever the
+// vendor happens to call it this month.
+func TestAModelYouHaveUsedIsSuggestedAgain(t *testing.T) {
+	h := newHarness(t)
+	if code, body := h.request("PUT", "/api/agents", []obj{
+		{"name": "claude", "command": "claude", "model_flag": "--model"},
+		{"name": "codex", "command": "codex", "model_flag": "-m", "prompt_arg": true},
+	}, nil); code != 200 {
+		t.Fatalf("%d %s", code, body)
+	}
+	code, body := h.request("POST", "/api/sessions", obj{
+		"agent": "codex", "scratch": true, "model": "some-new-model"}, nil)
+	if code != 201 {
+		t.Fatalf("launching with a model the UI never suggested: %d %s", code, body)
+	}
+	var found bool
+	for _, m := range h.get("/api/models")["codex"].([]any) {
+		if fmt.Sprint(m) == "some-new-model" {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("a model that has been used is not suggested next time")
+	}
+	// and it must not leak into another agent's list
+	for _, m := range h.get("/api/models")["claude"].([]any) {
+		if fmt.Sprint(m) == "some-new-model" {
+			t.Error("a codex model was suggested under claude")
+		}
+	}
+}

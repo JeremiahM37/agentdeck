@@ -119,7 +119,8 @@ async function refreshSessions() {
   if (state.tab === "sessions") renderSessions();
 }
 async function refreshMeta() {
-  [state.projects, state.targets] = await Promise.all([api("/projects"), api("/targets")]);
+  [state.projects, state.targets, state.models] = await Promise.all([
+    api("/projects"), api("/targets"), api("/models").catch(() => ({}))]);
   if (state.tab === "targets") renderTargets();
 }
 
@@ -625,9 +626,7 @@ function renderNewSession(sheet) {
     <div class="subhint" id="ns-agent-hint"></div>
     <label class="f">Model</label>
     <input class="f" id="ns-model" list="adk-models" placeholder="default" autocomplete="off">
-    <datalist id="adk-models">
-      <option>fable</option><option>opus</option><option>sonnet</option><option>haiku</option>
-    </datalist>
+    <datalist id="adk-models"></datalist>
     <label class="f">Start from</label>
     <select class="f" id="ns-start">
       <option value="fresh">Fresh context</option>
@@ -653,12 +652,28 @@ function renderNewSession(sheet) {
   }).catch(() => {
     agentBox.innerHTML = '<option value="claude">claude</option>';
   });
+  // model names are per-agent and the sets move, so the list is what this agent
+  // actually accepts plus what you have already run with it — never Claude's
+  // shorthands under codex. The field itself stays free text either way.
+  api("/models").then((m) => { state.models = m; syncModelList(); }).catch(() => {});
+  function syncModelList() {
+    const box = $("#ns-model");
+    const list = (state.models || {})[agentBox.value];
+    $("#adk-models").innerHTML = (list || [])
+      .map((m) => `<option>${esc(m)}</option>`).join("");
+    box.placeholder = list === undefined
+      ? "this agent has no model switch"
+      : list.length ? "default — or type any model name"
+      : "type the model name";
+    box.disabled = list === undefined;
+  }
   function syncAgentHint(specs) {
     const a = specs.find((x) => x.name === agentBox.value);
     const bits = [];
     if (a && !a.model_flag) bits.push("no model switch — the Model field is ignored");
     if (a && !a.resume_args) bits.push("cannot resume its own history");
     $("#ns-agent-hint").textContent = bits.join(" · ");
+    syncModelList();
   }
   // a blank room is for work that has no name yet; what it becomes is decided
   // afterwards, from the session card
@@ -1351,9 +1366,8 @@ function renderNewTask(sheet) {
     if (!claude && $("#f-perm").value === "default") $("#f-perm").value = "acceptEdits";
     $("#f-ab-row").style.display = claude ? "" : "none";
     if (!claude) $("#f-modelb").value = "";
-    $("#adk-models").innerHTML = claude
-      ? ["fable", "opus", "sonnet", "haiku"].map((m) => `<option>${m}</option>`).join("")
-      : "";
+    $("#adk-models").innerHTML = ((state.models || {})[agentBox.dataset.value] || [])
+      .map((m) => `<option>${esc(m)}</option>`).join("");
     // probe truth beats optimism: say when the target has no such binary
     const proj = state.projects.find((p) => p.id === +$("#f-project").value);
     const tgt = state.targets.find((t) => t.id === proj?.target_id);

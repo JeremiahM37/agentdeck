@@ -744,3 +744,61 @@ func firstNonEmptyStr(vals ...string) string {
 	}
 	return ""
 }
+
+// ClaudeModels are the shorthands Claude Code accepts. Every other agent names
+// its models differently and the set moves, so there is nothing honest to
+// hardcode for them — what you have actually used is the better suggestion.
+var ClaudeModels = []string{"fable", "opus", "sonnet", "haiku"}
+
+// listModels answers with model suggestions per agent.
+//
+// The model field is free text and always has been — any string is passed
+// straight to the agent's model flag. This only drives the datalist, so a model
+// missing from it was never blocked, just unsuggested. It is per-agent because
+// offering Claude's shorthands under codex is worse than offering nothing.
+func (s *Server) listModels(w http.ResponseWriter, r *http.Request) {
+	out := map[string][]string{}
+	for _, spec := range s.agentSpecs() {
+		if spec.ModelFlag == "" {
+			continue // this agent has no model switch; the field is ignored
+		}
+		out[spec.Name] = []string{}
+	}
+	if _, ok := out["claude"]; ok {
+		out["claude"] = append([]string{}, ClaudeModels...)
+	}
+	// whatever you have actually run, so a model you use once is offered forever
+	for _, table := range []string{"sessions", "tasks"} {
+		rows, err := s.DB.Query(`SELECT DISTINCT agent, model FROM ` + table +
+			` WHERE COALESCE(model,'') != '' ORDER BY model`)
+		if err != nil {
+			continue
+		}
+		for rows.Next() {
+			var agent, model string
+			if rows.Scan(&agent, &model) != nil {
+				continue
+			}
+			if agent == "" {
+				agent = "claude"
+			}
+			if _, known := out[agent]; !known {
+				continue
+			}
+			if !contains(out[agent], model) {
+				out[agent] = append(out[agent], model)
+			}
+		}
+		rows.Close()
+	}
+	writeJSON(w, 200, out)
+}
+
+func contains(list []string, want string) bool {
+	for _, v := range list {
+		if v == want {
+			return true
+		}
+	}
+	return false
+}
