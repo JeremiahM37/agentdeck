@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -591,5 +592,51 @@ func TestDeletingAnEmptyProjectIsSimple(t *testing.T) {
 	}
 	if _, err := h.App.DB.Project(id); err == nil {
 		t.Error("it is still there")
+	}
+}
+
+// An imported project has no tasks and no sessions, so agentdeck's own record
+// says only "I learned about this at import time" — the same instant for all of
+// them. The repository's last commit is what actually distinguishes a project
+// abandoned two years ago from one touched last week.
+func TestRepoCommitTimeIsUsedWhenAgentdeckHasNoHistory(t *testing.T) {
+	requireRealTools(t)
+	r := newRealRig(t)
+
+	// backdate the repo's only commit by a year
+	old := time.Now().Add(-365 * 24 * time.Hour).Format(time.RFC3339)
+	cmd := exec.Command("git", "commit", "-q", "--amend", "--no-edit", "--date", old)
+	cmd.Dir = r.repo
+	cmd.Env = append(os.Environ(), "GIT_COMMITTER_DATE="+old)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("backdating: %v %s", err, out)
+	}
+
+	code, body := r.do("GET", "/api/projects/usage", nil)
+	if code != 200 {
+		t.Fatalf("%d %s", code, body)
+	}
+	var rows []struct {
+		ProjectID  int64   `json:"project_id"`
+		Tasks      int     `json:"tasks"`
+		LastActive float64 `json:"last_active_at"`
+	}
+	json.Unmarshal(body, &rows)
+
+	var found bool
+	for _, row := range rows {
+		if row.ProjectID != r.project {
+			continue
+		}
+		found = true
+		age := time.Since(time.Unix(int64(row.LastActive), 0))
+		if age < 300*24*time.Hour {
+			t.Errorf("a project whose repo was last committed to a year ago reports "+
+				"%.0f days of quiet — imported projects would all look equally fresh",
+				age.Hours()/24)
+		}
+	}
+	if !found {
+		t.Fatal("the project is missing from the usage list")
 	}
 }

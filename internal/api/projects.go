@@ -1,11 +1,16 @@
 package api
 
 import (
+	"context"
+	"fmt"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/JeremiahM37/agentdeck/internal/agents"
+	"github.com/JeremiahM37/agentdeck/internal/executor"
 	"github.com/JeremiahM37/agentdeck/internal/scheduler"
+	"github.com/JeremiahM37/agentdeck/internal/shellq"
 	"github.com/JeremiahM37/agentdeck/internal/store"
 )
 
@@ -385,6 +390,74 @@ type projectUsage struct {
 	LastActive float64 `json:"last_active_at"`
 }
 
+// repoActivity asks each repository when it was last committed to.
+//
+// Batched one command per target rather than one per project: eighty-one
+// round trips to a remote host to draw one screen is not a screen anyone waits
+// for. Cached, because a commit date does not change by the minute.
+func (s *Server) repoActivity(ctx context.Context, projects []*store.Project) map[int64]float64 {
+	s.repoMu.Lock()
+	if s.repoCache != nil && time.Since(s.repoCachedAt) < repoCacheTTL {
+		out := s.repoCache
+		s.repoMu.Unlock()
+		return out
+	}
+	s.repoMu.Unlock()
+
+	byTarget := map[int64][]*store.Project{}
+	for _, p := range projects {
+		if p.RepoPath != "" {
+			byTarget[p.TargetID] = append(byTarget[p.TargetID], p)
+		}
+	}
+	out := map[int64]float64{}
+	for targetID, group := range byTarget {
+		target, err := s.DB.Target(targetID)
+		if err != nil {
+			continue
+		}
+		ex, err := s.Reg.For(target)
+		if err != nil {
+			continue
+		}
+		var b strings.Builder
+		for _, p := range group {
+			// %ct is the commit timestamp; a path that is not a repo prints
+			// nothing and is simply skipped
+			fmt.Fprintf(&b, "printf '%%s\\t' %s; git -C %s log -1 --format=%%ct 2>/dev/null || echo; ",
+				shellq.Quote(fmt.Sprint(p.ID)), shellq.Quote(p.RepoPath))
+		}
+		cctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+		res, err := ex.Run(cctx, b.String(), executor.RunOpts{Timeout: 30})
+		cancel()
+		if err != nil {
+			continue
+		}
+		for _, line := range strings.Split(res.Stdout, "\n") {
+			id, ts, ok := strings.Cut(strings.TrimSpace(line), "\t")
+			if !ok || ts == "" {
+				continue
+			}
+			var pid int64
+			var when float64
+			if _, err := fmt.Sscan(id, &pid); err != nil {
+				continue
+			}
+			if _, err := fmt.Sscan(ts, &when); err != nil || when <= 0 {
+				continue
+			}
+			out[pid] = when
+		}
+	}
+	s.repoMu.Lock()
+	s.repoCache, s.repoCachedAt = out, time.Now()
+	s.repoMu.Unlock()
+	return out
+}
+
+// repoCacheTTL: a repository's last commit does not change by the minute.
+const repoCacheTTL = 10 * time.Minute
+
 func (s *Server) projectsUsage(w http.ResponseWriter, r *http.Request) {
 	// one pass per table rather than a query per project: with eighty-one
 	// projects the N+1 version is eighty-one round trips to render one screen
@@ -404,7 +477,18 @@ func (s *Server) projectsUsage(w http.ResponseWriter, r *http.Request) {
 	}
 	for _, p := range projects {
 		u := at(p.ID)
-		u.LastActive = p.CreatedAt // a project with nothing in it is as old as itself
+		u.LastActive = p.CreatedAt
+	}
+	// An imported project has no tasks and no sessions, so its created_at is
+	// when agentdeck learned about it — which for a bulk import is the same
+	// instant for all of them, and tells you nothing about which are dead. The
+	// repository's own last commit is the honest answer, so it wins when it is
+	// older or newer than anything agentdeck knows.
+	for id, when := range s.repoActivity(r.Context(), projects) {
+		u := at(id)
+		if when > 0 && u.Tasks == 0 && u.Sessions == 0 {
+			u.LastActive = when
+		}
 	}
 
 	rows, err := s.DB.Query(`SELECT project_id, COUNT(*),

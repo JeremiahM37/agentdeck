@@ -48,6 +48,11 @@ type Server struct {
 	// modelCache holds each agent's self-reported model catalog; see probeModels.
 	modelMu    sync.Mutex
 	modelCache map[string]modelCacheEntry
+
+	// repoCache holds each project's last commit time; see repoActivity.
+	repoMu       sync.Mutex
+	repoCache    map[int64]float64
+	repoCachedAt time.Time
 }
 
 // Handler builds the full router, including auth and the embedded web app.
