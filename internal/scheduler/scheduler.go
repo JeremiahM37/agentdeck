@@ -139,6 +139,7 @@ func (s *Scheduler) Stop() {
 
 // Tick is one scheduling pass. Exported so tests can drive it deterministically.
 func (s *Scheduler) Tick(ctx context.Context) {
+	s.ProcessTakeovers(ctx)
 	if s.Cfg.JanitorDays > 0 && store.Now()-s.lastJanitor > 3600 {
 		s.lastJanitor = store.Now()
 		if _, err := s.Janitor(ctx, s.Cfg.JanitorDays); err != nil {
@@ -155,7 +156,7 @@ func (s *Scheduler) Tick(ctx context.Context) {
 	s.DeliverMessages(ctx)
 	s.promoteQueued(ctx)
 
-	running, err := s.DB.AttemptsWhere("status='running'")
+	running, err := s.DB.AttemptsWhere("status='running' AND task_id NOT IN (SELECT task_id FROM task_takeovers)")
 	if err != nil {
 		s.Log.Error("listing running attempts failed", "err", err)
 		return
@@ -237,7 +238,7 @@ func (s *Scheduler) attemptExecutor(att *store.Attempt, target *store.Target) (e
 
 func (s *Scheduler) promoteQueued(ctx context.Context) {
 	rows, err := s.DB.Query(`SELECT a.id FROM attempts a JOIN tasks t ON t.id=a.task_id
-		WHERE a.status='queued' ORDER BY t.priority DESC, a.id`)
+		WHERE a.status='queued' AND t.id NOT IN (SELECT task_id FROM task_takeovers) ORDER BY t.priority DESC, a.id`)
 	if err != nil {
 		return
 	}
@@ -781,7 +782,9 @@ func (s *Scheduler) Janitor(ctx context.Context, days float64) (map[string]any, 
 	rows, err := s.DB.Query(`SELECT a.id FROM attempts a JOIN tasks t ON t.id=a.task_id
 		JOIN projects p ON p.id=t.project_id
 		WHERE t.status IN ('done','cancelled') AND a.worktree_path!=''
-		AND a.finished_at IS NOT NULL AND a.finished_at<? AND p.keep_worktrees=0`, cutoff)
+		AND a.finished_at IS NOT NULL AND a.finished_at<? AND p.keep_worktrees=0
+        AND NOT EXISTS(SELECT 1 FROM sessions se WHERE se.target_id=p.target_id AND se.workdir=a.worktree_path)
+        AND t.id NOT IN (SELECT task_id FROM task_takeovers)`, cutoff)
 	if err != nil {
 		return nil, err
 	}

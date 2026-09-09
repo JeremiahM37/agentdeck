@@ -12,6 +12,7 @@ import (
 	"github.com/JeremiahM37/agentdeck/internal/bus"
 	"github.com/JeremiahM37/agentdeck/internal/executor"
 	"github.com/JeremiahM37/agentdeck/internal/memory"
+	"github.com/JeremiahM37/agentdeck/internal/shellq"
 	"github.com/JeremiahM37/agentdeck/internal/store"
 )
 
@@ -64,7 +65,12 @@ type LaunchOpts struct {
 	// Resume asks the agent to pick up its own previous conversation
 	// (`claude --continue`), which is what you want when re-opening a project
 	// you were in yesterday.
-	Resume bool
+	Resume   bool
+	ResumeID string
+	// ReservedID is an internal durable session reservation for task takeover.
+	ReservedID int64
+	// ExtraArgs carries already-validated runtime configuration from a task.
+	ExtraArgs []string
 	// Env is layered over the agent's and under nothing: it is how a session is
 	// pointed at a local model (ANTHROPIC_BASE_URL, OPENAI_BASE_URL, …).
 	Env map[string]string
@@ -116,10 +122,15 @@ func (m *Manager) Launch(ctx context.Context, o LaunchOpts) (*store.Session, err
 	if name == "" {
 		name = agent
 	}
-	sess, err := m.DB.InsertSession(&store.Session{
-		ProjectID: o.ProjectID, TargetID: o.TargetID, Name: name, Agent: agent,
-		Model: o.Model, Workdir: workdir, Status: StatusStarting, Origin: "agentdeck",
-	})
+	var sess *store.Session
+	if o.ReservedID != 0 {
+		sess, err = m.DB.Session(o.ReservedID)
+	} else {
+		sess, err = m.DB.InsertSession(&store.Session{
+			ProjectID: o.ProjectID, TargetID: o.TargetID, Name: name, Agent: agent,
+			Model: o.Model, Workdir: workdir, Status: StatusStarting, Origin: "agentdeck",
+		})
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -142,12 +153,18 @@ func (m *Manager) Launch(ctx context.Context, o LaunchOpts) (*store.Session, err
 		m.end(sess.ID, "dead")
 		return nil, fmt.Errorf("unknown agent %q", agent)
 	}
+	if o.ResumeID != "" && len(spec.ResumeIDArgs) == 0 {
+		return nil, fmt.Errorf("agent %q does not support resuming an exact conversation", agent)
+	}
 	spec = m.Launcher.resolve(spec)
+	for _, arg := range o.ExtraArgs {
+		spec.Args = append(spec.Args, shellq.Quote(arg))
+	}
 	// resuming replays a conversation, and the CLIs do not accept an opening
 	// message alongside that — so a prime on a resumed session still has to be
 	// typed in once it is up
 	argPrompt := ""
-	if o.Prime != "" && !o.Resume && spec.PromptArg {
+	if o.Prime != "" && !o.Resume && o.ResumeID == "" && spec.PromptArg {
 		argPrompt = o.Prime
 	}
 	// agent-wide env first, then the project's, so a project can point one agent
@@ -175,7 +192,7 @@ func (m *Manager) Launch(ctx context.Context, o LaunchOpts) (*store.Session, err
 	}
 
 	cmd := spec.LaunchCommand(Start{
-		Workdir: workdir, TmuxName: tmuxName, Model: o.Model, Resume: o.Resume,
+		Workdir: workdir, TmuxName: tmuxName, Model: o.Model, Resume: o.Resume, ResumeID: o.ResumeID,
 		Prompt: argPrompt, EnvPrefix: envPrefix, Yolo: o.Yolo})
 	r, err := ex.Run(ctx, cmd, executor.RunOpts{Timeout: 60})
 	if err != nil {
@@ -186,6 +203,7 @@ func (m *Manager) Launch(ctx context.Context, o LaunchOpts) (*store.Session, err
 		m.end(sess.ID, "dead")
 		return nil, executor.Errf("tmux launch failed: %s", strings.TrimSpace(r.Stderr))
 	}
+	m.DB.Update("sessions", sess.ID, map[string]any{"status": StatusStarting, "ended_at": nil})
 	if o.Prime != "" && argPrompt == "" {
 		// the fallback path: wait until the pane settles before typing, rather
 		// than guessing a delay and landing in whatever the CLI put on screen

@@ -345,6 +345,9 @@ func (s *Server) deleteTask(w http.ResponseWriter, r *http.Request) {
 // Shared with the bulk clear rather than reimplemented there — a second copy of
 // this would be the one that forgets the worktrees and quietly fills the disk.
 func (s *Server) removeTask(ctx context.Context, task *store.Task) {
+	if tr, _ := s.DB.Takeover(task.ID); tr != nil && tr.Status != "ready" {
+		return
+	}
 	proj, _ := s.DB.Project(task.ProjectID)
 	var target *store.Target
 	if proj != nil {
@@ -362,7 +365,7 @@ func (s *Server) removeTask(ctx context.Context, task *store.Task) {
 	if target != nil && target.Kind != "sandbox" && proj != nil && proj.KeepWorktrees == 0 {
 		if ex, err := s.Reg.For(target); err == nil {
 			for _, a := range attempts {
-				if a.WorktreePath != "" {
+				if a.WorktreePath != "" && !s.DB.SessionWorkdir(target.ID, a.WorktreePath) {
 					// best-effort: the DB rows still get cleaned below
 					_ = worktree.Remove(ctx, ex, proj.RepoPath, a.WorktreePath)
 				}
@@ -376,6 +379,7 @@ func (s *Server) removeTask(ctx context.Context, task *store.Task) {
 		s.DB.Exec(`DELETE FROM approvals WHERE attempt_id=?`, a.ID)
 		s.DB.Exec(`DELETE FROM memories WHERE created_by_attempt=?`, a.ID)
 	}
+	s.DB.Exec(`DELETE FROM task_takeovers WHERE task_id=?`, task.ID)
 	s.DB.Exec(`DELETE FROM attempts WHERE task_id=?`, task.ID)
 	// child tasks (agent-filed / reviewer-gate) are ORPHANED, not cascaded —
 	// an agent-filed follow-up may be real work the operator wants to keep
@@ -440,11 +444,16 @@ func (s *Server) clearTasks(w http.ResponseWriter, r *http.Request) {
 		respondErr(w, err)
 		return
 	}
+	cleared := 0
 	for _, task := range tasks {
+		if tr, _ := s.DB.Takeover(task.ID); tr != nil && tr.Status != "ready" {
+			continue
+		}
 		s.removeTask(r.Context(), task)
+		cleared++
 	}
-	s.Log.Info("cleared finished tasks", "count", len(tasks), "statuses", statuses)
-	writeJSON(w, 200, map[string]any{"cleared": len(tasks), "statuses": statuses})
+	s.Log.Info("cleared finished tasks", "count", cleared, "statuses", statuses)
+	writeJSON(w, 200, map[string]any{"cleared": cleared, "statuses": statuses})
 }
 
 type commitIn struct {
@@ -547,6 +556,10 @@ func (s *Server) cleanupTask(w http.ResponseWriter, r *http.Request) {
 	removed := []int{}
 	list, _ := s.DB.AttemptsWhere("task_id=? AND worktree_path!=''", task.ID)
 	for _, a := range list {
+		if s.DB.SessionWorkdir(target.ID, a.WorktreePath) {
+			httpError(w, 409, "Worktree belongs to an interactive session")
+			return
+		}
 		if err := worktree.Remove(r.Context(), ex, proj.RepoPath, a.WorktreePath); err != nil {
 			respondErr(w, err)
 			return
@@ -658,6 +671,12 @@ func (s *Server) taskParam(w http.ResponseWriter, r *http.Request) (*store.Task,
 			respondErr(w, err)
 		}
 		return nil, false
+	}
+	if r.Method != "GET" && !strings.HasSuffix(r.URL.Path, "/takeover") {
+		if tr, _ := s.DB.Takeover(task.ID); tr != nil && !(r.Method == "DELETE" && tr.Status == "ready") {
+			httpError(w, 409, "This task is moving to an interactive session; open its session to continue")
+			return nil, false
+		}
 	}
 	return task, true
 }

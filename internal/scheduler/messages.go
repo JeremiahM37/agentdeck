@@ -13,7 +13,7 @@ import (
 // DeliverMessages runs on the scheduler's own goroutine. Interrupts cannot race
 // its poll/finalize path. Receipts and the new attempt commit in one transaction.
 func (s *Scheduler) DeliverMessages(ctx context.Context) {
-	rows, err := s.DB.Query(`SELECT DISTINCT task_id FROM task_messages WHERE status='pending' ORDER BY task_id`)
+	rows, err := s.DB.Query(`SELECT DISTINCT task_id FROM task_messages WHERE status='pending' AND task_id NOT IN (SELECT task_id FROM task_takeovers) ORDER BY task_id`)
 	if err != nil {
 		return
 	}

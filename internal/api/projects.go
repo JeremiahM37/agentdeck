@@ -298,6 +298,10 @@ func (s *Server) deleteProject(w http.ResponseWriter, r *http.Request) {
 		httpError(w, 404, "no such project")
 		return
 	}
+	if s.DB.Exists("task_takeovers", "status!='ready' AND task_id IN (SELECT id FROM tasks WHERE project_id=?)", id) {
+		httpError(w, 409, "A task takeover is in progress; finish it before deleting the project")
+		return
+	}
 	// A project with history is refused unless the caller says explicitly that
 	// the history goes too. Deleting eighty-one stale projects should not be a
 	// way to silently lose the record of what was done in them.
@@ -315,6 +319,7 @@ func (s *Server) deleteProject(w http.ResponseWriter, r *http.Request) {
 		for _, stmt := range []string{
 			`DELETE FROM approvals WHERE attempt_id IN
 				(SELECT a.id FROM attempts a JOIN tasks t ON t.id=a.task_id WHERE t.project_id=?)`,
+			`DELETE FROM task_takeovers WHERE task_id IN (SELECT id FROM tasks WHERE project_id=?)`,
 			`DELETE FROM attempts WHERE task_id IN (SELECT id FROM tasks WHERE project_id=?)`,
 			`DELETE FROM tasks WHERE project_id=?`,
 		} {

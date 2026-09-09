@@ -114,6 +114,21 @@ CREATE TABLE IF NOT EXISTS session_wraps(
   next_session_id INTEGER, created_at REAL
 );
 CREATE INDEX IF NOT EXISTS idx_wraps_project ON session_wraps(project_id);
+-- A takeover is durable before the background process is interrupted.
+CREATE TABLE IF NOT EXISTS task_takeovers(
+  task_id INTEGER PRIMARY KEY REFERENCES tasks(id) ON DELETE CASCADE,
+  attempt_id INTEGER NOT NULL REFERENCES attempts(id),
+  session_id INTEGER REFERENCES sessions(id),
+  status TEXT NOT NULL DEFAULT 'pending',
+  error TEXT NOT NULL DEFAULT '',
+  created_at REAL NOT NULL
+);
+CREATE TRIGGER IF NOT EXISTS takeover_blocks_attempt BEFORE INSERT ON attempts
+WHEN EXISTS(SELECT 1 FROM task_takeovers WHERE task_id=NEW.task_id)
+BEGIN SELECT RAISE(ABORT, 'Task is being continued in an interactive session'); END;
+CREATE TRIGGER IF NOT EXISTS takeover_blocks_message BEFORE INSERT ON task_messages
+WHEN EXISTS(SELECT 1 FROM task_takeovers WHERE task_id=NEW.task_id)
+BEGIN SELECT RAISE(ABORT, 'Send messages to the interactive session'); END;
 CREATE TABLE IF NOT EXISTS settings(key TEXT PRIMARY KEY, value TEXT);
 CREATE TABLE IF NOT EXISTS memories(
   id INTEGER PRIMARY KEY, project_id INTEGER NOT NULL REFERENCES projects(id),

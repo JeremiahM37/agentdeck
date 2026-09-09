@@ -31,6 +31,7 @@ type attemptSummary struct {
 // second request.
 type taskView struct {
 	*store.Task
+	Takeover    *store.Takeover  `json:"takeover,omitempty"`
 	Labels      []string         `json:"labels"`
 	ProjectName string           `json:"project_name"`
 	TargetName  string           `json:"target_name"`
@@ -44,6 +45,7 @@ type taskView struct {
 // view assembles a task's full board representation.
 func (s *Server) view(task *store.Task) *taskView {
 	out := &taskView{Task: task, Labels: []string{}, ProjectName: "?", TargetName: "?"}
+	out.Takeover, _ = s.DB.Takeover(task.ID)
 	if labels := store.UnjStrings(task.LabelsJSON); labels != nil {
 		out.Labels = labels
 	}
