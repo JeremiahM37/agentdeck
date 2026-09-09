@@ -49,6 +49,22 @@ requires Proxmox. Your code and credentials never leave your network.
 diff review, approve/deny — is designed thumb-first. Approvals arrive as web-push,
 Discord, or ntfy notifications (ntfy carries approve/deny buttons inline).
 
+**Attach files from your phone or desktop.** Open a session or task → **Chat** →
+**📎 Attach**, or drop files onto the composer / paste an image. PDFs, images,
+text, and other documents are accepted (25 MiB per file, up to 10 per message).
+Files are copied to the agent's actual machine, including SSH and adopted tmux
+sessions. Add your instructions and press **Send**; an attachment by itself can
+also be sent. Uploading alone does not send a message. Reading a document uses
+that agent's available file tools; AgentDeck preserves the original bytes.
+
+Uploads live in `.agentdeck/context/` under the session directory (the project
+repository for tasks), with private permissions and a local Git exclusion.
+They stay there for later turns. Removing an attachment from the composer removes
+its message reference; it does not delete the uploaded file. Draft references
+survive reopening Chat on the same browser. Disposable sandboxes do not yet
+support attachments. If AgentDeck sits behind nginx, set
+`client_max_body_size 26M;` to allow a 25 MiB file plus multipart overhead.
+
 **Keep talking while tasks run.** Open a task and tap **Chat** to read its
 conversation, send corrections, and answer approvals. Messages wait for the
 current run, or choose **Interrupt and send** to change direction immediately.
@@ -296,3 +312,14 @@ Config via env: `AGENTDECK_PORT` (9110), `AGENTDECK_DB`, `AGENTDECK_BASE_URL`
 <div align="center">
 <sub>MIT licensed · self-hosted · your code never leaves your network.</sub>
 </div>
+
+### Rich terminal workspace
+
+**Attach** opens the actual agent terminal with file drop, screenshot paste,
+searchable tmux history, saved appearance settings, and an optional persistent
+shell alongside it. A file drawer previews text, images and PDFs and downloads
+artifacts. Uploads insert the path on the agent's machine without pressing Enter.
+
+**Desktop** connects WezTerm (Windows) or another native terminal to the same
+session. The Windows launcher and setup instructions are available from the
+terminal's Desktop panel. See [Terminal workspace](docs/terminal-workspace.md).

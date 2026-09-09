@@ -34,10 +34,11 @@ function withToken(url) {
   return t ? url + (url.includes("?") ? "&" : "?") + "token=" + encodeURIComponent(t) : url;
 }
 async function api(path, opts = {}) {
-  const headers = { "Content-Type": "application/json" };
+  const multipart = opts.body instanceof FormData;
+  const headers = multipart ? {} : { "Content-Type": "application/json" };
   if (authToken()) headers.Authorization = "Bearer " + authToken();
   const r = await fetch(`/api${path}`, {
-    headers, ...opts, body: opts.body ? JSON.stringify(opts.body) : undefined,
+    headers, ...opts, body: multipart ? opts.body : opts.body ? JSON.stringify(opts.body) : undefined,
   });
   if (r.status === 401) {
     const t = prompt("This agentdeck requires an access token:", authToken());
@@ -534,7 +535,7 @@ async function attachSession(s) {
     // same origin: the terminal is proxied by agentdeck itself, so this works
     // through the nginx vhost, over the tailnet and on a phone. Building it from
     // location.hostname aimed it at whichever machine served the page.
-    window.open(r.url || `/term/${r.port}/`, "_blank");
+    window.open(r.url?.replace("/term/", "/terminal/").replace(/\/$/, "") || `/term/${r.port}/`, "_blank");
   } catch (e) {
     // ttyd may not be installed; the manual command is still useful
     toast(e.message + " — attach manually", true);
@@ -1653,7 +1654,7 @@ async function deleteProjects(ids, usage, done) {
 async function openProjectShell(p) {
   try {
     const r = await api(`/projects/${p.id}/terminal`, { method: "POST" });
-    window.open(r.url, "_blank");
+    window.open(r.url.replace("/term/", "/terminal/").replace(/\/$/, ""), "_blank");
   } catch (e) { toast(e.message, true); }
 }
 
@@ -1788,7 +1789,7 @@ function renderSheet() {
         // same origin: the terminal is proxied by agentdeck itself, so this works
     // through the nginx vhost, over the tailnet and on a phone. Building it from
     // location.hostname aimed it at whichever machine served the page.
-    window.open(r.url || `/term/${r.port}/`, "_blank");
+    window.open(r.url?.replace("/term/", "/terminal/").replace(/\/$/, "") || `/term/${r.port}/`, "_blank");
       } catch (e) {
         const sshPrefix = t.target_kind === "ssh"
           ? `ssh -t ${t.target_user}@${t.target_host} ` : "";

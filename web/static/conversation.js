@@ -19,8 +19,10 @@ export function openConversation({kind, id, name, api, attachMic, onClose}) {
     <div id="conversation-approvals"></div>
     <form id="conversation-compose"><label for="conversation-input">Message ${kind === 'session' ? 'this agent' : 'this task'}</label>
       <textarea id="conversation-input" rows="3" maxlength="32000" placeholder="Write a message or use your keyboard’s microphone…"></textarea>
+      <input type="file" id="conversation-files" multiple hidden><div id="conversation-attachments" aria-label="Attached files"></div>
+      <p id="conversation-upload-status" role="status"></p>
       <p id="conversation-hint">${kind === 'session' ? 'Sends to the same running session. Enter adds a new line.' : 'Follow-ups wait for the current run, then continue in the same worktree.'}</p>
-      <div class="compose-actions">${kind === 'task' ? '<label class="interrupt-option"><input id="conversation-interrupt" type="checkbox"> Interrupt and send</label>' : '<button type="button" class="b warn" id="conversation-interrupt-session">Interrupt</button>'}<button type="button" class="b" id="conversation-mic" aria-label="Dictate message">🎙</button><button type="submit" class="b ok grow" id="conversation-send">Send</button></div>
+      <div class="compose-actions"><button type="button" class="b" id="conversation-attach" title="PDFs, images, documents and other files · 25 MiB each">📎 Attach</button>${kind === 'task' ? '<label class="interrupt-option"><input id="conversation-interrupt" type="checkbox"> Interrupt and send</label>' : '<button type="button" class="b warn" id="conversation-interrupt-session">Interrupt</button>'}<button type="button" class="b" id="conversation-mic" aria-label="Dictate message">🎙</button><button type="submit" class="b ok grow" id="conversation-send">Send</button></div>
       <p id="conversation-receipt" role="status"></p>
     </form>`;
   document.body.append(root);
@@ -31,6 +33,9 @@ export function openConversation({kind, id, name, api, attachMic, onClose}) {
   input.value = draft.text || '';
   const interrupt = $('#conversation-interrupt');
   if (interrupt) interrupt.checked = !!draft.interrupt;
+  let uploading = false, unavailable = false;
+  const uploadAbort = new AbortController();
+  let attachments = Array.isArray(draft.attachments) ? draft.attachments : [];
   let closed = false, busy = false, sending = false, follow = true, lastSignature = '', latestTask;
   let font = Math.max(16,Math.min(24,Number(localStorage.getItem('adk-reader-font')) || 17));
   const applyFont = () => { root.style.setProperty('--reader-font', `${font}px`); localStorage.setItem('adk-reader-font', font); };
@@ -42,7 +47,7 @@ export function openConversation({kind, id, name, api, attachMic, onClose}) {
   log.onscroll = () => { follow=log.scrollHeight-log.clientHeight-log.scrollTop < 70; };
   const persist = () => {
     if (draft.text !== input.value || draft.interrupt !== !!interrupt?.checked) draft.request_id=uid();
-    draft.text=input.value; draft.interrupt=!!interrupt?.checked;
+    draft.text=input.value; draft.interrupt=!!interrupt?.checked; draft.attachments=attachments;
     localStorage.setItem(draftKey, JSON.stringify(draft));
   };
   input.addEventListener('input',persist); interrupt?.addEventListener('change',persist);
@@ -56,7 +61,7 @@ export function openConversation({kind, id, name, api, attachMic, onClose}) {
   const priorOverflow=document.body.style.overflow; document.body.style.overflow='hidden';
   const priorFocus=document.activeElement;
   const close=()=>{
-    if (closed) return; closed=true; persist(); clearInterval(timer);
+    if (closed) return; closed=true; persist(); uploadAbort.abort(); clearInterval(timer);
     window.visualViewport?.removeEventListener('resize',viewport); window.visualViewport?.removeEventListener('scroll',viewport);
     document.body.style.overflow=priorOverflow; background.forEach(([el,was])=>{el.inert=was;}); root.remove(); priorFocus?.focus(); currentClose=null; onClose?.();
   };
@@ -71,6 +76,49 @@ export function openConversation({kind, id, name, api, attachMic, onClose}) {
   };
   $('#conversation-close').focus({preventScroll:true});
   const showError = text => { $('#conversation-error').hidden=!text; $('#conversation-error').textContent=text; };
+  const updateCompose = () => {
+    $('#conversation-send').disabled = sending || uploading || (kind==='session' && unavailable);
+    $('#conversation-attach').disabled = sending || uploading || unavailable;
+    $('#conversation-files').disabled = sending || uploading || unavailable;
+    $('#conversation-attach').title = unavailable ? 'Attachments unavailable for this session or sandbox' : 'PDFs, images, documents and other files · 25 MiB each';
+  };
+  const renderAttachments = () => {
+    const list=$('#conversation-attachments'); list.replaceChildren();
+    for (const a of attachments) {
+      const chip=document.createElement('div');chip.className='context-attachment';
+      const label=document.createElement('span');label.textContent=`${a.name} · ${Math.max(1,Math.ceil(a.size/1024))} KB`;label.title=a.path;
+      const remove=document.createElement('button');remove.type='button';remove.className='b';remove.textContent='×';remove.setAttribute('aria-label',`Remove ${a.name}`);remove.disabled=sending;
+      remove.onclick=()=>{attachments=attachments.filter(item=>item!==a);draft.request_id=uid();persist();renderAttachments();};
+      chip.append(label,remove);list.append(chip);
+    }
+  };
+  renderAttachments();
+  const uploadFiles = async files => {
+    if (uploading || sending || unavailable || !files.length) return;
+    uploading=true;updateCompose();
+    const progress=$('#conversation-upload-status');
+    try {
+      for (const file of files) {
+        if (closed) return;
+        if (attachments.length >= 10) throw new Error('Attach up to 10 files per message.');
+        if (file.size > 25*1024*1024) throw new Error(`${file.name} exceeds 25 MiB.`);
+        progress.textContent=`Uploading ${file.name}…`;
+        const body=new FormData();body.append('file',file);
+        const attachment=await api(`/${kind==='session'?'sessions':'tasks'}/${id}/attachments`,{method:'POST',body,signal:uploadAbort.signal});
+        if (closed) return;
+        attachments.push(attachment);draft.request_id=uid();persist();renderAttachments();
+      }
+      progress.textContent='Files ready. Add a message, then Send.';
+    } catch(e) { if(!closed) progress.textContent=`Upload failed: ${e.message} Previously uploaded files are kept.`; }
+    finally { uploading=false;if(!closed){$('#conversation-files').value='';updateCompose();} }
+  };
+  $('#conversation-attach').onclick=()=>$('#conversation-files').click();
+  $('#conversation-files').onchange=e=>uploadFiles([...e.target.files]);
+  const composer=$('#conversation-compose');
+  composer.addEventListener('dragover',e=>{if([...e.dataTransfer.types].includes('Files')){e.preventDefault();composer.classList.add('file-drag');}});
+  composer.addEventListener('dragleave',()=>composer.classList.remove('file-drag'));
+  composer.addEventListener('drop',e=>{if(e.dataTransfer.files.length){e.preventDefault();composer.classList.remove('file-drag');uploadFiles([...e.dataTransfer.files]);}});
+  input.addEventListener('paste',e=>{if(e.clipboardData.files.length){e.preventDefault();uploadFiles([...e.clipboardData.files]);}});
   const updateLog = (signature, fill) => {
     if (signature===lastSignature) return;
     const scroll=log.scrollTop, shouldFollow=follow;
@@ -84,12 +132,12 @@ export function openConversation({kind, id, name, api, attachMic, onClose}) {
       if (kind==='session') {
         const data=await api(`/sessions/${id}/reader`); if (closed) return;
         status.textContent=`${data.session.agent} · ${data.ended?'Ended':data.session.status} · live reader`;
-        $('#conversation-send').disabled=data.ended||sending;
+        unavailable=data.ended; updateCompose();
         $('#conversation-interrupt-session').disabled=data.ended;
         updateLog(data.text,()=>{ const pre=document.createElement('pre');pre.className='session-reader';pre.textContent=data.text||'Waiting for agent output…';log.replaceChildren(pre); });
       } else {
         const [task,events,messages,approvals]=await Promise.all([api(`/tasks/${id}`),api(`/tasks/${id}/events`),api(`/tasks/${id}/messages`),api('/approvals?status=pending')]);
-        if (closed) return; latestTask=task;
+        if (closed) return; latestTask=task; unavailable=task.target_kind==='sandbox'; updateCompose();
         const lastMessage=messages.at(-1);
         if (lastMessage && !sending && !input.value && lastMessage.status!=='pending') $('#conversation-receipt').textContent=lastMessage.status==='failed' ? `Not delivered: ${lastMessage.error}` : lastMessage.attempt_id ? 'Message delivered to the agent.' : 'Instructions added to the task.';
         status.textContent=`${task.agent} · ${task.status}${task.attempt ? ` · turn ${task.attempt.n}` : ''}`;
@@ -118,18 +166,21 @@ export function openConversation({kind, id, name, api, attachMic, onClose}) {
     catch(e){showError(e.message)}
   });
   $('#conversation-compose').onsubmit=async e=>{
-    e.preventDefault(); if(sending || !input.value.trim()) return;
+    e.preventDefault(); if(sending || uploading || (!input.value.trim() && !attachments.length)) return;
     persist(); const submitted={...draft,request_id:draft.request_id||uid()};draft.request_id=submitted.request_id;persist();
-    sending=true;$('#conversation-send').disabled=true;$('#conversation-receipt').textContent='Sending…';
+    const text=submitted.text + (attachments.length ? '\n\nUse these attached files as context (paths on this agent’s machine):\n' + JSON.stringify(attachments.map(a=>({name:a.name,path:a.path})),null,2) : '');
+    if(new TextEncoder().encode(text).length>32000){showError('Message including attachments exceeds 32000 bytes. Shorten the message.');return;}
+    sending=true;updateCompose();renderAttachments();$('#conversation-receipt').textContent='Sending…';
     try {
-      const receipt=await api(kind==='session'?`/sessions/${id}/send`:`/tasks/${id}/messages`,{method:'POST',body:kind==='session'?{text:submitted.text}:submitted});
+      const receipt=await api(kind==='session'?`/sessions/${id}/send`:`/tasks/${id}/messages`,{method:'POST',body:kind==='session'?{text}:{...submitted,text}});
       if(closed)return;
       // Do not erase text typed while the request was in flight.
-      if(input.value===submitted.text){input.value='';draft={};persist();}
+      attachments=[];renderAttachments();$('#conversation-upload-status').textContent='';
+      if(input.value===submitted.text){input.value='';draft={};}persist();
       $('#conversation-receipt').textContent=kind==='session'?'Sent to the session.':receipt.status==='delivered'?'Already delivered.':submitted.interrupt?'Saved. Interrupting the current run before continuing.':'Saved. Waiting for delivery to the agent.';
       refresh();
     }catch(e){if(!closed){$('#conversation-receipt').textContent=`Could not confirm delivery: ${e.message}. Your draft is kept.`;}}
-    finally{sending=false;if(!closed)$('#conversation-send').disabled=false;}
+    finally{sending=false;if(!closed){updateCompose();renderAttachments();}}
   };
   const timer=setInterval(refresh,2000);refresh();
 }

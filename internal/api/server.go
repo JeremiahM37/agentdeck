@@ -45,6 +45,9 @@ type Server struct {
 	Cfg       *config.Config
 	Log       *slog.Logger
 
+	uploadMu    sync.Mutex
+	uploadCount int
+
 	// modelCache holds each agent's self-reported model catalog; see probeModels.
 	modelMu    sync.Mutex
 	modelCache map[string]modelCacheEntry
@@ -85,6 +88,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/tasks/{id}", s.getTask)
 	mux.HandleFunc("GET /api/tasks/{id}/messages", s.taskMessages)
 	mux.HandleFunc("POST /api/tasks/{id}/messages", s.sendTaskMessage)
+	mux.HandleFunc("POST /api/tasks/{id}/attachments", s.uploadTaskAttachment)
 	mux.HandleFunc("PATCH /api/tasks/{id}", s.patchTask)
 	mux.HandleFunc("DELETE /api/tasks/{id}", s.deleteTask)
 	mux.HandleFunc("POST /api/tasks/clear", s.clearTasks)
@@ -121,11 +125,19 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("PATCH /api/sessions/{id}", s.patchSession)
 	mux.HandleFunc("DELETE /api/sessions/{id}", s.deleteSession)
 	mux.HandleFunc("POST /api/sessions/{id}/send", s.sendToSession)
+	mux.HandleFunc("POST /api/sessions/{id}/attachments", s.uploadSessionAttachment)
 	mux.HandleFunc("POST /api/sessions/{id}/terminal", s.attachSession)
 	mux.HandleFunc("POST /api/sessions/{id}/handoff", s.handoffSession)
 	mux.HandleFunc("GET /api/sessions/{id}/wraps", s.sessionWraps)
 	mux.HandleFunc("POST /api/sessions/{id}/promote", s.promoteSession)
 
+	// ---- terminal workspace ----
+	mux.HandleFunc("GET /terminal/{kind}/{id}", s.terminalPage)
+	mux.HandleFunc("GET /api/term/{kind}/{id}/info", s.terminalInfo)
+	mux.HandleFunc("GET /api/term/{kind}/{id}/history", s.terminalHistory)
+	mux.HandleFunc("POST /api/term/{kind}/{id}/attachments", s.terminalUpload)
+	mux.HandleFunc("GET /api/term/{kind}/{id}/files", s.terminalFiles)
+	mux.HandleFunc("GET /api/term/{kind}/{id}/file", s.terminalFile)
 	// ---- attached terminals (proxied on this origin; see termproxy.go) ----
 	mux.HandleFunc("/term/{kind}/{id}", s.termProxy)
 	mux.HandleFunc("/term/{kind}/{id}/", s.termProxy)
@@ -167,7 +179,7 @@ func (s *Server) withAuth(next http.Handler) http.Handler {
 	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		p := r.URL.Path
-		if strings.HasPrefix(p, "/api") && !strings.HasPrefix(p, "/api/hook/") {
+		if (strings.HasPrefix(p, "/api") && !strings.HasPrefix(p, "/api/hook/")) || strings.HasPrefix(p, "/term/") {
 			supplied := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
 			if supplied != s.Cfg.AuthToken && r.URL.Query().Get("token") != s.Cfg.AuthToken {
 				writeJSON(w, 401, map[string]any{"detail": "unauthorized"})

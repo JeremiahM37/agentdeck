@@ -18,6 +18,10 @@ func NewLocal() *Local { return &Local{} }
 
 // Run shells out on this host.
 func (l *Local) Run(ctx context.Context, cmd string, opts RunOpts) (Result, error) {
+	return l.run(ctx, cmd, opts, nil)
+}
+
+func (l *Local) run(ctx context.Context, cmd string, opts RunOpts, input io.Reader) (Result, error) {
 	d := time.Duration(opts.timeoutOrDefault() * float64(time.Second))
 	cctx, cancel := context.WithTimeout(ctx, d)
 	defer cancel()
@@ -27,9 +31,10 @@ func (l *Local) Run(ctx context.Context, cmd string, opts RunOpts) (Result, erro
 	}
 	var out, errb bytes.Buffer
 	c.Stdout, c.Stderr = &out, &errb
+	c.Stdin = input
 	err := c.Run()
 	if cctx.Err() == context.DeadlineExceeded {
-		return Result{124, "", "timeout: " + cmd}, nil
+		return Result{124, "", "command timed out"}, nil
 	}
 	rc := 0
 	if err != nil {

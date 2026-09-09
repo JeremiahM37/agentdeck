@@ -1,11 +1,9 @@
 package executor
 
 import (
+	"bytes"
 	"context"
-	"encoding/base64"
 	"fmt"
-	"path"
-	"strings"
 )
 
 // Pct drives an LXC on this Proxmox node through `pct exec` — no SSH and no
@@ -51,22 +49,14 @@ func (p *Pct) ReadFile(ctx context.Context, filePath string, offset int64) ([]by
 	return []byte(r.Stdout), nil
 }
 
-// WriteFile pushes bytes into the container as base64.
+// WriteFile streams bytes into the container without shell argument limits.
 func (p *Pct) WriteFile(ctx context.Context, filePath string, data []byte) error {
-	_, err := p.Run(ctx, writeFileCommand(filePath, data), RunOpts{Timeout: 120})
-	return err
+	if p.runner != nil {
+		return writeFileChunks(ctx, p.Run, filePath, data, 32<<10)
+	}
+	r, err := p.local.run(ctx, Wrap(p.VMID, streamFileCommand(filePath), ""), RunOpts{Timeout: 120}, bytes.NewReader(data))
+	return fileWriteResult(r, err)
 }
 
 // Close is a no-op: pct exec pools nothing.
 func (p *Pct) Close() error { return nil }
-
-// writeFileCommand is the shared "mkdir -p && base64 -d >" recipe used by every
-// remote executor, so a staged file lands byte-identically on all target kinds.
-func writeFileCommand(filePath string, data []byte) string {
-	b64 := base64.StdEncoding.EncodeToString(data)
-	parent := path.Dir(filePath)
-	var b strings.Builder
-	fmt.Fprintf(&b, "mkdir -p %s && echo %s | base64 -d > %s",
-		ShellQuote(parent), b64, ShellQuote(filePath))
-	return b.String()
-}

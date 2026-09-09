@@ -6,6 +6,7 @@ import (
 	"net/http/httputil"
 	"net/url"
 	"strconv"
+	"strings"
 
 	"github.com/JeremiahM37/agentdeck/internal/sessions"
 	"github.com/JeremiahM37/agentdeck/internal/store"
@@ -61,6 +62,24 @@ func (s *Server) termProxy(w http.ResponseWriter, r *http.Request) {
 // resolveAttachment turns a URL like /term/session/24 into the tmux session it
 // names, refusing anything that is not a live session or attempt of this board.
 func (s *Server) resolveAttachment(kind, rawID string) (terminal.Attachment, *store.Target, error) {
+	if strings.HasSuffix(kind, "-shell") {
+		base := strings.TrimSuffix(kind, "-shell")
+		if base != "session" && base != "attempt" {
+			return terminal.Attachment{}, nil, fmt.Errorf("not a terminal")
+		}
+		att, target, err := s.resolveAttachment(base, rawID)
+		if err != nil {
+			return att, target, err
+		}
+		dir, _, err := s.terminalDirectory(base, rawID)
+		if err != nil {
+			return att, target, err
+		}
+		att.Key = kind + ":" + rawID
+		att.TmuxSession = "adk-companion-" + base + "-" + rawID
+		att.Workdir = dir
+		return att, target, nil
+	}
 	id, err := strconv.ParseInt(rawID, 10, 64)
 	if err != nil || id <= 0 {
 		return terminal.Attachment{}, nil, fmt.Errorf("not a terminal")

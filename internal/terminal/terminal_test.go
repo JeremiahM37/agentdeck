@@ -3,7 +3,9 @@ package terminal
 import (
 	"context"
 	"fmt"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -304,5 +306,42 @@ func TestAnAgentAttachIsStillAnAttach(t *testing.T) {
 	got, _ := AttachArgv(att, &store.Target{Kind: "local"})
 	if strings.Join(got, " ") != "tmux attach -t adk-s3" {
 		t.Errorf("got %v", got)
+	}
+}
+
+func TestSSHAttachPreservesPortWrapperAndQuotedWorkingDirectory(t *testing.T) {
+	att := Attachment{Key: "project:7", TmuxSession: "project-7", Workdir: "/tmp/a path/it's $(touch bad)"}
+	got, err := AttachArgv(att, &store.Target{Kind: "ssh", Host: "example.test", User: "operator", Port: 2222, CommandPrefix: "wrapper {cmd}"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(strings.Join(got, " "), "-p 2222") {
+		t.Fatalf("port lost: %v", got)
+	}
+	if len(got) != 8 || got[6] != "operator@example.test" {
+		t.Fatalf("SSH command must be one argument: %v", got)
+	}
+	if !strings.HasPrefix(got[7], "wrapper ") {
+		t.Fatalf("wrapper lost: %v", got)
+	}
+	// Execute a harmless wrapper that reports its received arguments. This proves
+	// that spaces, apostrophes and command substitutions survive both shell layers.
+	dir := t.TempDir()
+	script := filepath.Join(dir, "wrapper")
+	os.WriteFile(script, []byte("#!/bin/sh\nprintf '%s' \"$1\"\n"), 0700)
+	cmd := exec.Command("sh", "-c", got[7])
+	cmd.Env = append(os.Environ(), "PATH="+dir+":"+os.Getenv("PATH"))
+	output, err := cmd.Output()
+	if err != nil {
+		t.Fatal(err)
+	}
+	command := string(output)
+	if !strings.Contains(command, "tmux new-session") || !strings.Contains(command, "touch bad") {
+		t.Fatalf("mangled command: %s", command)
+	}
+	// A Windows SSH wrapper gets a base64 command, avoiding cmd.exe's parsing.
+	got, err = AttachArgv(att, &store.Target{Kind: "ssh", Host: "desktop", CommandPrefix: `wsl -e bash -lc "echo {b64} | base64 -d | bash"`})
+	if err != nil || strings.Contains(got[len(got)-1], "touch bad") {
+		t.Fatalf("unencoded wrapper: %v %v", got, err)
 	}
 }

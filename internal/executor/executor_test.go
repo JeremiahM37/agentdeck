@@ -53,14 +53,6 @@ func TestReadFileUsesFastTail(t *testing.T) {
 	}
 }
 
-func TestWriteFileCommandIsIdenticalEverywhere(t *testing.T) {
-	// one recipe for every remote kind, so a staged file lands byte-identically
-	cmd := writeFileCommand("/a/b/c.json", []byte(`{"x":1}`))
-	if !strings.Contains(cmd, "mkdir -p /a/b") || !strings.Contains(cmd, "base64 -d > /a/b/c.json") {
-		t.Fatalf("write command: %s", cmd)
-	}
-}
-
 func TestShellQuoteEscapesSingleQuotes(t *testing.T) {
 	if got := ShellQuote(`it's`); got != `'it'\''s'` {
 		t.Fatalf("got %s", got)

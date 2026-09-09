@@ -35,6 +35,12 @@ func main() {
 
 	if len(os.Args) > 1 {
 		switch os.Args[1] {
+		case "attach":
+			if err := attach(cfg, os.Args[2:]); err != nil {
+				fmt.Fprintln(os.Stderr, err)
+				os.Exit(1)
+			}
+			return
 		case "mcp":
 			// stdio belongs to the protocol here — logs would corrupt the stream
 			api := env("AGENTDECK_API", "http://127.0.0.1:"+strconv.Itoa(cfg.Port))

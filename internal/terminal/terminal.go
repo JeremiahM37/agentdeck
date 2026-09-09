@@ -1,13 +1,14 @@
 // Package terminal is one-click terminal attach: spawn a ttyd on the control
 // plane that wraps `tmux attach` (locally, over ssh, or via pct) for a running
-// attempt. Ports are ephemeral and --once makes ttyd exit when the client
-// disconnects.
+// attempt. Browser and desktop clients share the same persistent tmux sessions.
 package terminal
 
 import (
 	"context"
+	"encoding/base64"
 	"errors"
 	"fmt"
+	"github.com/JeremiahM37/agentdeck/internal/shellq"
 	"net"
 	"os/exec"
 	"strconv"
@@ -156,6 +157,9 @@ func AttachArgv(a Attachment, target *store.Target) ([]string, error) {
 		return append([]string{"sudo", "pct", "exec", target.Host, "--"}, inner...), nil
 	case target.Kind == "ssh":
 		argv := []string{"ssh", "-tt", "-o", "StrictHostKeyChecking=accept-new"}
+		if target.Port > 0 {
+			argv = append(argv, "-p", strconv.Itoa(target.Port))
+		}
 		if target.KeyPath != "" {
 			argv = append(argv, "-i", target.KeyPath)
 		}
@@ -163,7 +167,26 @@ func AttachArgv(a Attachment, target *store.Target) ([]string, error) {
 		if user == "" {
 			user = "root"
 		}
-		return append(append(argv, user+"@"+target.Host), inner...), nil
+		words := make([]string, len(inner))
+		for i, word := range inner {
+			words[i] = shellq.Quote(word)
+		}
+		command := strings.Join(words, " ")
+		wrapper := target.CommandPrefix
+		// Wrappers such as Windows SSH -> WSL consume stdin while decoding the
+		// command. Give tmux its own Unix PTY and relay input from the outer tty.
+		if wrapper != "" {
+			command = "script -qefc " + shellq.Quote("env TERM=xterm-256color "+command) + " /dev/null </dev/tty"
+		}
+		switch {
+		case strings.Contains(wrapper, "{b64}"):
+			command = strings.ReplaceAll(wrapper, "{b64}", base64.StdEncoding.EncodeToString([]byte(command)))
+		case strings.Contains(wrapper, "{cmd}"):
+			command = strings.ReplaceAll(wrapper, "{cmd}", shellq.Quote(command))
+		case wrapper != "":
+			command = wrapper + " " + shellq.Quote(command)
+		}
+		return append(argv, user+"@"+target.Host, command), nil
 	default:
 		return inner, nil
 	}

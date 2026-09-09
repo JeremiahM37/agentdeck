@@ -126,6 +126,8 @@ func (m *Mock) Run(ctx context.Context, cmd string, opts RunOpts) (Result, error
 	m.mu.Unlock()
 
 	switch {
+	case strings.HasPrefix(cmd, "test \"$(wc -c < ") && strings.Contains(cmd, " && mv -- "):
+		return m.publishUpload(cmd), nil
 	case strings.HasPrefix(cmd, "sudo pvesh get /cluster/nextid"):
 		return Result{0, "9001\n", ""}, nil
 	case hasAnyPrefix(cmd, "sudo pct clone", "sudo pct start", "sudo pct stop",
@@ -133,7 +135,7 @@ func (m *Mock) Run(ctx context.Context, cmd string, opts RunOpts) (Result, error
 		return Result{0, "", ""}, nil
 	case strings.HasPrefix(cmd, "git clone"):
 		return Result{0, "", ""}, nil
-	case strings.Contains(cmd, "agentdeck-scratch"):
+	case strings.Contains(cmd, "agentdeck-scratch") && strings.Contains(cmd, "mktemp -d"):
 		// a scratch directory is created by the target's own shell and its path
 		// read back from `pwd`; mktemp's uniqueness is modelled by a counter, so
 		// a test sees the same "never the same directory twice" guarantee

@@ -31,3 +31,12 @@
 .reader-approval button { margin-right:8px; }
 @media(min-width:900px) { .conversation { left:50%; transform:translateX(-50%); width:900px; border-inline:1px solid #30394f; box-shadow:0 0 0 100vmax #02040ad9; } }
 @media(max-height:550px) { .reader-controls { padding:2px 10px; } #conversation-input { height:62px; min-height:45px; } #conversation-hint { display:none; } .conversation-head { padding:6px 12px; } }
+
+#conversation-attachments { display:flex; flex-wrap:wrap; gap:6px; max-height:100px; overflow:auto; margin-top:6px; }
+.context-attachment { display:flex; align-items:center; gap:6px; min-width:0; max-width:100%; padding-left:9px; background:#272442; border:1px solid #554c80; border-radius:8px; font-size:12px; }
+.context-attachment span { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.context-attachment .b { flex-shrink:0; min-width:36px; padding:0 6px; }
+#conversation-upload-status { font-size:12px; color:#b9b0d9; margin:5px 0; }
+#conversation-upload-status:empty { display:none; }
+#conversation-compose.file-drag { outline:2px dashed #9c85fa; outline-offset:-3px; }
+.compose-actions { flex-wrap:wrap; }

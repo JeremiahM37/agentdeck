@@ -7,7 +7,7 @@
 
    Non-GET requests return early: the cache API rejects them outright, and
    swallowing one here would break any POST the page makes. */
-const CACHE = "agentdeck-v20";
+const CACHE = "agentdeck-v22";
 const SHELL = ["/", "/app.js", "/conversation.js", "/conversation.css", "/style.css", "/fonts.css", "/icon.svg", "/manifest.webmanifest"];
 
 self.addEventListener("install", (e) => {
@@ -25,7 +25,7 @@ self.addEventListener("fetch", (e) => {
   const url = new URL(e.request.url);
   if (url.origin !== location.origin) return;
   // never cache the API or the SSE streams — they are live state
-  if (url.pathname.startsWith("/api/")) return;
+  if (url.pathname.startsWith("/api/") || url.pathname.startsWith("/term/") || url.pathname.startsWith("/terminal/")) return;
 
   if (url.pathname.startsWith("/fonts/") || url.pathname === "/icon.svg") {
     e.respondWith(caches.match(e.request).then((hit) => hit || fetch(e.request)));

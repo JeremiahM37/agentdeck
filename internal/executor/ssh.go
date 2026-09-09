@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/base64"
 	"fmt"
+	"io"
 	"net"
 	"os"
 	"strings"
@@ -142,6 +143,10 @@ func (s *SSH) buildCommand(cmd, cwd string) string {
 
 // Run executes a command over a fresh SSH channel on the pooled connection.
 func (s *SSH) Run(ctx context.Context, cmd string, opts RunOpts) (Result, error) {
+	return s.run(ctx, cmd, opts, nil)
+}
+
+func (s *SSH) run(ctx context.Context, cmd string, opts RunOpts, input io.Reader) (Result, error) {
 	full := s.buildCommand(cmd, opts.Cwd)
 	// the seam receives the FULLY BUILT command, so a test asserting on it is
 	// checking what the target would really see rather than a reimplementation
@@ -160,6 +165,7 @@ func (s *SSH) Run(ctx context.Context, cmd string, opts RunOpts) (Result, error)
 	defer sess.Close()
 	var out, errb bytes.Buffer
 	sess.Stdout, sess.Stderr = &out, &errb
+	sess.Stdin = input
 
 	done := make(chan error, 1)
 	go func() { done <- sess.Run(full) }()
@@ -180,7 +186,7 @@ func (s *SSH) Run(ctx context.Context, cmd string, opts RunOpts) (Result, error)
 		return Result{rc, out.String(), errb.String()}, nil
 	case <-timeout:
 		_ = sess.Signal(ssh.SIGKILL)
-		return Result{124, out.String(), "timeout: " + cmd}, nil
+		return Result{124, out.String(), "command timed out"}, nil
 	case <-ctx.Done():
 		_ = sess.Signal(ssh.SIGKILL)
 		return Result{}, ctx.Err()
@@ -201,11 +207,14 @@ func (s *SSH) ReadFile(ctx context.Context, path string, offset int64) ([]byte, 
 	return []byte(r.Stdout), nil
 }
 
-// WriteFile uploads via a base64 heredoc — no SFTP subsystem required, and it
-// behaves identically on the pct executor.
+// WriteFile streams file bytes on native SSH targets. Wrapped targets may consume
+// stdin themselves (e.g. Windows -> WSL), so use bounded commands there.
 func (s *SSH) WriteFile(ctx context.Context, path string, data []byte) error {
-	_, err := s.Run(ctx, writeFileCommand(path, data), RunOpts{Timeout: 120})
-	return err
+	if s.Wrapper != "" || s.runner != nil {
+		return writeFileChunks(ctx, s.Run, path, data, 2048)
+	}
+	r, err := s.run(ctx, streamFileCommand(path), RunOpts{Timeout: 120}, bytes.NewReader(data))
+	return fileWriteResult(r, err)
 }
 
 // Close drops the pooled connection.

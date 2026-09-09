@@ -689,7 +689,7 @@ def test_attach_opens_a_same_origin_terminal(page, server):
     assert opened, "Attach opened nothing"
     # every URL it opens must be same-origin, not just the first one
     for url in opened:
-        assert url.startswith("/term/"), f"terminal url must be same-origin, got {url!r}"
+        assert url.startswith("/terminal/"), f"terminal url must be same-origin, got {url!r}"
         for bad in ("http://", "https://", "localhost", "127.0.0.1", ":77"):
             assert bad not in url, f"terminal url names a host ({bad}): {url!r}"
     url = opened[0]
@@ -811,7 +811,7 @@ def test_a_shell_into_the_project_is_one_click(page, server):
 
     opened = [u for u in page.evaluate("window.__opened || []") if u]
     assert opened, "the shell button opened nothing"
-    assert opened[0].startswith("/term/project/"), \
+    assert opened[0].startswith("/terminal/project/"), \
         f"a shell must be same-origin and name the project: {opened[0]!r}"
 
     # opening the shell must not have navigated away from the board
@@ -1109,3 +1109,81 @@ def test_dispatch_directly_into_chat_and_message_running_task(page, server):
     page.click("#sheet .x")
     page.locator('.card',has_text='Talk while working').get_by_role('button',name='Chat with this task').click()
     expect(page.locator("#conversation-log")).to_contain_text("Keep the existing public API")
+
+
+def test_mobile_context_attachments_keep_drafts_and_send(page, server):
+    page.set_viewport_size(PHONE)
+    page.goto(server)
+    page.click(".tab[data-tab='sessions']")
+    page.click("#sess-new")
+    page.fill("#ns-name", "file context")
+    page.click("#ns-go")
+    card = page.locator(".scard", has_text="file context")
+    expect(card).to_be_visible(timeout=15000)
+    card.get_by_role("button", name="Chat", exact=True).click()
+    files = page.locator("#conversation-files")
+    files.set_input_files([
+        {"name": "Résumé draft.pdf", "mimeType": "application/pdf", "buffer": b"%PDF-1.4\ncontext"},
+        {"name": "notes.txt", "mimeType": "text/plain", "buffer": b"Keep this note"},
+    ])
+    expect(page.locator("#conversation-attachments")).to_contain_text("Résumé draft.pdf")
+    expect(page.locator("#conversation-upload-status")).to_contain_text("Files ready")
+    page.get_by_role("button", name="Remove notes.txt", exact=True).click()
+    page.fill("#conversation-input", "Please explain the attached PDF")
+    page.click("#conversation-close")
+    card.get_by_role("button", name="Chat", exact=True).click()
+    expect(page.locator("#conversation-attachments")).to_contain_text("Résumé draft.pdf")
+    expect(page.locator("#conversation-attachments")).not_to_contain_text("notes.txt")
+    expect(page.locator("#conversation-input")).to_have_value("Please explain the attached PDF")
+    assert page.locator("#conversation").evaluate("e=>e.scrollWidth <= innerWidth")
+    page.route("**/api/sessions/*/send", lambda route: route.fulfill(status=502, content_type="application/json", body='{"detail":"target offline"}'))
+    page.click("#conversation-send")
+    expect(page.locator("#conversation-receipt")).to_contain_text("Your draft is kept")
+    expect(page.locator("#conversation-attachments")).to_contain_text("Résumé draft.pdf")
+    page.unroute("**/api/sessions/*/send")
+    with page.expect_request("**/api/sessions/*/send") as sent:
+        page.click("#conversation-send")
+    assert "Résumé draft.pdf" in sent.value.post_data_json["text"]
+    assert ".agentdeck/context/" in sent.value.post_data_json["text"]
+    assert "notes.txt" not in sent.value.post_data_json["text"]
+    expect(page.locator("#conversation-log")).to_contain_text("Please explain the attached PDF", timeout=15000)
+    expect(page.locator("#conversation-attachments")).to_be_empty()
+    expect(page.locator("#conversation-input")).to_have_value("")
+    page.screenshot(path="/tmp/agentdeck-attachments-mobile.png")
+    page.click("#conversation-close")
+
+
+def test_context_upload_failure_and_attachment_only_task_message(page, server):
+    page.goto(server)
+    _new_task(page, "Attachment followup", "Read the next file")
+    card = page.locator(".col.s-review .card", has_text="Attachment followup")
+    expect(card).to_be_visible(timeout=15000)
+    card.click()
+    page.get_by_role("button", name="Chat", exact=True).click()
+    files = page.locator("#conversation-files")
+    payload={"name":"notes.txt","mimeType":"text/plain","buffer":b"reference text"}
+    page.route("**/api/tasks/*/attachments", lambda route: route.fulfill(status=502, content_type="application/json", body='{"detail":"disk full"}'))
+    files.set_input_files(payload)
+    expect(page.locator("#conversation-upload-status")).to_contain_text("disk full")
+    expect(page.locator("#conversation-attachments")).to_be_empty()
+    page.unroute("**/api/tasks/*/attachments")
+    files.set_input_files(payload)
+    expect(page.locator("#conversation-upload-status")).to_contain_text("Files ready")
+    page.locator("#conversation-input").evaluate("""el => {
+      const data=new DataTransfer();data.items.add(new File(['image bytes'],'pasted.png',{type:'image/png'}));
+      el.dispatchEvent(new ClipboardEvent('paste',{clipboardData:data,bubbles:true,cancelable:true}));
+    }""")
+    expect(page.locator("#conversation-attachments")).to_contain_text("pasted.png")
+    expect(page.locator("#conversation-upload-status")).to_contain_text("Files ready")
+    page.locator("#conversation-compose").evaluate("""el => {
+      const data=new DataTransfer();data.items.add(new File(['spreadsheet'],'dropped.csv',{type:'text/csv'}));
+      el.dispatchEvent(new DragEvent('drop',{dataTransfer:data,bubbles:true,cancelable:true}));
+    }""")
+    expect(page.locator("#conversation-attachments")).to_contain_text("dropped.csv")
+    expect(page.locator("#conversation-upload-status")).to_contain_text("Files ready")
+    page.click("#conversation-send")
+    expect(page.locator("#conversation-log")).to_contain_text("notes.txt",timeout=15000)
+    expect(page.locator("#conversation-log")).to_contain_text("pasted.png")
+    expect(page.locator("#conversation-log")).to_contain_text("dropped.csv")
+    expect(page.locator("#conversation-log")).to_contain_text("You · delivered to agent",timeout=20000)
+    page.click("#conversation-close")
