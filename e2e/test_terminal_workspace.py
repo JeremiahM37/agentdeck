@@ -15,7 +15,7 @@ from playwright.sync_api import expect
 from conftest import _binary, _unused_port
 
 @pytest.fixture()
-def real_terminal(tmp_path):
+def real_terminal(tmp_path, request):
     tmux_dir = tempfile.TemporaryDirectory(prefix='adkt-', dir='/tmp')
     env = {**os.environ, 'TMUX_TMPDIR': tmux_dir.name, 'TMUX': '', 'AGENTDECK_MOCK': '0',
            'AGENTDECK_DB': str(tmp_path/'test.db'), 'AGENTDECK_HOST': '127.0.0.1',
@@ -26,6 +26,10 @@ def real_terminal(tmp_path):
     (root/'hello.txt').write_text('A useful artifact\n<script>window.bad=true</script>\n')
     subprocess.run(['git','init','-q',str(root)], check=True)
     subprocess.run(['tmux','new-session','-d','-s','terminal-test','-c',str(root),'bash --norc'],env=env,check=True)
+    options = getattr(request, 'param', {})
+    if options.get('agent_script'):
+        agent = tmp_path/'test-agent'; agent.write_text(options['agent_script']); agent.chmod(0o755)
+        env['AGENTDECK_CLAUDE_BIN'] = str(agent); env['AGENTDECK_TICK'] = '0.1'
     log = (tmp_path/'server.log').open('w')
     proc = subprocess.Popen([_binary()],cwd=root,env=env,stdout=log,stderr=log)
     def api(path, data=None):
@@ -39,7 +43,7 @@ def real_terminal(tmp_path):
         else: raise RuntimeError('isolated terminal server did not start')
         target = api('/targets',{'name':'terminal-local','kind':'local'})
         sess = api('/sessions/adopt',{'target_id':target['id'],'tmux_session':'terminal-test','workdir':str(root),'name':'Real terminal','agent':'claude'})
-        yield dict(url=url,root=root,env=env,id=sess['id'],api=api,proc=proc,port=port)
+        yield dict(url=url,root=root,env=env,id=sess['id'],api=api,proc=proc,port=port,target_id=target['id'])
     finally:
         proc.terminate();proc.wait(timeout=15);log.close()
         subprocess.run(['tmux','kill-server'],env=env,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
@@ -50,6 +54,11 @@ def open_terminal(page, t):
     expect(page.locator('#connection')).to_have_text('Connected',timeout=20000)
     expect(page.locator('#agent-terminal .xterm-screen')).to_contain_text('$',timeout=10000)
     page.locator('#agent-terminal').click()
+
+def terminal_tool(page, selector):
+    if not page.locator(selector).is_visible():
+        page.locator('#terminal-tools > summary').click()
+    page.locator(selector).click()
 
 def capture(t,session='terminal-test'):
     return subprocess.check_output(['tmux','capture-pane','-p','-J','-S','-100000','-t','='+session+':'],env=t['env']).decode()
@@ -87,7 +96,7 @@ def test_real_terminal_drop_paste_files_and_shell(page,real_terminal):
     with page.expect_download() as download:page.locator('#preview-download').click()
     assert Path(download.value.path()).read_bytes()==(t['root']/'hello.txt').read_bytes()
     page.locator('#preview-dialog [data-close]').click();page.locator('#files-dialog [data-close]').click()
-    page.locator('#shell').click()
+    terminal_tool(page,'#shell')
     expect(page.locator('#workspace .pane').nth(1).locator('.pane-status')).to_have_text('Connected',timeout=20000)
     page.locator('#workspace .pane').nth(1).locator('.terminal-host').click()
     type_command(page,"printf companion-proof > companion.txt")
@@ -96,9 +105,9 @@ def test_real_terminal_drop_paste_files_and_shell(page,real_terminal):
         time.sleep(.1)
     assert (t['root']/'companion.txt').read_text()=='companion-proof'
     assert 'companion-proof' not in capture(t)
-    page.locator('#shell').click()
+    terminal_tool(page,'#shell')
     subprocess.run(['tmux','has-session','-t',f"=adk-companion-session-{t['id']}"],env=t['env'],check=True)
-    page.locator('#shell').click()
+    terminal_tool(page,'#shell')
     expect(page.locator('#workspace .pane').nth(1).locator('.pane-status')).to_have_text('Connected',timeout=20000)
     page.screenshot(path='/tmp/agentdeck-terminal-workspace-desktop.png')
     assert errors==[]
@@ -107,19 +116,19 @@ def test_real_terminal_history_preferences_pause_and_two_clients(page,browser,re
     t=real_terminal;open_terminal(page,t)
     type_command(page,"for i in $(seq 1 180); do echo HISTORY-PROOF-$i; done")
     expect(page.locator('#agent-terminal .xterm-screen')).to_contain_text('HISTORY-PROOF-180')
-    page.locator('#history').click();page.locator('#history-query').fill('HISTORY-PROOF-12')
+    terminal_tool(page,'#history');page.locator('#history-query').fill('HISTORY-PROOF-12')
     expect(page.locator('#history-count')).to_contain_text(' / 11',timeout=10000)
     expect(page.locator('#history-text mark.current')).to_have_text('HISTORY-PROOF-12')
     page.locator('#history-next').click();expect(page.locator('#history-count')).to_have_text('2 / 11')
     page.locator('#history-dialog [data-close]').click()
-    page.locator('#preferences').click();page.locator('#font-size').fill('19');page.locator('#line-height').select_option('1.3');page.locator('#theme').select_option('black');page.locator('#settings-dialog [data-close]').click()
+    terminal_tool(page,'#preferences');page.locator('#font-size').fill('19');page.locator('#line-height').select_option('1.3');page.locator('#theme').select_option('black');page.locator('#settings-dialog [data-close]').click()
     page.reload();expect(page.locator('#connection')).to_have_text('Connected',timeout=20000)
-    page.locator('#preferences').click();expect(page.locator('#font-size')).to_have_value('19');expect(page.locator('#theme')).to_have_value('black');page.locator('#settings-dialog [data-close]').click()
-    page.locator('#pause').click();frozen=page.locator('#agent-pane .frozen');expect(frozen).to_be_visible();before=frozen.text_content()
+    terminal_tool(page,'#preferences');expect(page.locator('#font-size')).to_have_value('19');expect(page.locator('#theme')).to_have_value('black');page.locator('#settings-dialog [data-close]').click()
+    terminal_tool(page,'#pause');frozen=page.locator('#agent-pane .frozen');expect(frozen).to_be_visible();before=frozen.text_content()
     second=page.context.new_page();open_terminal(second,t);type_command(second,'echo AFTER-PAUSE-PROOF')
     expect(second.locator('#agent-terminal .xterm-screen')).to_contain_text('AFTER-PAUSE-PROOF')
     assert frozen.text_content()==before
-    page.locator('#bottom').click();expect(page.locator('#agent-terminal .xterm-screen')).to_contain_text('AFTER-PAUSE-PROOF')
+    terminal_tool(page,'#bottom');expect(page.locator('#agent-terminal .xterm-screen')).to_contain_text('AFTER-PAUSE-PROOF')
     second.close()
     page.set_viewport_size({'width':390,'height':480})
     expect(page.locator('#agent-terminal')).to_be_visible()
@@ -187,3 +196,117 @@ def test_real_terminal_previews_failure_recovery_and_reconnect(page,real_termina
     expect(page.locator('#connection')).to_have_text('Connected',timeout=20000)
     page.locator('#agent-terminal').click();type_command(page,'echo RECONNECTED-PROOF')
     expect(page.locator('#agent-terminal .xterm-screen')).to_contain_text('RECONNECTED-PROOF')
+
+
+def test_terminal_resize_and_reconnect_during_fullscreen_output(page, real_terminal):
+    t = real_terminal
+    errors = []
+    page.on('pageerror', lambda e: errors.append(str(e)))
+    page.add_init_script('''window.terminalSockets=[];
+      const Original=window.WebSocket;
+      window.WebSocket=class extends Original {
+        constructor(...args){super(...args);window.terminalSockets.push(this);}
+      };''')
+    # A real full-screen process redraws on SIGWINCH, as coding TUIs do.
+    (t['root']/'grid.py').write_text('''import os,signal,time
+redraw=True
+def resized(*args):
+ global redraw
+ redraw=True
+signal.signal(signal.SIGWINCH,resized)
+while True:
+ if redraw:
+  redraw=False
+  cols,rows=os.get_terminal_size()
+  text='\\x1b[2J\\x1b[H'+''.join(f'\\x1b[{r+1};1HR{r:03d}='+chr(65+r%26)*(cols-5) for r in range(rows))
+  os.write(1,text.encode())
+ time.sleep(.03)
+''')
+    open_terminal(page, t)
+    type_command(page, 'python3 -u grid.py')
+    expect(page.locator('#agent-terminal .xterm-screen')).to_contain_text('R000=', timeout=10000)
+    for width,height in [(1280,800),(390,750),(750,390),(430,850),(1100,760)]:
+        page.set_viewport_size({'width':width,'height':height})
+        # Let browser geometry and tmux's PTY resize reach the application.
+        deadline = time.time()+5
+        expected = []
+        while time.time()<deadline:
+            page.wait_for_timeout(100)
+            expected = subprocess.check_output(['tmux','capture-pane','-p','-t','=terminal-test:'], env=t['env']).decode().splitlines()[:2]
+            if len(expected)==2 and expected[0].startswith('R000=') and expected[1].startswith('R001='): break
+        assert len(expected)==2 and expected[0].startswith('R000='), capture(t)
+        try:
+            page.wait_for_function('''lines => {
+              const rows=[...document.querySelectorAll('#agent-terminal .xterm-rows>div')].map(r=>r.textContent.trimEnd());
+              return lines.every(line=>rows.includes(line));
+            }''', arg=expected, timeout=5000)
+        except Exception:
+            page.screenshot(path='/tmp/agentdeck-grid-failure.png')
+            print('Viewport',width,height,'expected',expected)
+            print('DOM',page.locator('#agent-terminal .xterm-screen').inner_html()[:3000])
+            raise
+    # A native terminal joins the very same tmux session, without detaching the
+    # web client. Exercise larger and smaller native grids while the browser's
+    # own viewport stays unchanged (there is no browser ResizeObserver event).
+    import fcntl, pty, struct, termios, threading
+    master, slave = pty.openpty()
+    fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack('HHHH', 50, 240, 0, 0))
+    def native_tty():
+        os.setsid()
+        fcntl.ioctl(slave, termios.TIOCSCTTY, 0)
+    native = subprocess.Popen([_binary(), 'attach', 'session', str(t['id'])],
+        env={**t['env'], 'TERM':'xterm-256color'}, stdin=slave, stdout=slave, stderr=slave,
+        preexec_fn=native_tty)
+    os.close(slave)
+    def drain():
+        try:
+            while os.read(master, 65536): pass
+        except OSError: pass
+    threading.Thread(target=drain, daemon=True).start()
+    try:
+        for cols, rows in [(240,50),(72,22),(180,44),(90,30)]:
+            fcntl.ioctl(master, termios.TIOCSWINSZ, struct.pack('HHHH', rows, cols, 0, 0))
+            page.wait_for_timeout(400)
+            sizes = subprocess.check_output(['tmux','list-clients','-F','#{client_width}x#{client_height}'],env=t['env']).decode().splitlines()
+            assert f'{cols}x{rows}' in sizes, sizes
+            page.evaluate("window.dispatchEvent(new Event('focus'))")
+            expect(page.locator('#connection')).to_have_text('Connected')
+            expect(page.locator('#agent-terminal .xterm-screen')).to_contain_text('R000=', timeout=5000)
+            # Rows have one label and one repeated glyph; overlapping redraws
+            # produce stale labels or a second row's glyph on the same line.
+            visible = page.locator('#agent-terminal .xterm-rows>div').all_text_contents()
+            grid_rows = [line.rstrip() for line in visible if line.startswith('R')]
+            assert len(grid_rows) >= 2, visible
+            grid_cols = int(subprocess.check_output(['tmux','display-message','-p','-t','=terminal-test:', '#{pane_width}'],env=t['env']))
+            for line in grid_rows:
+                number = int(line[1:4]); payload = line[5:grid_cols].rstrip()
+                assert payload and set(payload) == {chr(65+number%26)}, repr(line)
+            clients = subprocess.check_output(['tmux','list-clients','-F','#{client_name}'],env=t['env']).decode().splitlines()
+            assert len(clients)==2, clients
+    finally:
+        native.terminate();native.wait(timeout=5);os.close(master)
+    page.wait_for_timeout(400)
+    page.evaluate('window.staleSocket=terminalSockets.at(-1)')
+    for _ in range(5): terminal_tool(page,'#reconnect')
+    expect(page.locator('#connection')).to_have_text('Connected',timeout=20000)
+    expect(page.locator('#agent-terminal .xterm-screen')).to_contain_text('R000=')
+    # Delayed callbacks from the discarded stream must not clear or contaminate
+    # the new screen, or schedule another connection behind the user's back.
+    page.evaluate('''() => {
+      staleSocket.onmessage({data:new TextEncoder().encode('0\\x1b[2J\\x1b[HSTALE-STREAM-CORRUPTION').buffer});
+      staleSocket.onclose();
+    }''')
+    page.wait_for_timeout(700)
+    expect(page.locator('#connection')).to_have_text('Connected')
+    expect(page.locator('#agent-terminal .xterm-screen')).not_to_contain_text('STALE-STREAM-CORRUPTION')
+    expected = subprocess.check_output(['tmux','capture-pane','-p','-t','=terminal-test:'],env=t['env']).decode().splitlines()[0].rstrip()
+    expect(page.locator('#agent-terminal .xterm-screen')).to_contain_text(expected)
+    page.screenshot(path='/tmp/agentdeck-terminal-redraw.png')
+    # Native and web input both reach the existing process; no replacement
+    # session or browser reopening is involved.
+    page.locator('#agent-terminal').click()
+    page.keyboard.press('Control+c')
+    type_command(page,'echo BROWSER-AFTER-NATIVE')
+    expect(page.locator('#agent-terminal .xterm-screen')).to_contain_text('BROWSER-AFTER-NATIVE')
+    assert t['proc'].poll() is None
+    assert not errors

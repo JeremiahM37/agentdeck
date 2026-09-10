@@ -1,4 +1,30 @@
-AgentDeck + WezTerm on Windows
+AgentDeck native terminals
+
+Linux + Kitty
+
+Install Kitty with your distribution's package manager if needed. Download
+setup-agentdeck-kitty.sh from the Desktop panel, then run:
+  bash setup-agentdeck-kitty.sh
+
+This installs a per-user agentdeck:// handler. Configure ~/.ssh/config:
+  Host agentdeck
+    HostName aiserver
+    User admin
+    ServerAliveInterval 30
+    ServerAliveCountMax 3
+
+Authorize this desktop's own public key on the control plane, then connect once
+with ssh agentdeck true and verify its host key. No server private key is needed.
+Use AgentDeck > Attach > Desktop > Open desktop terminal. Kitty inherits your
+theme with 14pt text and 100,000 scrollback lines for these windows. It uses
+xterm-256color for compatibility with remote systems lacking Kitty terminfo.
+Ctrl+Shift+C/V copies/pastes; Ctrl+Shift+H opens Kitty's scrollback pager.
+
+Original launcher/MIME files are saved under ~/.local/state/agentdeck/setup-*.
+To uninstall, restore the saved MIME settings and remove
+~/.local/bin/agentdeck-kitty and ~/.local/share/applications/agentdeck-kitty.desktop.
+
+WezTerm on Windows
 
 1. Install WezTerm from https://wezterm.org/install/windows.html
    Or in PowerShell:
@@ -64,3 +90,15 @@ Downloads and uploads are limited to 25 MiB per file.
 Uninstall desktop links (PowerShell):
    Remove-Item HKCU:\Software\Classes\agentdeck -Recurse
    Remove-Item "$env:LOCALAPPDATA\AgentDeck" -Recurse
+
+MANAGE WITHOUT THE WEB UI
+
+On the AgentDeck server: agentdeck console
+On Linux: download install-agentdeck-cli.sh from this directory, then:
+  bash install-agentdeck-cli.sh --server agentdeck --api https://YOUR_SERVER:8443
+On Windows: download install-agentdeck-cli.ps1 and run in PowerShell:
+  powershell -ExecutionPolicy Bypass -File .\install-agentdeck-cli.ps1 -Server agentdeck
+
+Run agentdeck to open the console; agentdeck --help lists scripting commands.
+Manage sessions, tasks, routines, projects, targets, approvals and settings.
+Use agentdeck upload session ID ./document.pdf to add context from your machine.

@@ -320,6 +320,27 @@ searchable tmux history, saved appearance settings, and an optional persistent
 shell alongside it. A file drawer previews text, images and PDFs and downloads
 artifacts. Uploads insert the path on the agent's machine without pressing Enter.
 
-**Desktop** connects WezTerm (Windows) or another native terminal to the same
-session. The Windows launcher and setup instructions are available from the
-terminal's Desktop panel. See [Terminal workspace](docs/terminal-workspace.md).
+**Desktop** connects Kitty (Linux) or WezTerm (Windows) to the same session,
+keeping the browser attached. Both installers are available in the Desktop panel.
+The shared tmux screen fits the smaller connected terminal, so a larger native
+window cannot crop the browser into a blank view. Attachments open as tabs inside
+AgentDeck; **Pop out** remains available.
+See [Terminal workspace](docs/terminal-workspace.md).
+
+### Terminal-only management
+
+Run `agentdeck console` on your server to manage sessions, tasks, routines,
+projects, targets, approvals and settings. Install the client on your computer
+to run `agentdeck` directly from Kitty, WezTerm or another terminal. It includes
+native attachment, PDF/file uploads, downloads, and a scriptable API:
+
+```sh
+agentdeck api GET /sessions
+agentdeck api POST /tasks/12/takeover '{}'
+agentdeck upload session 4 ./requirements.pdf
+agentdeck attach session 4
+```
+
+[Client installation and commands](docs/terminal-client.md) ·
+[Workspace navigation](docs/workspace-ui.md) ·
+[Routine takeover](docs/routine-takeover.md)

@@ -1,13 +1,25 @@
 # Terminal workspace
 
-Attach opens an xterm.js workspace connected to the existing ttyd WebSocket and
-tmux session. ttyd still owns the PTY bridge and reconnects resolve by attachment
+Attach opens an internal tab in **Terminals**, connected to the existing ttyd
+WebSocket and tmux session. Session attachments, running-task terminals and
+project shells all use this workspace. Switching to the board or another tab
+keeps its terminal connection and output; attaching the same session reuses its
+tab. Closing a tab only disconnects that view. **Pop out** opens a separate
+browser tab when wanted. Open tabs restore after a page reload (inactive tabs
+connect when selected), and the workspace supports links such as
+`/#terminals/session/42`. ttyd still owns the PTY bridge and reconnects resolve by attachment
 identity. All JavaScript, fonts, PDF rendering, and terminal add-ons ship in the
 binary; clients do not contact a CDN.
 
 - Drop files or paste screenshots to upload original bytes into the session
   directory (or the current attempt's worktree). A successful upload pastes a
   shell-quoted target path with **no Enter**. Transfer failures stay visible.
+- Wheel scrolling in plain terminals retrieves retained tmux history when you
+  reach the top of the browser buffer. Scrolling back to the bottom or typing
+  returns to live output automatically; scrolling never activates Pause view.
+  Touch swipes scroll local output or send wheel gestures to a full-screen app
+  using the mouse protocol it negotiated. Full-screen chats may own their entire
+  transcript; tmux history cannot recover lines the app never retained there.
 - Find searches the terminal buffer. History captures up to 100,000 retained
   tmux lines (final 8 MiB cap), with search and a text download. It works for
   output generated before the browser attached, including alternate-screen CLIs.
@@ -19,6 +31,9 @@ binary; clients do not contact a CDN.
   raster-image/PDF/text previews, and byte-preserving downloads. Symlinks out of
   the workspace, nonregular files, and files over 25 MiB are refused. HTML/SVG
   render as source text. PDF.js renders pages without a browser plugin.
+- Reconnect view reopens only the selected browser connection and redraws it.
+  The tmux session and agent keep running. Resizing returns the live viewport to
+  the current screen; Pause view remains a fixed snapshot.
 - Appearance preferences (font size, spacing, theme) persist per device.
 - Desktop offers an `agentdeck://attach/<kind>/<id>` link, a manual command,
   and the Windows setup script. `agentdeck attach <kind> <id>` on the control
@@ -46,10 +61,16 @@ server and filesystem. It covers drop/paste without submission, exact upload and
 download bytes, shell persistence, history search, appearance persistence,
 phone layout, frozen views, simultaneous clients, the desktop CLI over a real
 PTY, image/PDF rendering, failed-upload recovery, and ttyd death/reconnection.
+A full-screen process also exercises phone rotation, grid reflow, rapid
+reconnections and delayed callbacks from discarded WebSockets.
 
 Go tests cover real filesystem reads, symlink/special-file/size boundaries,
 attempt worktree routing, token enforcement, and SSH command quoting/wrappers.
 The existing terminal proxy tests also cover service restart and two clients.
+`e2e/test_terminal_tabs.py` checks switching/reuse without reconnecting, two
+independent terminals, reload, mobile geometry, pop-out and non-destructive close.
+`e2e/test_terminal_scroll.py` verifies wheel and real touch gestures against a
+mouse-driven full-screen process, plus history from before attachment.
 
 ## Deployment verification — 2026-09-08
 
@@ -69,3 +90,22 @@ The desktop's WSL instance subsequently stopped and returned
 change was performed. The production local-target browser check separately
 verified keyboard input and upload/path insertion. Existing remote-upload tests
 remain in the suite; do not mistake a stopped WSL instance for a ttyd failure.
+
+## Shared native and browser terminals
+
+Opening Kitty or WezTerm keeps the browser attached to the same tmux session.
+AgentDeck sets `window-size smallest` on the attached window (never globally).
+The shared screen fits the smallest connected client and expands when that
+client disconnects. This prevents tmux's `latest` policy from cropping a small
+browser around the cursor of a larger desktop, which could make it look blank.
+
+Regression coverage joins a real native PTY and a real browser, changes both
+terminal sizes, and checks complete, uncorrupted rows without reopening either.
+The browser also refreshes its renderer on focus and page restoration. This
+addresses reproduced attachment and redraw failures; it does not establish
+that every possible Codex or terminal font rendering bug is gone.
+
+The toolbar keeps files and desktop access visible; Tools contains search,
+history, split shell, appearance, pause, and reconnect. Scrolling alone never
+pauses the live stream. Scrolling back to the bottom or typing returns to live
+output. Pause is an explicit action.

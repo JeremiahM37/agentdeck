@@ -19,8 +19,10 @@ steps:
 
   - name: browser end-to-end passes
     actions:
-      - shell: >
-          /home/admin/projects/agentdeck/.venv/bin/python -m pytest -q e2e
+      - shell:
+          cmd: /home/admin/projects/agentdeck/.venv/bin/python -m pytest -q e2e
+          # Real tmux/browser flows and their cleanup now exceed two minutes.
+          timeout: 300
     expect:
       no_log_contains: "failed"
 

@@ -1,3 +1,5 @@
+import { TerminalTabs } from "/terminal-tabs.js";
+import { actionMenu } from "/ui-menu.js";
 import { openConversation } from "/conversation.js";
 /* agentdeck PWA — vanilla ES module, no build step. */
 const $ = (s, el = document) => el.querySelector(s);
@@ -15,6 +17,7 @@ const state = {
   mobileColPinned: false, // ...and whether the user chose it themselves
   showAllDone: false,     // phone: finished lists are capped until asked
   diffWrap: localStorage.getItem("adk-diffwrap") === "1",
+  sessionFilter: "", settingsSection: sessionStorage.getItem('adk-settings-section') || "machines",
 };
 
 // Rotating a phone or dragging a desktop window across the breakpoint has to
@@ -111,6 +114,8 @@ async function refreshApprovals() {
   const b = $("#appr-badge");
   b.hidden = state.approvals.length === 0;
   b.textContent = state.approvals.length;
+  $('#more-badge').hidden = state.approvals.length === 0;
+  $('#more-badge').textContent = state.approvals.length;
   if (state.tab === "approvals") renderApprovals();
   if (state.sheet?.kind === "task") renderSheet();
 }
@@ -191,17 +196,21 @@ function card(t) {
   return el;
 }
 
-function openTaskChat(t) { openConversation({kind:"task",id:t.id,name:t.title,api,attachMic,onClose:()=>openTaskSheet(t.id)}); }
+function openTaskChat(t) {
+  if (t.takeover?.status === "ready") return openTakenOverSession(t);
+  openConversation({kind:"task",id:t.id,name:t.title,api,attachMic,onClose:()=>openTaskSheet(t.id)}); }
 
 function renderBoard() {
   const main = $("#view");
   main.innerHTML = `
+    <div class="page-heading"><div><h2>Task board</h2><p>Dispatch work and review what needs you.</p></div>
+      <button class="b" id="qb-routines" title="Routines — saved jobs you can run with one button">Routines</button>
+    </div>
     <div id="quickbar">
       <select id="qb-project" title="project"></select>
       <input id="qb-input" placeholder="Describe it, hit ⏎ — instant dispatch" autocomplete="off">
       <button id="qb-mic" title="voice">🎤</button>
       <input id="qb-filter" placeholder="Filter…" autocomplete="off">
-      <button id="qb-routines" title="Routines — saved jobs you can run with one button">⟲</button>
     </div>
     <div id="board"></div>`;
   $("#qb-routines").onclick = () => { state.sheet = { kind: "routines" }; renderSheet(); };
@@ -446,6 +455,7 @@ function sessionCard(s) {
   const ctx = s.context_pct;
   const ctxClass = ctx == null ? "" : ctx <= 10 ? " crit" : ctx <= 25 ? " low" : "";
   el.innerHTML = `
+    <div class="scard-project">${esc(s.project_name || "Unassigned")}</div>
     <div class="scard-top">
       <span class="dot${live ? " live" : ""}"></span>
       <span class="nm"></span>
@@ -480,19 +490,26 @@ function sessionCard(s) {
       refreshSessions();
     } catch (e) { toast(e.message, true); }
   };
-  $(".smeta", el).appendChild(projSel);
   $(".spane", el).textContent = s.pane_tail || "";
 
   const row = $(".btnrow", el);
+  const {menu, panel} = actionMenu('More ···', `More actions for ${s.name}`);
+  let actionRow = row;
   const act = (label, cls, fn) => {
     const b = document.createElement("button");
     b.className = `b ${cls}`; b.textContent = label; b.onclick = fn;
-    row.appendChild(b);
+    actionRow.appendChild(b);
   };
   if (s.status !== "dead") {
     // the whole point: one tap into the real terminal, same tmux, same chat
     act("⌨ Attach", "attach", () => attachSession(s));
-    act("Chat", "ok grow", () => openConversation({kind:"session",id:s.id,name:s.name,api,attachMic,onClose:refreshSessions}));
+    act("Chat", "grow", () => openConversation({kind:"session",id:s.id,name:s.name,api,attachMic,onClose:refreshSessions}));
+    actionRow = panel;
+    const native = document.createElement('a');
+    native.className = 'b';
+    native.href = `agentdeck://attach/session/${s.id}`;
+    native.textContent = /Linux/i.test(navigator.platform) && !/Android/i.test(navigator.userAgent) ? 'Open in Kitty' : /Win/i.test(navigator.platform) ? 'Open in WezTerm' : 'Open desktop terminal';
+    panel.appendChild(native);
     if (s.status === "running") act("⎋ Interrupt", "warn", () => sendKey(s, "escape"));
     act("⇥ Handoff", "", () => handoffSession(s));
     // work that started in a blank room: name it once you know what it is
@@ -502,6 +519,7 @@ function sessionCard(s) {
   // started yourself is released — agentdeck stops watching, the terminal keeps
   // running — and killing it is a separate, explicit choice.
   const adopted = s.origin === "discovered";
+  actionRow = panel;
   if (s.status === "dead") {
     act("Dismiss", "no", () => endSession(s, false));
   } else if (adopted) {
@@ -519,6 +537,12 @@ function sessionCard(s) {
       endSession(s, true);
     });
   }
+  const projectLabel = document.createElement('label');
+  projectLabel.className = 'menu-field';
+  projectLabel.textContent = 'Project';
+  projectLabel.appendChild(projSel);
+  panel.appendChild(projectLabel);
+  row.appendChild(menu);
   return el;
 }
 
@@ -532,10 +556,7 @@ async function endSession(s, kill) {
 async function attachSession(s) {
   try {
     const r = await api(`/sessions/${s.id}/terminal`, { method: "POST" });
-    // same origin: the terminal is proxied by agentdeck itself, so this works
-    // through the nginx vhost, over the tailnet and on a phone. Building it from
-    // location.hostname aimed it at whichever machine served the page.
-    window.open(r.url?.replace("/term/", "/terminal/").replace(/\/$/, "") || `/term/${r.port}/`, "_blank");
+    openTerminal(r.url, s.name);
   } catch (e) {
     // ttyd may not be installed; the manual command is still useful
     toast(e.message + " — attach manually", true);
@@ -686,43 +707,42 @@ function renderHandoff(sheet) {
 
 function renderSessions() {
   const main = $("#view");
+  if (main.querySelector('#sesslist') && (main.querySelector('.action-menu[open]') ||
+      main.contains(document.activeElement) && document.activeElement.matches('input,select'))) return;
   const live = state.sessions.filter((s) => s.status !== "dead");
   main.innerHTML = `
     <div class="list wide">
       <div class="sesshead">
-        <h2>Sessions</h2>
+        <div><h2>Sessions</h2><p>${live.length} active · Pick up where you left off.</p></div>
         <button class="b" id="sess-discover">⌕ Find running agents</button>
         <button class="b ok" id="sess-new">+ New session</button>
       </div>
+      <input id="sess-search" class="f" type="search" placeholder="Find a session or project" aria-label="Find a session or project">
       <div id="sesslist"></div>
     </div>`;
   $("#sess-new").onclick = () => { state.sheet = { kind: "new-session" }; renderSheet(); };
   $("#sess-discover").onclick = () => { state.sheet = { kind: "discover" }; renderSheet(); };
 
-  const list = $("#sesslist");
+  $('#sess-search').value = state.sessionFilter;
+  $('#sess-search').oninput = (e) => { state.sessionFilter = e.target.value; renderSessionList(); };
+  renderSessionList();
+}
+
+function renderSessionList() {
+  const live = state.sessions.filter((s) => s.status !== 'dead');
+  const list = $('#sesslist');
+  list.replaceChildren();
   if (!live.length) {
     list.innerHTML = `<div class="hint">No sessions yet.<br><br>
       Start one here, or hit <b>Find running agents</b> to adopt the Claude and Codex
       sessions already running in tmux — agentdeck will watch them from then on.</div>`;
     return;
   }
-  // group by project, because that is the unit that outlives any one session
-  const groups = new Map();
-  for (const s of live) {
-    const key = s.project_name || "Unassigned";
-    if (!groups.has(key)) groups.set(key, []);
-    groups.get(key).push(s);
-  }
-  for (const [project, items] of [...groups].sort((a, b) => a[0].localeCompare(b[0]))) {
-    items.sort((a, b) => (SESSION_ORDER[a.status] ?? 9) - (SESSION_ORDER[b.status] ?? 9)
-      || a.idle_seconds - b.idle_seconds);
-    const g = document.createElement("div");
-    g.className = "projgroup";
-    g.innerHTML = "<h3></h3>";
-    $("h3", g).textContent = project;
-    items.forEach((s) => g.appendChild(sessionCard(s)));
-    list.appendChild(g);
-  }
+  const query = state.sessionFilter.toLowerCase().trim();
+  const items = live.filter(s => [s.name,s.project_name,s.target_name,s.agent].join(' ').toLowerCase().includes(query));
+  items.sort((a,b) => (SESSION_ORDER[a.status] ?? 9) - (SESSION_ORDER[b.status] ?? 9) || a.idle_seconds-b.idle_seconds);
+  items.forEach(s => list.appendChild(sessionCard(s)));
+  if (!items.length) list.innerHTML = '<div class="hint">No sessions match your search.</div>';
 }
 
 /* ---------- new session sheet ---------- */
@@ -1002,16 +1022,49 @@ async function decide(id, decision, note = "", always = false) {
 /* ---------- targets tab ---------- */
 async function renderTargets() {
   const main = $("#view");
-  main.innerHTML = '<div class="list"></div>';
-  const list = $(".list", main);
+  main.innerHTML = `<div class="settings-page"><div class="page-heading"><div><h2>Settings</h2><p>Machines, projects and preferences in one place.</p></div></div>
+    <div class="settings-nav" role="tablist" aria-label="Settings sections">
+      <button data-settings="machines" role="tab">Targets</button><button data-settings="projects" role="tab">Projects</button>
+      <button data-settings="notifications" role="tab">Notifications</button><button data-settings="about" role="tab">Usage &amp; about</button>
+    </div>
+    <section data-settings-panel="machines" class="settings-grid" role="tabpanel"></section>
+    <section data-settings-panel="projects" role="tabpanel"></section>
+    <section data-settings-panel="notifications" role="tabpanel"></section>
+    <section data-settings-panel="about" class="settings-grid" role="tabpanel"></section></div>`;
+  const page = $('.settings-page', main);
+  const list = $('[data-settings-panel="machines"]', page);
+  const projectPanel = $('[data-settings-panel="projects"]', page);
+  const aboutPanel = $('[data-settings-panel="about"]', page);
+  const chooseSection = (section) => {
+    state.settingsSection = section;
+    sessionStorage.setItem('adk-settings-section', section);
+    $$('[data-settings-panel]',page).forEach(p => p.hidden = p.dataset.settingsPanel !== section);
+    $$('[data-settings]',page).forEach(b => { const selected=b.dataset.settings === section; b.setAttribute('aria-selected', String(selected)); b.tabIndex=selected?0:-1; });
+  };
+  const sectionButtons = $$('[data-settings]', page);
+  sectionButtons.forEach((b,index) => {
+    b.id = 'settings-tab-' + b.dataset.settings;
+    b.setAttribute('aria-controls', 'settings-panel-' + b.dataset.settings);
+    const panel = $('[data-settings-panel="' + b.dataset.settings + '"]',page);
+    panel.id = 'settings-panel-' + b.dataset.settings; panel.setAttribute('aria-labelledby', b.id);
+    b.onclick = () => chooseSection(b.dataset.settings);
+    b.onkeydown = e => {
+      let next; if(e.key==='ArrowRight') next=(index+1)%sectionButtons.length;
+      if(e.key==='ArrowLeft') next=(index+sectionButtons.length-1)%sectionButtons.length;
+      if(e.key==='Home') next=0; if(e.key==='End') next=sectionButtons.length-1;
+      if(next!==undefined) {e.preventDefault();sectionButtons[next].click();sectionButtons[next].focus();}
+    };
+  });
+  chooseSection(state.settingsSection);
   // fetch BEFORE building the form — a late response must never clobber typed input
   let settings = {};
   try { settings = await api("/settings"); } catch {}
+  if (!page.isConnected) return;
   const buildCard = document.createElement("div");
   buildCard.className = "rowcard";
   buildCard.id = "running-build";
   buildCard.innerHTML = '<h3>Running build</h3><div class="sub">Loading…</div>';
-  list.appendChild(buildCard);
+  aboutPanel.appendChild(buildCard);
   api("/health").then((h) => {
     const b = h.build || {};
     const status = b.modified === true ? "local changes" : b.modified === false ? "clean" : "build status unknown";
@@ -1035,9 +1088,9 @@ async function renderTargets() {
     };
     list.appendChild(el);
   }
-  list.appendChild(projectsCard());
+  projectPanel.appendChild(projectsCard());
 
-  list.appendChild(importCard());
+  projectPanel.appendChild(importCard());
 
   const statsCard = document.createElement("div");
   statsCard.className = "rowcard";
@@ -1048,7 +1101,7 @@ async function renderTargets() {
       ${s.by_project.slice(0, 5).map((p) =>
         `<div class="sub" style="margin-top:4px">${esc(p.name)} <span style="color:var(--amber)">$${p.cost_usd.toFixed(2)}</span></div>`).join("")}`;
   }).catch(() => { statsCard.querySelector(".sub").textContent = "unavailable"; });
-  list.appendChild(statsCard);
+  aboutPanel.appendChild(statsCard);
 
   const foot = document.createElement("div");
   foot.className = "rowcard";
@@ -1083,7 +1136,7 @@ async function renderTargets() {
     try { await api("/settings/test-notification", { method: "POST" }); toast("Test sent"); }
     catch (e) { toast(e.message, true); }
   };
-  list.appendChild(foot);
+  $('[data-settings-panel="notifications"]',page).appendChild(foot);
 }
 
 /** One project's capability, stated from the server's RESOLVED view.
@@ -1323,7 +1376,7 @@ function renderRoutines(sheet) {
       A job you keep asking for, saved. One button runs it across every project
       you picked; give it a schedule and it runs itself.
     </div>
-    <div id="rt-list"></div>
+    <div id="rt-active"></div><div id="rt-list"></div>
     <details id="rt-form" style="margin-top:14px">
       <summary id="rt-legend" style="cursor:pointer;padding:8px 0">+ New routine</summary>
       <label class="f">Name</label>
@@ -1372,6 +1425,17 @@ function renderRoutines(sheet) {
   }).catch(() => { agentBox.innerHTML = '<option value="">default</option>'; });
 
   const draw = async () => {
+    const activeBox = $("#rt-active", sheet);
+    try {
+      const tasks = await api("/tasks");
+      const runs = tasks.filter((t) => t.created_by?.startsWith("routine:") && (["queued","running","review"].includes(t.status) || t.takeover));
+      activeBox.innerHTML = runs.length ? '<h3>Started routine runs</h3><p class="subhint">Open a run to take it over as an interactive session.</p>' : '';
+      for (const t of runs) {
+        const b = document.createElement("button"); b.className = "b";
+        b.textContent = `${t.title} · ${t.project_name} · ${t.takeover?.status === "ready" ? "interactive" : t.status}`;
+        b.onclick = () => openTaskSheet(t.id); activeBox.appendChild(b);
+      }
+    } catch (e) { activeBox.textContent = e.message; }
     const box = $("#rt-list", sheet);
     let rows = [];
     try { rows = await api("/routines"); } catch { }
@@ -1412,6 +1476,7 @@ function renderRoutines(sheet) {
             (out.failed.length ? ` · ${out.failed.length} could not run` : ""));
           if (out.failed.length) console.warn("routine failures", out.failed);
           await refreshTasks();
+          await draw();
         } catch (e) { toast(e.message, true); }
       });
       if (r.schedule) {
@@ -1654,7 +1719,7 @@ async function deleteProjects(ids, usage, done) {
 async function openProjectShell(p) {
   try {
     const r = await api(`/projects/${p.id}/terminal`, { method: "POST" });
-    window.open(r.url.replace("/term/", "/terminal/").replace(/\/$/, ""), "_blank");
+    openTerminal(r.url, p.name + " · Shell");
   } catch (e) { toast(e.message, true); }
 }
 
@@ -1680,6 +1745,21 @@ function openProjectEditor(p) {
   ($(".btnrow", card) || card).appendChild(del);
   state.sheet = { kind: "project", node: card };
   renderSheet();
+}
+
+async function openTakenOverSession(t) {
+  try {
+    const session = await api(`/sessions/${t.takeover.session_id}`);
+    closeSheet(); switchTab("sessions"); await refreshSessions();
+    openConversation({kind:"session",id:session.id,name:session.name,api,attachMic,onClose:refreshSessions});
+  } catch (e) { toast(e.message, true); }
+}
+async function takeOverTask(t) {
+  try {
+    await api(`/tasks/${t.id}/takeover`, {method:"POST"});
+    toast("Taking over this run in its existing worktree.");
+    await openTaskSheet(t.id);
+  } catch (e) { toast(e.message, true); }
 }
 
 function renderSheet() {
@@ -1735,12 +1815,21 @@ function renderSheet() {
     b.className = `b ${cls}`; b.textContent = label; b.onclick = fn;
     actions.appendChild(b);
   };
-  act("Chat", "ok grow", () => openTaskChat(t));
-  if (["backlog", "failed", "cancelled"].includes(t.status))
+  act(t.takeover?.status === "ready" ? "Open session" : "Chat", "ok grow", () => openTaskChat(t));
+  if (t.takeover) {
+    const hint = document.createElement("p"); hint.className = "subhint";
+    hint.textContent = t.takeover.status === "ready" ? "Continued in an interactive session. Use Open session to chat or attach to its terminal." :
+      t.takeover.status === "failed" ? t.takeover.error : "Taking over this run… Its worktree is preserved.";
+    actions.appendChild(hint);
+    if (t.takeover.status === "failed") act("Retry takeover", "warn", () => takeOverTask(t));
+  } else if (t.attempt?.worktree_path && ["running","review","failed","cancelled","done"].includes(t.status) && t.target_kind !== "sandbox") {
+    act("Take over as session", "ok", () => takeOverTask(t));
+  }
+  if (!t.takeover && ["backlog", "failed", "cancelled"].includes(t.status))
     act(t.status === "backlog" ? "▶ Dispatch" : "↻ Retry", "ok grow", () => doAction(`/tasks/${t.id}/dispatch`));
-  if (["queued", "running"].includes(t.status))
+  if (!t.takeover && ["queued", "running"].includes(t.status))
     act("■ Cancel", "no", () => doAction(`/tasks/${t.id}/cancel`));
-  if (t.status === "review") {
+  if (!t.takeover && t.status === "review") {
     act("✓ Mark done", "ok grow", () => doAction(`/tasks/${t.id}/complete`));
     act("↺ Request changes", "warn grow", async () => {
       const fb = prompt("What should change?");
@@ -1775,7 +1864,7 @@ function renderSheet() {
       } catch (e) { toast(e.message, true); }
     });
   }
-  if (["done", "failed", "cancelled"].includes(t.status) && t.attempt?.worktree_path)
+  if (!t.takeover && ["done", "failed", "cancelled"].includes(t.status) && t.attempt?.worktree_path)
     act("Clean worktree", "", async () => {
       if (!confirm("Remove the worktree(s)? Uncommitted changes are lost.")) return;
       try { await api(`/tasks/${t.id}/cleanup`, { method: "POST" });
@@ -1786,10 +1875,7 @@ function renderSheet() {
     act("⌨ Terminal", "", async () => {
       try {
         const r = await api(`/tasks/${t.id}/terminal`, { method: "POST" });
-        // same origin: the terminal is proxied by agentdeck itself, so this works
-    // through the nginx vhost, over the tailnet and on a phone. Building it from
-    // location.hostname aimed it at whichever machine served the page.
-    window.open(r.url?.replace("/term/", "/terminal/").replace(/\/$/, "") || `/term/${r.port}/`, "_blank");
+        openTerminal(r.url, t.title);
       } catch (e) {
         const sshPrefix = t.target_kind === "ssh"
           ? `ssh -t ${t.target_user}@${t.target_host} ` : "";
@@ -2083,12 +2169,16 @@ function safeParse(s) { try { return JSON.parse(s || "{}"); } catch { return {};
    The address bar is an interface. Notification sinks send "/#task/12" and the
    phone opens the embedded board at "/#sessions"; before this, both landed on
    whatever tab happened to be default and the link may as well not have existed. */
-const TABS = ["board", "sessions", "deck", "approvals", "targets"];
+const TABS = ["board", "sessions", "terminals", "deck", "approvals", "targets"];
 
 function applyHash() {
   const raw = decodeURIComponent(location.hash.replace(/^#/, ""));
   if (!raw) return false;
-  const [kind, id] = raw.split("/");
+  const [kind, id, terminalID] = raw.split("/");
+  if (kind === "terminals" && /^(session|attempt|project)$/.test(id) && /^[1-9]\d*$/.test(terminalID)) {
+    terminalTabs.open(`/terminal/${id}/${terminalID}`);
+    return true;
+  }
   if (TABS.includes(kind)) { switchTab(kind, { fromHash: true }); return true; }
   if (kind === "task" && id) {
     switchTab("board", { fromHash: true });
@@ -2105,10 +2195,17 @@ addEventListener("hashchange", applyHash);
 
 function switchTab(tab, opts = {}) {
   state.tab = tab;
+  const terminal = tab === "terminals";
+  $("#view").hidden = terminal;
+  $("#fab").hidden = tab !== 'board';
+  document.body.classList.toggle("terminals-open", terminal);
+  if (terminal) terminalTabs.show(); else terminalTabs.hide();
   // replaceState, not a new entry: flipping tabs should not fill the back stack
-  if (!opts.fromHash) history.replaceState(null, "", "#" + tab);
+  if (!opts.fromHash) history.replaceState(null, "", tab === "terminals" ? terminalTabs.hash() : "#" + tab);
   if (tab !== "deck") closeDeckStreams();
   $$(".tab").forEach((b) => b.classList.toggle("on", b.dataset.tab === tab));
+  $('#nav-overflow').classList.toggle('on', ['deck','approvals','targets'].includes(tab));
+  $('#nav-overflow').open = false;
   if (tab === "board") renderBoard();
   if (tab === "sessions") { renderSessions(); refreshSessions(); }
   if (tab === "deck") renderDeck();
@@ -2116,6 +2213,22 @@ function switchTab(tab, opts = {}) {
   if (tab === "targets") renderTargets();
 }
 $$(".tab").forEach((b) => (b.onclick = () => switchTab(b.dataset.tab)));
+$$('[data-nav-target]').forEach(b => b.onclick = () => switchTab(b.dataset.navTarget));
+const terminalTabs = new TerminalTabs($("#terminal-workspace"), {
+  activate: () => switchTab("terminals"),
+  browse: () => switchTab("sessions"),
+});
+function openTerminal(url, label) {
+  closeSheet();
+  terminalTabs.open(url, label);
+}
+const fitTerminalWorkspace = () => {
+  const top = $("#topbar").getBoundingClientRect().bottom;
+  document.documentElement.style.setProperty("--terminal-top", `${top}px`);
+};
+new ResizeObserver(fitTerminalWorkspace).observe($("#topbar"));
+window.addEventListener("resize", fitTerminalWorkspace);
+fitTerminalWorkspace();
 $("#fab").onclick = () => {
   state.sheet = { kind: state.tab === "sessions" ? "new-session" : "new" };
   renderSheet();

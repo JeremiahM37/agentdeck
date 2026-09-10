@@ -94,6 +94,7 @@ textarea {
   padding: 0 10px 8px;
 }
 .pane {
+  position: relative;
   display: flex;
   flex: 1;
   flex-direction: column;
@@ -137,6 +138,12 @@ textarea {
   white-space: pre;
   user-select: text;
   background: var(--bg);
+}
+.frozen.retained-history {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  overscroll-behavior: contain;
 }
 footer {
   display: flex;
@@ -387,3 +394,50 @@ body.dragging #workspace::after {
   height: auto;
   background: white;
 }
+
+/* The containing AgentDeck page already supplies navigation and identity. */
+body.embedded > header { display:none; }
+body.embedded > footer { padding:4px 10px; }
+body.embedded > footer > span:last-child { display:none; }
+body.embedded > nav { flex-wrap:nowrap; overflow-x:auto; flex-shrink:0; }
+body.embedded > nav > button { flex:none; white-space:nowrap; }
+/* Swipes are routed to either terminal scrollback or the foreground mouse app. */
+.terminal-host { touch-action:none; }
+
+/* A short toolbar; secondary tools remain available in one disclosure. */
+:root { --bg:#0c1018; --surface:#151d29; --line:#2a3545; --ink:#e2e8f0; --muted:#a0aec1; --accent:#b5a2f0; }
+nav { padding:8px 12px; gap:8px; align-items:center; flex-wrap:nowrap; border-bottom:1px solid var(--line); }
+nav>button { min-height:40px; white-space:nowrap; background:transparent; border-color:transparent; }
+#upload { background:#7860d2; border-color:#8f79df; color:white; }
+#desktop { margin-left:auto; }
+#workspace { padding:0; gap:1px; }
+.pane { border-radius:0; border:0; }
+.pane-title { background:transparent; color:var(--muted); font-size:11px; padding-inline:12px; }
+footer { padding:6px 12px; border-top:1px solid var(--line); }
+.action-menu { position:relative; flex:none; }
+.action-menu>summary { list-style:none; cursor:pointer; min-height:40px; padding:10px 13px; color:var(--muted); border:1px solid var(--line); border-radius:7px; white-space:nowrap; }
+.action-menu>summary::-webkit-details-marker { display:none; }
+.action-menu-panel { position:absolute; right:0; top:calc(100% + 7px); width:230px; max-width:calc(100vw - 24px); z-index:50; padding:7px; background:#1b2432; border:1px solid #3a465a; border-radius:10px; box-shadow:0 12px 35px #0009; display:flex; flex-direction:column; gap:3px; }
+.action-menu:not([open])>.action-menu-panel { display:none; }
+.action-menu-panel>button { width:100%; border:0; background:transparent; text-align:left; min-height:40px; }
+.action-menu-panel>button:hover { background:#273247; }
+body.embedded nav { overflow:visible; padding:6px 10px; }
+dialog { border-radius:14px; padding:22px; border-color:#384459; }
+#desktop-dialog { width:min(740px,calc(100vw - 24px)); }
+.desktop-platforms { display:grid; grid-template-columns:1fr 1fr; gap:14px; margin:14px 0; }
+.desktop-platforms section { min-width:0; display:flex; flex-direction:column; align-items:flex-start; background:var(--bg); padding:18px; border:1px solid var(--line); border-radius:10px; }
+.desktop-platforms h3 { margin:4px 0; font-size:20px; }
+.platform-label { color:var(--muted); font-size:12px; }
+.desktop-platforms code { overflow-wrap:anywhere; white-space:pre-wrap; display:block; font-size:12px; padding:10px 0 18px; }
+.desktop-platforms a { margin-top:auto; }
+#desktop-open { display:inline-flex; background:#7860d2; border-color:#8f79df; color:white; padding:11px 16px; font-weight:600; }
+.manual-connection { border-top:1px solid var(--line); padding-top:16px; margin-top:22px; }
+.manual-connection summary { cursor:pointer; color:var(--muted); padding:5px 0; }
+@media(max-width:600px) {
+ nav,body.embedded nav { gap:3px; padding:5px 6px; }
+ nav>button,.action-menu>summary { min-height:44px; padding:9px 8px; font-size:12px; }
+ .desktop-platforms { grid-template-columns:1fr; }
+ .action-menu-panel>button { min-height:44px; }
+}
+.action-menu-panel { max-height:calc(100dvh - 90px); overflow-y:auto; }
+.action-menu.menu-above>.action-menu-panel { top:auto; bottom:calc(100% + 6px); }

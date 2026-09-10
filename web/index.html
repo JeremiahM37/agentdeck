@@ -2,7 +2,7 @@
 <html lang="en" class="dark">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
 <title>agentdeck</title>
 <meta name="theme-color" content="#080b14">
 <meta name="description" content="Mission control for AI coding agents on your own infrastructure.">
@@ -12,6 +12,7 @@
 <link rel="stylesheet" href="/fonts.css">
 <link rel="stylesheet" href="/style.css">
 <link rel="stylesheet" href="/conversation.css">
+<link rel="stylesheet" href="/workspace.css">
 </head>
 <body>
 <div id="aurora" aria-hidden="true"></div>
@@ -36,10 +37,11 @@
 </header>
 
 <main id="view"></main>
+<section id="terminal-workspace" aria-label="Terminals" hidden></section>
 
 <button id="fab" title="new task" aria-label="New task">
   <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor"
-       stroke-width="2.2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
+       stroke-width="2.2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg><span>New task</span>
 </button>
 
 <nav id="tabbar">
@@ -58,6 +60,12 @@
         <rect x="3" y="4" width="18" height="16" rx="2"/>
         <path d="M7 9l3 3-3 3M13 15h4"/></svg>
     </span>Sessions<b id="sess-badge" class="badge dim" hidden></b></button>
+  <button data-tab="terminals" class="tab">
+    <span class="tab-ic" aria-hidden="true">
+      <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
+        <rect x="3" y="4" width="18" height="16" rx="2"/><path d="M7 9l3 3-3 3M13 15h4"/>
+      </svg>
+    </span>Terminals<b id="terminal-badge" class="badge dim" hidden></b></button>
   <button data-tab="deck" class="tab desktop-only">
     <span class="tab-ic" aria-hidden="true">
       <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor"
@@ -78,7 +86,15 @@
            stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
         <rect x="3" y="4" width="18" height="6" rx="2"/><rect x="3" y="14" width="18" height="6" rx="2"/>
         <path d="M7 7h.01M7 17h.01"/></svg>
-    </span>Targets</button>
+    </span>Settings</button>
+  <details id="nav-overflow" class="action-menu">
+    <summary aria-label="More pages"><span aria-hidden="true">···</span>More<b id="more-badge" class="badge" hidden></b></summary>
+    <div class="action-menu-panel">
+      <button data-nav-target="deck">Deck · live overview</button>
+      <button data-nav-target="approvals">Approvals</button>
+      <button data-nav-target="targets">Settings</button>
+    </div>
+  </details>
 </nav>
 
 <div id="sheet-backdrop" hidden></div>

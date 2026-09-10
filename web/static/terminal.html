@@ -20,12 +20,17 @@
     <nav aria-label="Terminal tools">
       <button id="upload">Attach files</button
       ><input id="file-input" type="file" multiple hidden />
-      <button id="find">Find</button><button id="history">History</button
-      ><button id="pause">Pause view</button
-      ><button id="bottom">↓ Live</button>
-      <button id="shell">Split shell</button><button id="files">Files</button
-      ><button id="preferences">Appearance</button
-      ><button id="desktop">Desktop</button>
+      <button id="files">Files</button>
+      <button id="desktop">Desktop terminal</button>
+      <details id="terminal-tools" class="action-menu">
+        <summary id="terminal-tools-summary">Tools</summary>
+        <div class="action-menu-panel">
+          <button id="find">Find in terminal</button><button id="history">Session history</button>
+          <button id="shell">Split shell</button><button id="preferences">Appearance</button>
+          <button id="pause">Pause view</button><button id="bottom">Jump to live</button>
+          <button id="reconnect" title="Reconnect this view and redraw the terminal; the agent keeps running">Reconnect view</button>
+        </div>
+      </details>
     </nav>
     <div id="notice" role="status" hidden></div>
     <div id="searchbar" hidden>
@@ -123,23 +128,37 @@
       <div id="preview-body"></div>
     </dialog>
     <dialog id="desktop-dialog">
-      <h2>Use your desktop terminal</h2>
+      <div class="dialog-head"><h2>Open in your terminal</h2><button data-close aria-label="Close desktop setup">Close</button></div>
       <p>
-        Attach to this same session in WezTerm. Closing either terminal leaves
+        Attach to this same session in Kitty or WezTerm. Closing either terminal leaves
         the session running.
       </p>
-      <a id="desktop-open" class="button">Open desktop terminal</a>
-      <p>
-        First time on Windows? Download and run the setup script after
-        installing WezTerm. It adds the AgentDeck launcher without changing your
-        WezTerm configuration.
-      </p>
-      <a href="/desktop/setup-agentdeck.ps1" download>Download Windows setup</a>
-      · <a href="/desktop/README.txt" target="_blank">Setup instructions</a>
-      <p>Manual SSH command (uses your <code>agentdeck</code> SSH alias):</p>
-      <textarea id="desktop-command" readonly rows="3"></textarea
-      ><button id="desktop-copy">Copy command</button
-      ><button data-close>Close</button>
+      <a id="desktop-open" class="button primary">Open desktop terminal</a>
+      <h3>First-time setup</h3>
+      <div class="desktop-platforms">
+        <section><span class="platform-label">Linux</span><h3>Kitty</h3>
+          <p>Install Kitty, download the launcher, then run:</p>
+          <code>bash setup-agentdeck-kitty.sh</code>
+          <a href="/desktop/setup-agentdeck-kitty.sh" download>Download Linux setup</a>
+        </section>
+        <section><span class="platform-label">Windows</span><h3>WezTerm</h3>
+          <p>Install WezTerm, download the launcher, then run in PowerShell:</p>
+          <code>powershell -ExecutionPolicy Bypass -File .\setup-agentdeck.ps1</code>
+          <a href="/desktop/setup-agentdeck.ps1" download>Download Windows setup</a>
+        </section>
+      </div>
+      <p>Both use your <code>agentdeck</code> SSH alias. Your terminal theme and existing sessions stay intact.</p>
+      <a href="/desktop/README.txt" target="_blank" rel="noopener">Connection and setup instructions ↗</a>
+      <details class="manual-connection"><summary>Manage AgentDeck entirely from a terminal</summary>
+        <p>Install the terminal client, then run <code>agentdeck</code>. Sessions, tasks, routines, settings and context uploads are available without the web UI.</p>
+        <p><a href="/desktop/install-agentdeck-cli.sh" download>Linux client installer</a> · <a href="/desktop/install-agentdeck-cli.ps1" download>Windows client installer</a></p>
+        <code id="cli-install-command"></code>
+      </details>
+      <details class="manual-connection"><summary>Connect from an already-open terminal</summary>
+        <p>Run this in Kitty, WezTerm, or another SSH terminal:</p>
+        <textarea id="desktop-command" readonly rows="3" aria-label="Manual SSH command"></textarea>
+        <button id="desktop-copy">Copy command</button>
+      </details>
     </dialog>
     <script src="/vendor/xterm.js"></script>
     <script src="/vendor/addon-fit.js"></script>

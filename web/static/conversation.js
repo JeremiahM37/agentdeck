@@ -137,14 +137,14 @@ export function openConversation({kind, id, name, api, attachMic, onClose}) {
         updateLog(data.text,()=>{ const pre=document.createElement('pre');pre.className='session-reader';pre.textContent=data.text||'Waiting for agent output…';log.replaceChildren(pre); });
       } else {
         const [task,events,messages,approvals]=await Promise.all([api(`/tasks/${id}`),api(`/tasks/${id}/events`),api(`/tasks/${id}/messages`),api('/approvals?status=pending')]);
-        if (closed) return; latestTask=task; unavailable=task.target_kind==='sandbox'; updateCompose();
+        if (closed) return; latestTask=task; unavailable=task.target_kind==='sandbox' || Boolean(task.takeover); updateCompose();
         const lastMessage=messages.at(-1);
         if (lastMessage && !sending && !input.value && lastMessage.status!=='pending') $('#conversation-receipt').textContent=lastMessage.status==='failed' ? `Not delivered: ${lastMessage.error}` : lastMessage.attempt_id ? 'Message delivered to the agent.' : 'Instructions added to the task.';
         status.textContent=`${task.agent} · ${task.status}${task.attempt ? ` · turn ${task.attempt.n}` : ''}`;
         const running=task.status==='running';
         interrupt.disabled=!running || task.target_kind==='sandbox';
         if (interrupt.disabled) interrupt.checked=false;
-        $('#conversation-hint').textContent=task.target_kind==='sandbox' && task.status!=='backlog' ? 'Send queues a new sandbox run with your instructions and the previous result.' : task.status==='backlog' ? 'Adds instructions to this task without dispatching it.' : running ? 'Send queues a follow-up. Interrupt and send stops this run first, then continues.' : task.status==='queued' ? 'Your message is added before the queued run starts.' : 'Send continues the task in its existing worktree.';
+        $('#conversation-hint').textContent=task.takeover ? 'This run is continuing as an interactive session. Close Chat and choose Open session.' : task.target_kind==='sandbox' && task.status!=='backlog' ? 'Send queues a new sandbox run with your instructions and the previous result.' : task.status==='backlog' ? 'Adds instructions to this task without dispatching it.' : running ? 'Send queues a follow-up. Interrupt and send stops this run first, then continues.' : task.status==='queued' ? 'Your message is added before the queued run starts.' : 'Send continues the task in its existing worktree.';
         const signature=JSON.stringify([task.prompt,events,messages]);
         updateLog(signature,()=>renderTaskLog(log,task,events,messages));
         const ap=$('#conversation-approvals'); ap.replaceChildren();

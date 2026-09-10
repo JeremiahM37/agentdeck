@@ -1,7 +1,11 @@
+import { installTerminalScroll } from "/terminal-scroll.js";
+import '/ui-menu.js';
 const $ = (s) => document.querySelector(s);
 const [, , kind, id] = location.pathname.split("/");
 const base = `/api/term/${encodeURIComponent(kind)}/${encodeURIComponent(id)}`;
 const encoder = new TextEncoder();
+const embedded = new URLSearchParams(location.search).get("embed") === "1";
+document.body.classList.toggle("embedded", embedded);
 let disposePDF = () => {};
 let panes = [],
   active,
@@ -81,6 +85,7 @@ function select(p) {
   panes.forEach((x) => x.el.classList.toggle("active", x === p));
   $("#pause").textContent = p.paused ? "Resume view" : "Pause view";
   $("#pause").setAttribute("aria-pressed", String(p.paused));
+  $('#terminal-tools-summary').textContent = p.paused ? 'Paused · Tools' : 'Tools';
   $("#connection").textContent = p.connected ? "Connected" : "Reconnecting…";
 }
 class Pane {
@@ -90,7 +95,9 @@ class Pane {
     this.connected = false;
     this.stopped = false;
     this.paused = false;
+    this.historyRevision = 0;
     this.retry = 500;
+    this.generation = 0;
     this.term = new Terminal({
       fontSize: prefs.fontSize,
       lineHeight: Number(prefs.lineHeight),
@@ -118,21 +125,31 @@ class Pane {
     this.fit.fit();
     this.term.onData((data) => this.input(data));
     this.term.onBinary((data) => this.sendBinary(data));
-    this.term.onResize(({ cols, rows }) =>
-      this.send("1" + JSON.stringify({ columns: cols, rows })),
-    );
+    this.term.onResize(({ cols, rows }) => {
+      this.resizePending = true;
+      this.send("1" + JSON.stringify({ columns: cols, rows }));
+      // Reflow can leave the viewport showing old redraws in scrollback.
+      // A live terminal must stay on the actual screen after its grid changes.
+      this.term.scrollToBottom();
+    });
     this.search.onDidChangeResults((e) => {
       if (active === this)
         $("#matches").textContent = e.resultCount
           ? `${e.resultIndex + 1} / ${e.resultCount}`
           : "No matches";
     });
-    this.observer = new ResizeObserver(() => {
-      if (!this.paused) this.fit.fit();
-    });
+    this.observer = new ResizeObserver(() => this.scheduleFit());
     this.observer.observe(el.querySelector(".terminal-host"));
     el.addEventListener("pointerdown", () => select(this));
     el.addEventListener("focusin", () => select(this));
+    const frozen = el.querySelector(".frozen");
+    frozen.addEventListener("scroll", () => {
+      if (this.readingRetainedHistory && frozen.scrollHeight - frozen.clientHeight - frozen.scrollTop <= 2)
+        this.leaveRetainedHistory();
+    });
+    frozen.addEventListener("click", () => {
+      if (this.readingRetainedHistory && !window.getSelection()?.toString()) this.term.focus();
+    });
     this.term.attachCustomKeyEventHandler((e) => {
       if (e.type !== "keydown") return true;
       if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.code === "KeyF") {
@@ -147,6 +164,12 @@ class Pane {
       }
       return true;
     });
+    this.disposeScroll = installTerminalScroll({
+      host: el.querySelector(".terminal-host"), term: this.term,
+      enabled: () => this.connected && !this.paused && !this.readingRetainedHistory && !this.stopped,
+      retainedHistory: (lines) => this.readRetainedHistory(lines),
+      liveIntent: () => { ++this.historyRevision; },
+    });
     this.connect();
   }
   send(s) {
@@ -154,72 +177,102 @@ class Pane {
   }
   input(s) {
     if (!this.connected || this.paused) return;
+    ++this.historyRevision;
+    this.leaveRetainedHistory();
     this.send("0" + s);
   }
   sendBinary(s) {
     if (!this.connected || this.paused) return;
+    ++this.historyRevision;
+    this.leaveRetainedHistory();
     const b = new Uint8Array(s.length + 1);
     b[0] = 48;
     for (let i = 0; i < s.length; i++) b[i + 1] = s.charCodeAt(i) & 255;
     this.ws.send(b);
   }
+  scheduleFit() {
+    cancelAnimationFrame(this.fitFrame);
+    this.fitFrame = requestAnimationFrame(() => {
+      if (this.stopped || this.paused || !this.el.getBoundingClientRect().width) return;
+      this.fit.fit();
+      this.el.querySelector(".frozen").style.top = this.el.querySelector(".terminal-host").offsetTop + "px";
+      this.term.refresh(0, this.term.rows - 1);
+    });
+  }
   async connect() {
     if (this.stopped) return;
+    ++this.historyRevision;
+    this.leaveRetainedHistory();
+    const generation = ++this.generation;
+    const current = () => !this.stopped && generation === this.generation;
+    clearTimeout(this.timer);
+    this.controller?.abort();
+    this.controller = new AbortController();
+    this.ws?.close();
+    this.ws = null;
+    this.connected = false;
+    this.term.options.disableStdin = true;
+    if (active === this) select(this);
     try {
-      const r = await request(authURL(this.url + "/token"));
+      // xterm parses writes asynchronously. Drain the old stream before reset;
+      // otherwise its queued escape sequences can corrupt the new redraw.
+      await new Promise((resolve) => this.term.write("", resolve));
+      if (!current()) return;
+      this.term.reset();
+      if (!this.paused) this.fit.fit();
+      const r = await request(authURL(this.url + "/token"), {signal: this.controller.signal});
       const t = await r.json();
-      if (this.stopped) return;
+      if (!current()) return;
       const ws = new WebSocket(
-        authURL(
-          (location.protocol === "https:" ? "wss://" : "ws://") +
-            location.host +
-            this.url +
-            "/ws",
-        ),
+        authURL((location.protocol === "https:" ? "wss://" : "ws://") + location.host + this.url + "/ws"),
         ["tty"],
       );
       this.ws = ws;
       ws.binaryType = "arraybuffer";
       ws.onopen = () => {
-        if (this.stopped) {
-          ws.close();
-          return;
-        }
-        this.term.reset();
+        if (!current()) { ws.close(); return; }
         this.pending = 0;
+        this.flowPaused = false;
         this.connected = true;
         this.retry = 500;
         this.term.options.disableStdin = this.paused;
-        this.send(
-          JSON.stringify({
-            AuthToken: t.token,
-            columns: this.term.cols,
-            rows: this.term.rows,
-          }),
-        );
+        this.send(JSON.stringify({AuthToken: t.token, columns: this.term.cols, rows: this.term.rows}));
         this.el.querySelector(".pane-status").textContent = "Connected";
         if (active === this) select(this);
+        this.scheduleFit();
       };
       ws.onmessage = (e) => {
+        if (!current()) return;
         const b = new Uint8Array(e.data);
         if (b[0] !== 48) return;
         const data = b.subarray(1);
         this.pending += data.length;
-        if (this.pending > 1000000) this.send("2");
+        if (this.pending > 1000000 && !this.flowPaused) {
+          this.flowPaused = true; this.send("2");
+        }
         this.term.write(data, () => {
-          if (this.ws !== ws) return;
+          if (!current()) return;
           this.pending = Math.max(0, this.pending - data.length);
-          if (this.pending < 100000) this.send("3");
+          if (this.resizePending && this.pending === 0 && !this.paused) {
+            this.term.scrollToBottom();
+            this.resizePending = false;
+          }
+          if (this.pending < 100000 && this.flowPaused) {
+            this.flowPaused = false; this.send("3");
+          }
         });
       };
-      ws.onclose = () => this.reconnect();
+      ws.onclose = () => { if (current()) this.reconnect(); };
       ws.onerror = () => ws.close();
     } catch (e) {
+      if (!current()) return;
       this.el.querySelector(".pane-status").textContent = e.message;
       this.reconnect();
     }
   }
   reconnect() {
+    // Invalidate all callbacks immediately, including xterm write completions.
+    ++this.generation;
     this.connected = false;
     this.term.options.disableStdin = true;
     if (active === this) select(this);
@@ -235,7 +288,43 @@ class Pane {
     this.term.paste(s);
     this.term.focus();
   }
-  freeze(on) {
+  async readRetainedHistory(lines) {
+    if (this.loadingHistory || this.paused || this.readingRetainedHistory || this.stopped || Date.now() - (this.lastHistoryRead || 0) < 1000) return;
+    const revision = this.historyRevision;
+    this.lastHistoryRead = Date.now();
+    this.loadingHistory = true;
+    try {
+      const url = this.url.replace("/term/", "/api/term/") + "/history";
+      const out = await (await request(url)).json();
+      if (this.stopped || this.paused || revision !== this.historyRevision) return;
+      if (out.text.trimEnd().split("\n").length <= this.term.rows) {
+        notice("No older output is retained in tmux. Full-screen chats may keep their history inside the app.");
+        return;
+      }
+      const frozen = this.el.querySelector(".frozen");
+      frozen.textContent = out.text;
+      frozen.style.fontSize = prefs.fontSize + "px";
+      frozen.style.top = this.el.querySelector(".terminal-host").offsetTop + "px";
+      frozen.classList.add("retained-history");
+      frozen.hidden = false;
+      frozen.scrollTop = frozen.scrollHeight - frozen.clientHeight + lines * prefs.fontSize;
+      this.readingRetainedHistory = true;
+    } catch (e) { notice(e.message, true); }
+    finally { this.loadingHistory = false; }
+  }
+  leaveRetainedHistory() {
+    if (!this.readingRetainedHistory) return;
+    this.readingRetainedHistory = false;
+    const frozen = this.el.querySelector(".frozen");
+    frozen.hidden = true;
+    frozen.classList.remove("retained-history");
+    this.term.scrollToBottom();
+    // Keep keyboard focus where it was: returning by touch must not open the keyboard.
+  }
+  freeze(on, snapshot) {
+    ++this.historyRevision;
+    if (on && this.readingRetainedHistory) snapshot ??= this.el.querySelector(".frozen").textContent;
+    this.leaveRetainedHistory();
     this.paused = on;
     const frozen = this.el.querySelector(".frozen");
     if (on) {
@@ -243,7 +332,7 @@ class Pane {
       const b = this.term.buffer.active;
       for (let i = 0; i < b.length; i++)
         lines.push(b.getLine(i)?.translateToString(true) || "");
-      frozen.textContent = lines.join("\n");
+      frozen.textContent = snapshot ?? lines.join("\n");
       frozen.style.fontSize = prefs.fontSize + "px";
     }
     frozen.hidden = !on;
@@ -258,12 +347,34 @@ class Pane {
   }
   dispose() {
     this.stopped = true;
+    ++this.generation;
+    this.controller?.abort();
+    cancelAnimationFrame(this.fitFrame);
     clearTimeout(this.timer);
     this.ws?.close();
+    this.disposeScroll?.();
     this.observer.disconnect();
     this.term.dispose();
   }
 }
+// Mobile keyboards, font loading and returning from a background tab can all
+// change cell geometry without a normal window resize.
+const fitPanes = () => panes.forEach((p) => p.scheduleFit());
+window.visualViewport?.addEventListener("resize", fitPanes);
+document.fonts?.ready.then(fitPanes);
+window.addEventListener("focus", fitPanes);
+window.addEventListener("pageshow", fitPanes);
+window.addEventListener("message", (e) => {
+  if (embedded && e.source === parent && e.origin === location.origin && e.data?.type === "adk-terminal-visible")
+    fitPanes();
+});
+document.addEventListener("visibilitychange", () => {
+  if (!document.hidden) fitPanes();
+});
+$("#reconnect").onclick = () => {
+  if (active?.paused) active.freeze(false);
+  active?.connect();
+};
 async function uploadFiles(files, pane = active) {
   if (!info.files_available)
     throw Error("Uploads unavailable for this workspace.");
@@ -593,6 +704,18 @@ $("#desktop").onclick = () => {
   $("#desktop-command").value = info.desktop_command;
   $("#desktop-dialog").showModal();
 };
+$('#cli-install-command').textContent = 'bash install-agentdeck-cli.sh --server agentdeck --api ' + quote(location.origin);
+const desktopPlatform = navigator.userAgentData?.platform || navigator.platform;
+const nativeName = /Linux/i.test(desktopPlatform) && !/Android/i.test(navigator.userAgent) ? 'Kitty'
+  : /Win/i.test(desktopPlatform) ? 'WezTerm' : null;
+if (nativeName) {
+  $('#desktop').textContent = nativeName;
+  $('#desktop-open').textContent = 'Open in ' + nativeName;
+  if (nativeName === 'WezTerm') $('#cli-install-command').textContent = 'powershell -ExecutionPolicy Bypass -File .\\install-agentdeck-cli.ps1 -Server agentdeck';
+}
+$('#terminal-tools .action-menu-panel').addEventListener('click', e => {
+  if (e.target.closest('button')) $('#terminal-tools').open = false;
+});
 $("#desktop-copy").onclick = act(async () => {
   await navigator.clipboard.writeText(info.desktop_command);
   notice("SSH command copied.");

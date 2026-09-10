@@ -6,6 +6,14 @@ from playwright.sync_api import expect
 from conftest import DESKTOP, PHONE
 
 
+def _tab(page, name):
+    button=page.locator(f'.tab[data-tab="{name}"]')
+    if not button.is_visible():
+        page.locator('#nav-overflow > summary').click()
+        page.locator(f'[data-nav-target="{name}"]').click()
+    else: button.click()
+
+
 def _new_task(page, title, prompt="fix it", perm=None):
     page.click("#fab")
     page.fill("#f-title", title)
@@ -78,21 +86,21 @@ def test_full_flow_dispatch_review_diff_done(page, server):
 def test_approval_flow_from_phone(page, server):
     page.goto(server)
     _new_task(page, "E2E gated deploy", "deploy [mock:approval]", perm="default")
-    expect(page.locator("#appr-badge")).to_be_visible(timeout=15000)
-    page.click(".tab[data-tab='approvals']")
+    expect(page.locator("#appr-badge:visible, #more-badge:visible")).to_be_visible(timeout=15000)
+    _tab(page, "approvals")
     row = page.locator(".rowcard", has_text="Bash")
     expect(row.first).to_be_visible()
     expect(row.first.locator("pre")).to_contain_text("rm -rf build/")
     row.first.locator("button:has-text('Approve')").first.click()
     # the agent continues and finishes
-    page.click(".tab[data-tab='board']")
+    _tab(page, "board")
     expect(page.locator(".col.s-review .card", has_text="E2E gated deploy")) \
         .to_be_visible(timeout=20000)
 
 
 def test_targets_tab_probe(page, server):
     page.goto(server)
-    page.click(".tab[data-tab='targets']")
+    _tab(page, "targets")
     # scope by heading: project cards name their target too, so a bare has_text
     # would match both the target card and every project pointed at it
     row = page.locator(".rowcard").filter(
@@ -105,7 +113,8 @@ def test_targets_tab_probe(page, server):
 def test_targets_tab_shows_project_capability(page, server):
     """The parity settings had no UI at all — they could only be set by curl."""
     page.goto(server)
-    page.click(".tab[data-tab='targets']")
+    _tab(page, "targets")
+    page.locator('[data-settings="projects"]').click()
     # projects are a filterable list now — tapping one opens its settings
     page.fill("#pj-search", "demo-app")
     page.wait_for_timeout(300)
@@ -177,12 +186,12 @@ def test_verify_badge_shows_on_card(page, server):
 def test_approval_card_has_always_allow(page, server):
     page.goto(server)
     _new_task(page, "E2E always allow", "risky [mock:approval]", perm="default")
-    expect(page.locator("#appr-badge")).to_be_visible(timeout=15000)
-    page.click(".tab[data-tab='approvals']")
+    expect(page.locator("#appr-badge:visible, #more-badge:visible")).to_be_visible(timeout=15000)
+    _tab(page, "approvals")
     row = page.locator(".rowcard", has_text="Bash").first
     expect(row.locator("button", has_text="∞ Always")).to_be_visible()
     row.locator("button:has-text('Approve')").first.click()
-    page.click(".tab[data-tab='board']")
+    _tab(page, "board")
     expect(page.locator(".col.s-review .card", has_text="E2E always allow")) \
         .to_be_visible(timeout=20000)
 
@@ -216,7 +225,7 @@ def test_deck_view_streams_panes(page, server):
         headers:{{'Content-Type':'application/json'}}, body:'{{}}'}});
     }}""")
     expect(page.locator(".card", has_text="deck watch me")).to_be_visible(timeout=15000)
-    page.click(".tab[data-tab='deck']")
+    _tab(page, "deck")
     pane = page.locator(".pane", has_text="deck watch me")
     expect(pane).to_be_visible(timeout=15000)
     expect(pane.locator(".pane-line").first).to_be_visible(timeout=15000)
@@ -224,13 +233,15 @@ def test_deck_view_streams_panes(page, server):
 
 def test_settings_ui_saves_sinks(page, server):
     page.goto(server)
-    page.click(".tab[data-tab='targets']")
+    _tab(page, "targets")
+    page.locator('[data-settings="notifications"]').click()
     page.fill("#s-ntfy-server", "https://ntfy.sh")
     page.fill("#s-ntfy-topic", "adk-e2e")
     page.click("#s-save")
     expect(page.locator(".toast", has_text="Sinks saved")).to_be_visible()
     page.reload()
-    page.click(".tab[data-tab='targets']")
+    _tab(page, "targets")
+    page.locator('[data-settings="notifications"]').click()
     expect(page.locator("#s-ntfy-topic")).to_have_value("adk-e2e", timeout=5000)
 
 
@@ -335,7 +346,7 @@ def test_deck_persists_streams_across_updates(page, server):
         headers:{{'Content-Type':'application/json'}}, body:'{{}}'}});
     }}""")
     expect(page.locator(".card", has_text=marker)).to_be_visible(timeout=15000)
-    page.click(".tab[data-tab='deck']")
+    _tab(page, "deck")
     expect(page.locator(".pane", has_text=marker)).to_be_visible(timeout=15000)
     page.evaluate(f"""() => {{
       const p = [...document.querySelectorAll('.pane')]
@@ -434,7 +445,7 @@ def test_sessions_tab_starts_and_shows_a_session(page, server):
     """A session is an agent you work WITH — its card leads with how long it has
     been quiet and what is on its screen."""
     page.goto(server)
-    page.click(".tab[data-tab='sessions']")
+    _tab(page, "sessions")
     expect(page.locator("#sess-new")).to_be_visible()
 
     page.click("#sess-new")
@@ -453,7 +464,7 @@ def test_sessions_tab_starts_and_shows_a_session(page, server):
 
 def test_session_send_reaches_the_pane(page, server):
     page.goto(server)
-    page.click(".tab[data-tab='sessions']")
+    _tab(page, "sessions")
     page.click("#sess-new")
     page.fill("#ns-name", "chatty")
     page.click("#ns-go")
@@ -471,7 +482,7 @@ def test_session_send_reaches_the_pane(page, server):
 def test_discover_offers_to_adopt_a_hand_started_agent(page, server):
     """The sessions worth tracking are usually the ones you started yourself."""
     page.goto(server)
-    page.click(".tab[data-tab='sessions']")
+    _tab(page, "sessions")
     page.click("#sess-discover")
     row = page.locator(".cand", has_text="legacy-claude").first
     expect(row).to_be_visible(timeout=15000)
@@ -484,7 +495,8 @@ def test_discover_offers_to_adopt_a_hand_started_agent(page, server):
 def test_import_registers_projects_from_a_scan(page, server):
     """An empty board is why a tool like this gets abandoned in week one."""
     page.goto(server)
-    page.click(".tab[data-tab='targets']")
+    _tab(page, "targets")
+    page.locator('[data-settings="projects"]').click()
     expect(page.locator("#imp-root")).to_be_visible()
     page.fill("#imp-root", "/mock/does-not-exist")
     page.click("#imp-scan")
@@ -497,13 +509,14 @@ def test_adopted_session_offers_release_not_just_kill(page, server):
     """Adoption is non-destructive, so letting go has to be too — an agent you
     started yourself must not be killed by a button labelled like a delete."""
     page.goto(server)
-    page.click(".tab[data-tab='sessions']")
+    _tab(page, "sessions")
     page.click("#sess-discover")
     row = page.locator(".cand", has_text="legacy-claude").first
     expect(row).to_be_visible(timeout=15000)
     row.locator("button", has_text="Adopt").click()
     card = page.locator(".scard", has_text="legacy-claude")
     expect(card).to_be_visible(timeout=15000)
+    card.locator(".action-menu > summary").click()
     # the safe action is present and unconfirmed; the destructive one is separate
     expect(card.locator("button", has_text="Stop tracking")).to_be_visible()
     expect(card.locator("button", has_text="Kill")).to_be_visible()
@@ -525,6 +538,7 @@ def test_hash_opens_the_named_tab(page, server):
     expect(page.locator(".tab[data-tab='sessions']")).to_have_class(__import__("re").compile("on"))
 
     page.goto(server + "/#targets")
+    page.locator('[data-settings="projects"]').click()
     expect(page.locator("#imp-root")).to_be_visible(timeout=10000)
 
 
@@ -545,7 +559,7 @@ def test_hash_opens_a_task_sheet(page, server):
 
 def test_switching_tabs_updates_the_hash(page, server):
     page.goto(server)
-    page.click(".tab[data-tab='sessions']")
+    _tab(page, "sessions")
     page.wait_for_timeout(400)
     assert page.evaluate("location.hash") == "#sessions"
 
@@ -579,7 +593,7 @@ def test_blank_room_session_can_be_promoted_to_a_project(page, server):
     directory, no project. Deciding what it is happens afterwards, and the
     session keeps running through it."""
     page.goto(server)
-    page.click(".tab[data-tab='sessions']")
+    _tab(page, "sessions")
     page.click("#sess-new")
 
     # the option people do not know exists is offered first, but a project stays
@@ -599,7 +613,8 @@ def test_blank_room_session_can_be_promoted_to_a_project(page, server):
     card = page.locator(".scard", has_text="half an idea")
     expect(card).to_be_visible(timeout=15000)
     # it starts life unassigned, grouped apart from real projects
-    expect(page.locator(".projgroup", has_text="Unassigned")).to_be_visible(timeout=15000)
+    expect(card.locator(".scard-project", has_text="Unassigned")).to_be_visible(timeout=15000)
+    card.locator(".action-menu > summary").click()
     promote = card.locator("button", has_text="Make a project")
     expect(promote).to_be_visible()
 
@@ -607,13 +622,13 @@ def test_blank_room_session_can_be_promoted_to_a_project(page, server):
     promote.click()
 
     # the work is a project now, and the conversation is still running in it
-    expect(page.locator(".projgroup", has_text="half-an-idea")).to_be_visible(timeout=15000)
+    expect(page.locator(".scard-project", has_text="half-an-idea")).to_be_visible(timeout=15000)
     card = page.locator(".scard", has_text="half an idea")
     expect(card.locator("button", has_text="Attach")).to_be_visible()
     expect(card.locator("button", has_text="Make a project")).to_have_count(0)
 
     # and it is dispatchable: the new project is offered on the task form
-    page.click(".tab[data-tab='board']")
+    _tab(page, "board")
     page.click("#fab")
     expect(page.locator("#f-project")).to_contain_text("half-an-idea")
 
@@ -623,7 +638,7 @@ def test_phone_session_cards_do_not_overflow_with_every_button(page, server):
     """Session cards grew a "Make a project" button. A phone is 390px wide and
     the button row is where that shows up first."""
     page.goto(server)
-    page.click(".tab[data-tab='sessions']")
+    _tab(page, "sessions")
     page.click("#sess-new")
     page.select_option("#ns-project", "")          # blank room: the most buttons
     page.fill("#ns-name", "phone room")
@@ -631,6 +646,7 @@ def test_phone_session_cards_do_not_overflow_with_every_button(page, server):
 
     card = page.locator(".scard", has_text="phone room")
     expect(card).to_be_visible(timeout=15000)
+    card.locator(".action-menu > summary").click()
     expect(card.locator("button", has_text="Make a project")).to_be_visible()
 
     # nothing may push the document sideways
@@ -657,7 +673,7 @@ def test_phone_new_session_sheet_fits(page, server):
     """The sheet gained a project option and a model list; it still has to be
     usable one-handed."""
     page.goto(server)
-    page.click(".tab[data-tab='sessions']")
+    _tab(page, "sessions")
     page.click("#sess-new")
     for sel in ("#ns-project", "#ns-agent", "#ns-model", "#ns-start", "#ns-go"):
         expect(page.locator(sel)).to_be_visible()
@@ -673,26 +689,20 @@ def test_attach_opens_a_same_origin_terminal(page, server):
     whichever machine served the page — the reverse proxy, usually, which runs no
     ttyd. It must be a path on this origin."""
     page.goto(server)
-    page.click(".tab[data-tab='sessions']")
+    _tab(page, "sessions")
     page.click("#sess-new")
     page.fill("#ns-name", "attachable")
     page.click("#ns-go")
     card = page.locator(".scard", has_text="attachable")
     expect(card).to_be_visible(timeout=15000)
 
-    page.evaluate("window.__opened = []; "
-                  "window.open = (u) => { window.__opened.push(u); return null; };")
+    pages_before = len(page.context.pages)
     card.locator("button", has_text="Attach").click()
-    page.wait_for_timeout(3000)
-
-    opened = [u for u in page.evaluate("window.__opened || []") if u]
-    assert opened, "Attach opened nothing"
-    # every URL it opens must be same-origin, not just the first one
-    for url in opened:
-        assert url.startswith("/terminal/"), f"terminal url must be same-origin, got {url!r}"
-        for bad in ("http://", "https://", "localhost", "127.0.0.1", ":77"):
-            assert bad not in url, f"terminal url names a host ({bad}): {url!r}"
-    url = opened[0]
+    frame = page.locator('#terminal-workspace iframe')
+    expect(frame).to_be_visible(timeout=10000)
+    url = frame.get_attribute('src')
+    assert url.startswith('/terminal/session/'), url
+    assert len(page.context.pages) == pages_before
 
     # and that path must actually serve ttyd through the proxy
     resp = page.request.get(server + url)
@@ -703,7 +713,7 @@ def test_yolo_is_offered_and_on_by_default(page, server):
     """Yolo is the default because you are sitting in the terminal watching the
     agent — but it must be visible and switchable, not silent."""
     page.goto(server)
-    page.click(".tab[data-tab='sessions']")
+    _tab(page, "sessions")
     page.click("#sess-new")
 
     yolo = page.locator("#ns-yolo")
@@ -720,7 +730,7 @@ def test_yolo_is_offered_and_on_by_default(page, server):
 @pytest.mark.parametrize("page", [PHONE], indirect=True, ids=["phone"])
 def test_yolo_toggle_fits_on_a_phone(page, server):
     page.goto(server)
-    page.click(".tab[data-tab='sessions']")
+    _tab(page, "sessions")
     page.click("#sess-new")
     box = page.locator("#ns-yolo").bounding_box()
     assert box["x"] >= 0 and box["x"] + box["width"] <= PHONE["width"] + 1, box
@@ -731,7 +741,8 @@ def test_projects_can_be_filtered_and_deleted(page, server):
     """Eighty-one projects is a wall. The list leads with staleness, filters by
     name, and deletion is itemised before it happens."""
     page.goto(server)
-    page.click(".tab[data-tab='targets']")
+    _tab(page, "targets")
+    page.locator('[data-settings="projects"]').click()
     expect(page.locator("#pj-list")).to_be_visible(timeout=10000)
     rows = page.locator(".pjrow")
     expect(rows.first).to_be_visible(timeout=10000)
@@ -761,7 +772,8 @@ def test_projects_can_be_filtered_and_deleted(page, server):
         return (await r.json()).id;
     }""", name)
     page.reload()
-    page.click(".tab[data-tab='targets']")
+    _tab(page, "targets")
+    page.locator('[data-settings="projects"]').click()
     page.fill("#pj-search", name)
     page.wait_for_timeout(400)
     expect(page.locator(".pjrow", has_text=name)).to_be_visible(timeout=10000)
@@ -785,7 +797,8 @@ def test_projects_can_be_filtered_and_deleted(page, server):
 @pytest.mark.parametrize("page", [PHONE], indirect=True, ids=["phone"])
 def test_project_list_is_usable_on_a_phone(page, server):
     page.goto(server)
-    page.click(".tab[data-tab='targets']")
+    _tab(page, "targets")
+    page.locator('[data-settings="projects"]').click()
     expect(page.locator("#pj-list")).to_be_visible(timeout=10000)
     assert page.evaluate("() => document.documentElement.scrollWidth") <= PHONE["width"] + 1
     row = page.locator(".pjrow").first
@@ -798,24 +811,25 @@ def test_a_shell_into_the_project_is_one_click(page, server):
     """Sometimes you just want to look at the code yourself — read a file, fix
     one line — without asking an agent to do it."""
     page.goto(server)
-    page.click(".tab[data-tab='targets']")
+    _tab(page, "targets")
+    page.locator('[data-settings="projects"]').click()
     expect(page.locator("#pj-list")).to_be_visible(timeout=10000)
 
     row = page.locator(".pjrow").first
     shell_btn = row.locator("button")
     expect(shell_btn).to_be_visible()
 
-    page.evaluate("window.__opened = []; window.open = (u) => { window.__opened.push(u); return null; };")
+    pages_before = len(page.context.pages)
     shell_btn.click()
-    page.wait_for_timeout(3000)
-
-    opened = [u for u in page.evaluate("window.__opened || []") if u]
-    assert opened, "the shell button opened nothing"
-    assert opened[0].startswith("/terminal/project/"), \
-        f"a shell must be same-origin and name the project: {opened[0]!r}"
-
-    # opening the shell must not have navigated away from the board
+    frame = page.locator('#terminal-workspace iframe')
+    expect(frame).to_be_visible(timeout=10000)
+    assert frame.get_attribute('src').startswith('/terminal/project/')
+    assert len(page.context.pages) == pages_before
+    _tab(page, "targets")
+    page.locator('[data-settings="projects"]').click()
     expect(page.locator("#pj-list")).to_be_visible()
+    # Navigation hides the terminal, without destroying it.
+    expect(page.locator('#terminal-workspace iframe')).to_have_count(1)
 
 
 def test_a_routine_can_be_saved_and_run_with_one_button(page, server):
@@ -824,7 +838,7 @@ def test_a_routine_can_be_saved_and_run_with_one_button(page, server):
     page.click("#qb-routines")
     expect(page.locator("#rt-list")).to_be_visible(timeout=10000)
 
-    page.click("summary")
+    page.click("#sheet summary")
     page.fill("#rt-name", "PR sweep")
     page.select_option("#rt-projects", index=0)
     page.fill("#rt-prompt", "Review every open PR, test it end to end, merge when CI is green")
@@ -844,7 +858,7 @@ def test_a_routine_can_be_saved_and_run_with_one_button(page, server):
 def test_a_scheduled_routine_shows_when_it_next_runs(page, server):
     page.goto(server)
     page.click("#qb-routines")
-    page.click("summary")
+    page.click("#sheet summary")
     page.fill("#rt-name", "Nightly sweep")
     page.select_option("#rt-projects", index=0)
     page.fill("#rt-prompt", "nightly work")
@@ -941,13 +955,14 @@ def test_handoff_lets_you_choose_which_agent_picks_it_up(page, server):
     """The point of a handoff is usually moving the work to a different agent.
     It used to be a yes/no confirm that always reused the same one."""
     page.goto(server)
-    page.click(".tab[data-tab='sessions']")
+    _tab(page, "sessions")
     page.click("#sess-new")
     page.fill("#ns-name", "handoff me")
     page.click("#ns-go")
     card = page.locator(".scard", has_text="handoff me")
     expect(card).to_be_visible(timeout=15000)
 
+    card.locator(".action-menu > summary").click()
     card.locator("button", has_text="Handoff").click()
     expect(page.locator("#ho-agent")).to_be_visible(timeout=10000)
 
@@ -979,7 +994,8 @@ def test_handoff_lets_you_choose_which_agent_picks_it_up(page, server):
 
 def test_running_build_identifies_the_serving_binary(page, server):
     page.goto(server)
-    page.click(".tab[data-tab='targets']")
+    _tab(page, "targets")
+    page.locator('[data-settings="about"]').click()
     health = page.request.get(server + "/api/health").json()
     build = health["build"]
     expect(page.locator("#running-build")).to_contain_text(health["version"])
@@ -998,7 +1014,7 @@ def test_session_preview_shows_memory_status(page, server, status, message):
         "brief": "test brief", "memory": {"status": status, "message": message}
     }))
     page.goto(server)
-    page.click(".tab[data-tab='sessions']")
+    _tab(page, "sessions")
     page.click("#sess-new")
     page.select_option("#ns-start", "brief")
     expect(page.locator("#ns-memory-status")).to_have_text(message)
@@ -1114,7 +1130,7 @@ def test_dispatch_directly_into_chat_and_message_running_task(page, server):
 def test_mobile_context_attachments_keep_drafts_and_send(page, server):
     page.set_viewport_size(PHONE)
     page.goto(server)
-    page.click(".tab[data-tab='sessions']")
+    _tab(page, "sessions")
     page.click("#sess-new")
     page.fill("#ns-name", "file context")
     page.click("#ns-go")
