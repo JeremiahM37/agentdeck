@@ -128,3 +128,23 @@ func TestNativeSearchMouseAndProgressPreserveReadingPosition(t *testing.T) {
 		t.Fatal("progress or mouse moved the dashboard/reading position")
 	}
 }
+
+func TestNativeSearchPagesKeepOriginalConversation(t *testing.T) {
+	paths := []string{}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		paths = append(paths, r.URL.RequestURI())
+		w.Write([]byte(`{"page_mode":"match","after":22,"index_complete":true,"messages":[{"role":"assistant","text":"needle","matched":true}]}`))
+	}))
+	defer server.Close()
+	m := searchDashboard()
+	m.client = New(server.URL, "")
+	s := m.nativeSearch
+	s.data = nativeSearchData{ID: "job", Results: []nativeSearchHit{{ID: "original"}}}
+	m.Update(m.readNativeSearch()())
+	s.data.Results = []nativeSearchHit{{ID: "another"}}
+	cmd := m.updateNativeSearch(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'N'}})
+	m.Update(cmd())
+	if len(paths) != 2 || paths[1] != "/api/conversation-search/job/results/original?after=22" {
+		t.Fatal("paging changed conversation", paths)
+	}
+}

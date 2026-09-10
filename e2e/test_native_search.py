@@ -17,7 +17,7 @@ def prepare(t):
     home=t['root']/'search-home';folder=home/'sessions';folder.mkdir(parents=True)
     cid=str(uuid.uuid4());path=folder/(cid+'.jsonl')
     rows=[{'type':'session_meta','payload':{'id':cid,'cwd':str(t['root']/'untracked')}}]
-    for text,channel in [('old résumé needle <script>window.injected=true</script>','final'),('PRIVATE_SENTINEL','analysis')]+[('ordinary filler '*1000,'final')]*200:
+    for text,channel in [('old résumé needle <script>window.injected=true</script>','final'),('PRIVATE_SENTINEL','analysis')]+[('ordinary filler '*1000,'final')]*200+[('Latest saved message sentinel','final')]:
         rows.append({'type':'response_item','payload':{'type':'message','role':'assistant','channel':channel,'content':[{'type':'output_text','text':text}]}})
     path.write_text(''.join(json.dumps(row)+'\n' for row in rows))
     req=urllib.request.Request(t['url']+'/api/agents',method='PUT',data=json.dumps([{'name':'codex','command':'codex','env':{'CODEX_HOME':str(home),'AGENTDECK_NATIVE_SEARCH_CACHE':str(t['root']/'cache')}}]).encode(),headers={'Content-Type':'application/json'})
@@ -42,6 +42,17 @@ def test_native_search_reads_old_match_and_retains_terminal(page,real_terminal,w
     d.get_by_label('Conversation text').focus();page.keyboard.press('ArrowDown');expect(d.locator('.ns-result')).to_be_focused();page.keyboard.press('Enter')
     expect(d.locator('.ns-match')).to_contain_text('old résumé needle')
     assert 'PRIVATE_SENTINEL' not in d.inner_text() and page.evaluate('window.injected') is None
+    expect(d.get_by_role('button',name='Earlier messages')).to_be_disabled()
+    d.get_by_role('button',name='Later messages').click()
+    expect(d.locator('.ns-read-status')).to_contain_text('Saved messages')
+    expect(d.locator('.ns-match')).to_have_count(0)
+    d.get_by_role('button',name='Earlier messages').click()
+    expect(d.locator('.ns-match')).to_contain_text('old résumé needle')
+    d.get_by_role('button',name='Latest indexed',exact=True).click()
+    expect(d.locator('.nh-messages')).to_contain_text('Latest saved message sentinel')
+    expect(d.get_by_role('button',name='Later messages')).to_be_disabled()
+    d.get_by_role('button',name='Back to match').click()
+    expect(d.locator('.ns-match')).to_contain_text('old résumé needle')
     assert d.evaluate('(el)=>el.scrollWidth<=el.clientWidth')
     if width==390:
         page.set_viewport_size({'width':390,'height':400})

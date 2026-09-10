@@ -66,6 +66,29 @@ class SearchTests(unittest.TestCase):
         result=self.read_hit(hit,'needle')
         self.assertEqual(result['changed_neighbors'],1)
         self.assertEqual([m['text'] for m in result['messages']],['exact needle','after words'])
+    def test_read_pages_cover_history_and_revalidate_original_match(self):
+        path,cid=self.write(['message '+str(i)+(' needle' if i==20 else '') for i in range(50)])
+        self.index.sync();hit=self.matches('needle')[0]
+        def page(mode='match',anchor=None):
+            return read_match(self.index,hit['document'],cid,hit['cwd'],hit['offset'],hit['fingerprint'],'needle',mode,anchor)
+        current=page();self.assertEqual(len(current['messages']),11)
+        seen=[m['text'] for m in current['messages']]
+        earlier=current
+        while earlier['before'] is not None:
+            earlier=page('before',earlier['before']);seen=[m['text'] for m in earlier['messages']]+seen
+        later=current
+        while later['after'] is not None:
+            later=page('after',later['after']);seen.extend(m['text'] for m in later['messages'])
+        self.assertEqual(seen,['message '+str(i)+(' needle' if i==20 else '') for i in range(50)])
+        latest=page('latest');self.assertEqual(latest['messages'][-1]['text'],'message 49');self.assertIsNone(latest['after'])
+        with self.assertRaisesRegex(ValueError,'boundary'):page('before',1)
+        path.write_text(path.read_text().replace('20 needle','20 edited'))
+        with self.assertRaisesRegex(ValueError,'Matched message changed'):page('latest')
+    def test_latest_reports_unindexed_append(self):
+        path,cid=self.write(['needle']);self.index.sync();hit=self.matches('needle')[0]
+        with path.open('a') as f:f.write(json.dumps(self.message('new text'))+'\n')
+        result=read_match(self.index,hit['document'],cid,hit['cwd'],hit['offset'],hit['fingerprint'],'needle','latest')
+        self.assertFalse(result['index_complete']);self.assertEqual(len(result['messages']),1)
     def test_budgeted_resume_append_partial_and_no_duplicates(self):
         path,cid=self.write(['first needle','second needle'])
         state=self.index.sync(byte_budget=1,seconds=10);self.assertFalse(state['complete'])

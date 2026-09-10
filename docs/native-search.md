@@ -45,14 +45,18 @@ are quoted as literal terms. A result cap tells callers when to narrow the query
 
 The exact-match reader revalidates the native profile, conversation identity,
 file identity, JSONL boundary and visible-message fingerprint before returning
-source text. It reads up to five visible messages on either side of the match;
+source text. The initial view reads up to five visible messages on either side of the match;
 changed neighbors are omitted and counted, and a changed selected message is
 rejected. Large selected messages are clipped around the matching text. Returned
 context counts describe the included messages, not pagination availability.
 The reader uses cache schema v2, leaving prior development caches untouched.
 It closes its read transaction on success and failure so subsequent indexing can
-proceed. Context pagination and source context beyond the indexed portion remain
-integration work.
+proceed. Earlier/later pages contain up to eleven visible messages and use validated
+indexed boundaries. Every page revalidates the original match, even when that
+message is outside the displayed page. Latest indexed opens the last cached page;
+unindexed appends are reported as incomplete instead of being presented as the
+latest source text. Source context beyond the indexed portion still requires
+continuing or restarting the search.
 
 ## Background API (development branch)
 
@@ -65,7 +69,9 @@ integration work.
 - `DELETE /api/conversation-search/{id}`: cancel outstanding indexing. Ready
   results remain readable; starting another search resumes persisted checkpoints.
 - `GET /api/conversation-search/{id}/results/{result}`: revalidate and read the
-  exact matching message with context. No client-supplied file path is accepted.
+  exact matching message with context. Optional `before`, `after` or `latest=1`
+  chooses one page; conflicting or invalid boundaries are rejected. No
+  client-supplied file path is accepted.
 
 Scopes include captured settings from ended/archived sessions, project overrides,
 and current agent defaults on targets with no tracked sessions. Identical declared
@@ -90,7 +96,8 @@ ordinary session/action ranking does not start remote indexing. The dialog shows
 ready matches during indexing, expandable per-profile progress/issues, stop and
 connection-retry controls, plus an explicit rebuild under Search options.
 Keyboard arrows move from the query through results; Enter opens the exact match.
-Back returns to the selected result. Match context is plain text, with tool
+Earlier/Later messages navigate context, Latest indexed jumps to the last indexed
+page, and Back to match restores the original match. Back returns to the selected result. Match context is plain text, with tool
 messages collapsible and the selected message marked. Results survive a progress
 fetch failure. Closing cancels indexing, including a search whose start response
 arrives after the dialog closes. Late poll/reader responses cannot reopen it.
@@ -101,7 +108,9 @@ Desktop/mobile dimensions follow the visual viewport when the keyboard opens.
 Press `F` to search saved conversation text, using target/agent choices in the
 form. Submit with Ctrl-S. Arrow keys select matches, Enter opens matching context,
 `p` shows per-profile progress and issues, `s` stops indexing, `r` retries, and
-`R` explicitly rebuilds the index. `n` opens a new query. Esc returns from the
+`R` explicitly rebuilds the index. In the reader, `O`/`N` load earlier/later pages,
+`L` loads the latest indexed page, and `M` returns to the match. Home/End (or g/G)
+jump within a page. `n` opens a new query. Esc returns from the
 reader/progress view to results, then back to the unchanged dashboard selection.
 Mouse and page scrolling stay inside search and progress updates preserve the
 reading position. Native text is stripped of terminal control sequences before
@@ -111,7 +120,7 @@ request before quitting the dashboard.
 
 ## Evidence
 
-Twenty-four index and reader tests cover old text beyond the reader's recent window, long text,
+Twenty-six index and reader tests cover old text beyond the reader's recent window, long text,
 large image captions, oversized records, progressive indexing, append/partial
 writes, rewrites/deletion, concurrent writers, profile/path boundaries, private
 channels, malformed content, file permissions, explicit rebuilds, future-cache preservation,
@@ -140,16 +149,20 @@ closing while the start request is pending. Desktop and phone reader screenshots
 were inspected. The first full web run reached100% but exceeded its600-second suite allowance;
 verify reported FAIL5/6. The overall allowance is now780seconds, retaining
 individual test deadlines, and a full rerun is required.
-Five terminal unit tests passed with the race detector, including stale replies,
+Six terminal unit tests passed with the race detector, including stale replies,
 selection stability, control-sequence removal, resizing, expired-job retry and
 mouse/progress scroll preservation. A real PTY test passed through query/filter
 entry, old-message reading, rebuild after source change, dashboard return and
-terminal mode restoration.
+terminal mode restoration. Paging adds gap/duplicate-free traversal, invalid
+boundary rejection, original-match revalidation on later pages and incomplete
+append reporting. The four web cases passed with page controls; a refreshed PTY
+case passed earlier/later/latest/match navigation after adding Home/End support.
+Actual API-to-SSH forward/latest paging passed with owned fixtures. The terminal
+reader also keeps the original result identity when progress changes the list.
 
 ## Remaining integration
 
-- Add broader context pagination/latest and validated native fork actions to
-  the global result reader in both interfaces.
+- Add validated native fork actions to global search results in both interfaces.
 - Support native histories outside an existing session's recorded workspace
   through validated provider metadata, rather than accepting arbitrary file paths.
 - Test actual local/SSH flows, large histories, failures and desktop/mobile UX;

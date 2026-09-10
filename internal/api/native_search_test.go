@@ -105,6 +105,11 @@ func TestNativeSearchAcrossSavedProfilesAndUntrackedWorkspaces(t *testing.T) {
 	base := "/api/conversation-search/" + start["id"].(string) + "/results/" + selected["id"].(string)
 	var page obj
 	h.decode("GET", base, nil, 200, &page)
+	h.decode("GET", base+"?latest=1", nil, 200, nil)
+	h.decode("GET", base+"?latest=0", nil, 422, nil)
+	h.decode("GET", base+"?before=1&after=2", nil, 422, nil)
+	h.decode("GET", base+"?before=not-a-number", nil, 422, nil)
+	h.decode("GET", base+"?before=1", nil, 409, nil)
 	if !strings.Contains(fmt.Sprint(page), "--needle résumé current profile") || strings.Contains(fmt.Sprint(page), "PRIVATE_SENTINEL") {
 		t.Fatal(page)
 	}

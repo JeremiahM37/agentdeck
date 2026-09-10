@@ -422,6 +422,29 @@ func (s *Server) readConversationSearchResult(w http.ResponseWriter, r *http.Req
 		httpError(w, 409, "target connection changed; run the search again")
 		return
 	}
+	mode, anchor := "match", ""
+	for _, key := range []string{"before", "after", "latest"} {
+		if values, ok := r.URL.Query()[key]; ok {
+			if mode != "match" || len(values) != 1 {
+				httpError(w, 422, "choose one conversation page")
+				return
+			}
+			mode = key
+			if key == "latest" {
+				if values[0] != "1" {
+					httpError(w, 422, "latest must be 1")
+					return
+				}
+			} else {
+				value, err := strconv.ParseInt(values[0], 10, 64)
+				if err != nil || value < 0 {
+					httpError(w, 422, "invalid page boundary")
+					return
+				}
+				anchor = strconv.FormatInt(value, 10)
+			}
+		}
+	}
 	ex, err := s.Reg.For(chosen.target)
 	if err != nil {
 		httpError(w, 502, "could not connect to this target")
@@ -429,6 +452,10 @@ func (s *Server) readConversationSearchResult(w http.ResponseWriter, r *http.Req
 	}
 	script := "NATIVE_SEARCH_LIBRARY=True\n" + nativeRecordsScript + "\n" + nativeSearchScript + "\n" + nativeSearchReadScript
 	args := []string{chosen.Agent, strconv.FormatInt(match.Document, 10), match.CID, match.Cwd, strconv.FormatInt(match.Offset, 10), match.Fingerprint, chosen.profile, job.query}
+	args = append(args, mode)
+	if anchor != "" {
+		args = append(args, anchor)
+	}
 	cmd := chosen.prefix + "python3 -c " + shellq.Quote(script) + " --"
 	for _, arg := range args {
 		cmd += " " + shellq.Quote(arg)

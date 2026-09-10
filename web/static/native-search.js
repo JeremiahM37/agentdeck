@@ -9,7 +9,7 @@ export function openNativeSearch({api, targets = []}) {
     <button class="ns-retry" hidden>Retry connection</button><details class="ns-progress" hidden><summary>Target progress</summary><div></div></details>
     <div class="ns-results" aria-label="Saved conversation results"></div>
     <details class="ns-advanced"><summary>Search options</summary><p>If a transcript was rewritten, rebuild its search index. Saved conversations remain unchanged.</p><button class="ns-rebuild">Rebuild and search</button></details></section>
-    <section class="ns-reader" hidden><div class="ns-reader-head"><button class="ns-back">Back to results</button><p class="ns-location"></p></div><p class="ns-read-status" role="status"></p><div class="nh-messages"></div></section>`;
+    <section class="ns-reader" hidden><div class="ns-reader-head"><button class="ns-back">Back to results</button><p class="ns-location"></p></div><div class="ns-page-controls"><button class="ns-older">Earlier messages</button><button class="ns-newer">Later messages</button><button class="ns-latest">Latest indexed</button><button class="ns-jump-match">Back to match</button></div><p class="ns-read-status" role="status"></p><div class="nh-messages"></div></section>`;
   const $ = selector => root.querySelector(selector);
   for (const target of targets) {
     const option = document.createElement('option'); option.value = target.id; option.textContent = target.name;
@@ -89,13 +89,14 @@ export function openNativeSearch({api, targets = []}) {
       starting = false; $('.ns-submit').disabled = false; $('.ns-rebuild').disabled = false;
     }
   }
-  async function read(hit, id) {
+  async function read(hit, id, query = '') {
     const version = ++readGeneration; selectedResult = hit.id;
+    for (const button of root.querySelectorAll('.ns-page-controls button')) button.disabled = true;
     $('.ns-browse').hidden = true; $('.ns-reader').hidden = false;
     $('.ns-location').textContent = `${hit.target} · ${hit.agent} · ${hit.cwd}`;
     $('.ns-read-status').textContent = 'Loading matching message…'; $('.nh-messages').replaceChildren(); $('.ns-back').focus();
     try {
-      const page = await api(`/conversation-search/${id}/results/${hit.id}`);
+      const page = await api(`/conversation-search/${id}/results/${hit.id}${query}`);
       if (closed || version !== readGeneration) return;
       for (const message of page.messages) {
         const card = document.createElement(message.role === 'tool' ? 'details' : 'article');
@@ -107,7 +108,14 @@ export function openNativeSearch({api, targets = []}) {
         if (message.truncated) { const note = document.createElement('small'); note.textContent = 'Long message shortened in this view.'; card.append(note); }
         $('.nh-messages').append(card);
       }
-      $('.ns-read-status').textContent = `Matching message with nearby context${page.changed_neighbors ? ` · ${page.changed_neighbors} changed messages omitted` : ''}${!page.index_complete ? ' · indexing is incomplete' : ''}.`;
+      $('.ns-older').disabled = page.before == null; $('.ns-newer').disabled = page.after == null;
+      $('.ns-latest').disabled = false; $('.ns-jump-match').disabled = false;
+      $('.ns-older').onclick = () => read(hit,id,'?before='+page.before);
+      $('.ns-newer').onclick = () => read(hit,id,'?after='+page.after);
+      $('.ns-latest').onclick = () => read(hit,id,'?latest=1');
+      $('.ns-jump-match').onclick = () => read(hit,id);
+      $('.ns-read-status').textContent = `${page.page_mode === 'latest' ? 'Latest indexed messages' : page.page_mode && page.page_mode !== 'match' ? 'Saved messages' : 'Matching message with nearby context'}${page.changed_neighbors ? ` · ${page.changed_neighbors} changed messages omitted` : ''}${!page.index_complete ? ' · indexing is incomplete' : ''}.`;
+      $('.nh-messages').scrollTop = 0;
       $('.ns-match')?.scrollIntoView({block:'center'});
     } catch (error) {
       if (!closed && version === readGeneration) $('.ns-read-status').textContent = `${error.message}. Return to results and search again.`;

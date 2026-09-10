@@ -35,6 +35,8 @@ type nativeSearchData struct {
 	Scopes         []nativeSearchScope
 }
 type nativeSearchState struct {
+	before, after                               *int64
+	readerJob, readerHit                        string
 	data                                        nativeSearchData
 	query, agent, target, failure, mode, reader string
 	selected, readGeneration, generation        int
@@ -191,14 +193,24 @@ func (m *dashboard) readNativeSearch() tea.Cmd {
 	if len(s.data.Results) == 0 {
 		return nil
 	}
-	hit := s.data.Results[s.selected]
+	s.readerJob = s.data.ID
+	s.readerHit = s.data.Results[s.selected].ID
+	return m.readNativeSearchPage("")
+}
+func (m *dashboard) readNativeSearchPage(query string) tea.Cmd {
+	s := m.nativeSearch
+	if s.readerJob == "" || s.readerHit == "" {
+		return nil
+	}
+	s.before = nil
+	s.after = nil
 	s.mode = "reader"
 	s.reader = "Loading matching message…"
 	s.readGeneration++
 	generation := s.readGeneration
 	m.renderNativeSearch()
 	c := m.client
-	path := "/conversation-search/" + url.PathEscape(s.data.ID) + "/results/" + url.PathEscape(hit.ID)
+	path := "/conversation-search/" + url.PathEscape(s.readerJob) + "/results/" + url.PathEscape(s.readerHit) + query
 	return func() tea.Msg { b, err := c.JSON("GET", path, nil); return nativeSearchReadMsg{s, generation, b, err} }
 }
 func (m *dashboard) receiveNativeSearchRead(v nativeSearchReadMsg) {
@@ -210,7 +222,9 @@ func (m *dashboard) receiveNativeSearchRead(v nativeSearchReadMsg) {
 		s.reader = "Could not read match: " + clean(v.err.Error()) + "\nEsc returns to results; r retries the search."
 	} else {
 		var page struct {
-			Messages []struct {
+			Before, After *int64
+			Mode          string `json:"page_mode"`
+			Messages      []struct {
 				Role, Text         string
 				Matched, Truncated bool
 			}
@@ -220,7 +234,13 @@ func (m *dashboard) receiveNativeSearchRead(v nativeSearchReadMsg) {
 		if err := json.Unmarshal(v.data, &page); err != nil {
 			s.reader = "Could not parse matching context"
 		} else {
+			s.before = page.Before
+			s.after = page.After
+			label := map[string]string{"before": "Earlier messages", "after": "Later messages", "latest": "Latest indexed messages", "match": "Matching context"}[page.Mode]
 			var lines []string
+			if label != "" {
+				lines = append(lines, label)
+			}
 			for _, message := range page.Messages {
 				title := strings.ToUpper(message.Role)
 				if message.Matched {
@@ -331,6 +351,40 @@ func (m *dashboard) updateNativeSearch(k tea.KeyMsg) tea.Cmd {
 		}
 		s.mode = ""
 		return m.startNativeSearch(true)
+	case "home", "g":
+		if s.mode == "" {
+			s.selected = 0
+			m.renderNativeSearch()
+		}
+		s.viewport.GotoTop()
+		return nil
+	case "end", "G":
+		if s.mode == "" {
+			s.selected = max(0, len(s.data.Results)-1)
+			m.renderNativeSearch()
+		}
+		s.viewport.GotoBottom()
+		return nil
+	case "O":
+		if s.mode == "reader" && s.before != nil {
+			return m.readNativeSearchPage(fmt.Sprintf("?before=%d", *s.before))
+		}
+		return nil
+	case "N":
+		if s.mode == "reader" && s.after != nil {
+			return m.readNativeSearchPage(fmt.Sprintf("?after=%d", *s.after))
+		}
+		return nil
+	case "L":
+		if s.mode == "reader" {
+			return m.readNativeSearchPage("?latest=1")
+		}
+		return nil
+	case "M":
+		if s.mode == "reader" {
+			return m.readNativeSearchPage("")
+		}
+		return nil
 	case "s":
 		if s.starting {
 			return nil
@@ -367,7 +421,7 @@ func (m *dashboard) updateNativeSearch(k tea.KeyMsg) tea.Cmd {
 	return cmd
 }
 
-const nativeSearchHelp = "↑↓ choose/scroll · Enter read · p progress · s stop · r retry · R rebuild · n new · Esc back · q quit"
+const nativeSearchHelp = "↑↓ choose/scroll · Enter read · O/N earlier/later · L latest indexed · M match · p progress · s stop · r retry · R rebuild · n new · Esc back · q quit"
 
 func (m *dashboard) nativeSearchView() string {
 	if m.width < 35 || m.height < 12 {
