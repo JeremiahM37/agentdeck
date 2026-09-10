@@ -142,6 +142,13 @@ func (m *dashboard) rowActions() []dashboardAction {
 	var actions []dashboardAction
 	switch kind {
 	case "sessions":
+		if r["setup_state"] == "creating" {
+			label := "Cancel setup"
+			if r["setup_cancel_requested"] == true {
+				label = "Retry cancellation"
+			}
+			return append([]dashboardAction{post(label, "/setup/cancel"), op("Rename", "rename"), op("Move to group", "group")}, workspaceActions(r, path)...)
+		}
 		if r["archived_at"] != nil {
 			return append([]dashboardAction{{Label: "Unarchive record", Method: "DELETE", Path: path + "/archive"}, read("Archived terminal output", "/archive/history"), op("Saved conversations", "saved-history"), op("Rename", "rename"), op("Move to group", "group")}, workspaceActions(r, path)...)
 		}
@@ -781,8 +788,14 @@ func workspaceBranch(r row) string {
 func workspaceActions(r row, path string) []dashboardAction {
 	if ws, ok := r["workspace"].(map[string]any); ok && ws["state"] != "removed" {
 		actions := []dashboardAction{}
+		if r["setup_state"] == "failed" {
+			actions = append(actions, dashboardAction{Label: "Cancel remaining checkout", Method: "POST", Path: path + "/setup/cancel", Body: map[string]any{}})
+		}
 		if repositories, ok := ws["repositories"].([]any); ok && len(repositories) > 0 {
 			actions = append(actions, dashboardAction{Label: "Workspace setup progress", Method: "GET", Path: path + "/worktree?format=text"})
+		}
+		if r["setup_state"] == "creating" {
+			return actions
 		}
 		return append(actions, dashboardAction{Label: "Remove worktree (keep branch)", Method: "DELETE", Path: path + "/worktree", Warning: "Remove " + str(ws["path"]) + "? End its sessions first. Changed, untracked or ignored files prevent removal. The branch is kept."})
 	}

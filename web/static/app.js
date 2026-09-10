@@ -494,7 +494,7 @@ function sessionCard(s) {
     <div class="scard-top">
       <span class="dot${live ? " live" : ""}"></span>
       <span class="nm"></span>
-      <span class="sstate">${settingUp ? "setting up" : s.setup_state === "failed" ? "setup failed" : s.archived_at != null ? "archived" : s.ended_at != null ? (s.status === "dead" ? "ended" : "untracked") : (SESSION_LABEL[s.status] || esc(s.status))}</span>
+      <span class="sstate">${settingUp ? (s.setup_cancel_requested?"cancelling":"setting up") : s.setup_state === "failed" ? "setup failed" : s.archived_at != null ? "archived" : s.ended_at != null ? (s.status === "dead" ? "ended" : "untracked") : (SESSION_LABEL[s.status] || esc(s.status))}</span>
       <span class="sidle">${s.status === "dead" || settingUp ? "" : "quiet " + fmtDuration(s.idle_seconds)}</span>
     </div>
     <div class="smeta">
@@ -527,7 +527,7 @@ function sessionCard(s) {
       refreshSessions();
     } catch (e) { toast(e.message, true); }
   };
-  $(".spane", el).textContent = settingUp ? "Setting up workspace… Attach becomes available when setup finishes."+(s.workspace?.repositories||[]).map(repo=>`\n${repo.name}: ${repo.worktree.state}`).join('')+(s.setup_progress_error?'\nProgress unavailable: '+s.setup_progress_error:'') : s.setup_error ? 'Setup failed: '+s.setup_error : s.pane_tail || "";
+  $(".spane", el).textContent = settingUp ? (s.setup_cancel_requested?"Cancellation requested. Waiting for checkout to stop; files will be retained.":"Setting up workspace… Attach becomes available when setup finishes.")+(s.workspace?.repositories||[]).map(repo=>`\n${repo.name}: ${repo.worktree.state}`).join('')+(s.setup_progress_error?'\nProgress unavailable: '+s.setup_progress_error:'') : s.setup_error ? 'Setup failed: '+s.setup_error : s.pane_tail || "";
 
   const row = $(".btnrow", el);
   const {menu, panel} = actionMenu('More ···', `More actions for ${s.name}`);
@@ -539,6 +539,13 @@ function sessionCard(s) {
     return b;
   };
   if(settingUp) act("Setting up", "", ()=>{}).disabled=true;
+  const cancelSetup=async()=>{
+    try {await api(`/sessions/${s.id}/setup/cancel`,{method:"POST",body:{}});toast("Cancellation requested. Files already created will be retained.");}
+    catch(e){toast(e.message,true);}
+    finally{await refreshSessions();}
+  };
+  if(settingUp) act(s.setup_cancel_requested?"Retry cancellation":"Cancel setup","no",cancelSetup);
+
   if (s.ended_at == null && s.status !== "dead" && !settingUp) {
     // the whole point: one tap into the real terminal, same tmux, same chat
     act("⌨ Attach", "attach", () => attachSession(s));
@@ -560,6 +567,7 @@ function sessionCard(s) {
   // running — and killing it is a separate, explicit choice.
   const adopted = s.origin === "discovered";
   actionRow = panel;
+  if(s.setup_state === "failed" && s.workspace?.state !== "removed") act("Cancel remaining checkout","",cancelSetup);
   act("Move to group", "", ()=>{state.sheet={kind:"session-group",session:s};renderSheet();});
   if (["claude", "codex"].includes(s.agent)) {
     act("Saved conversations", "", () => openNativeHistory({id:s.id,name:s.name,api,onResume:session=>{refreshSessions();attachSession(session);toast("Resumed the selected conversation.");},onFork:session=>handleNativeFork(session,false)}));

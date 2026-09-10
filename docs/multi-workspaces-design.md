@@ -168,7 +168,7 @@ The settings do not enter the checkout environment; Git still runs with the
 same target environment as before. Regression coverage changes agent settings
 both during setup and after failure and checks the retained snapshot.
 
-### Target-side cancellation (interface wiring pending)
+### Setup cancellation
 
 The worktree runner accepts `cancel` and records a request beside the allocation,
 keyed by its private ownership token. Create workers check that record while
@@ -181,7 +181,17 @@ Control records reject symlinks, foreign identities, and replacement while a
 worker holds their identity. Tests cover held single/grouped hooks, orphaned
 children, retained files, and unchanged files behind rejected symlinks.
 
-This target mechanism is not yet exposed through a session API or either
-interface. Controller cancellation state, preventing agent launch after a
-cancellation request, and restart reconciliation remain necessary before the
-Cancel setup action can ship.
+`POST /api/sessions/{id}/setup/cancel` durably records
+`setup_cancel_requested` before contacting the target. The browser card and
+terminal action menu expose Cancel setup, with retry when delivery fails. Failed
+setup records offer cancellation of a potentially remaining checkout. HTTP202
+means the request was recorded, not that the worker has stopped. Files stay in
+the retained allocation; existing dirty/unowned cleanup checks still apply.
+
+Cancellation acceptance and the decision to start the agent are serialized. If
+cancellation wins, pre-checkout and pre-launch checks prevent further startup,
+even when the request disconnects or target delivery fails. Once agent launch
+has begun, cancellation refuses and directs the user to End. Migration tests
+check the cancellation flag survives reopen; real API and desktop/phone/PTY
+flows cover held checkouts. Controller restart reconciliation still needs to
+distinguish a completed agent launch from an orphaned checkout before rollout.

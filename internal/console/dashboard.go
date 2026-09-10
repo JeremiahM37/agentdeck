@@ -343,6 +343,9 @@ func (m *dashboard) updatePreview() {
 			}
 			if r["setup_state"] == "creating" {
 				content = "Setting up workspace…\nAttach becomes available when setup finishes.\n\n" + content
+				if r["setup_cancel_requested"] == true {
+					content = "Cancellation requested. Waiting for checkout to stop; files will be retained.\n\n" + content
+				}
 			}
 			if failure := str(r["setup_error"]); failure != "" {
 				content = "Setup failed: " + failure + "\n\n" + content
@@ -499,6 +502,9 @@ func (m *dashboard) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		var reserved row
 		if json.Unmarshal(v.data, &reserved) == nil && reserved["setup_state"] == "creating" {
 			m.notice = "Workspace setup started. Progress appears in the session preview."
+		}
+		if reserved["setup_cancel_requested"] == true {
+			m.notice = "Cancellation requested. Files already created will be retained."
 		}
 		return m, tea.Batch(m.refresh(), m.references())
 	case loadedFormMsg:
@@ -981,6 +987,9 @@ func (m *dashboard) listView(height int) string {
 		s := str(r["status"])
 		if r["setup_state"] == "creating" {
 			s = "setting up"
+			if r["setup_cancel_requested"] == true {
+				s = "cancelling"
+			}
 		}
 		if r["setup_state"] == "failed" {
 			s = "setup failed"
