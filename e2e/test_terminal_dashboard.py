@@ -14,12 +14,13 @@ import termios
 import time
 
 import pyte
+import pytest
 from conftest import _binary
 from test_terminal_workspace import real_terminal
 
 
 class Dashboard:
-    def __init__(self,t,args=()):
+    def __init__(self,t,args=(),outer_tmux=False):
         self.master,self.slave=pty.openpty()
         self.original=termios.tcgetattr(self.slave)
         fcntl.ioctl(self.slave,termios.TIOCSWINSZ,struct.pack('HHHH',35,120,0,0))
@@ -27,7 +28,9 @@ class Dashboard:
         self.decoder=codecs.getincrementaldecoder('utf-8')('replace')
         def controlling_terminal():
             os.setsid();fcntl.ioctl(0,termios.TIOCSCTTY,0)
-        self.proc=subprocess.Popen([_binary(),*args],stdin=self.slave,stdout=self.slave,stderr=self.slave,
+        command=[_binary(),*args]
+        if outer_tmux:command=["tmux","new-session","-s","dashboard-outer",*command]
+        self.proc=subprocess.Popen(command,stdin=self.slave,stdout=self.slave,stderr=self.slave,
           env={**t['env'],'AGENTDECK_API':t['url'],'TERM':'xterm-256color','AGENTDECK_ATTACH_HOST':''},
           preexec_fn=controlling_terminal)
     def pump(self,duration=.1):
@@ -82,8 +85,9 @@ def test_dashboard_search_rename_live_refresh_and_resize(real_terminal):
     finally:d.close()
 
 
-def test_dashboard_native_attach_detach_returns_to_selection(real_terminal):
-    t=real_terminal;d=Dashboard(t,['console'])
+@pytest.mark.parametrize("outer_tmux",[False,True])
+def test_dashboard_native_attach_detach_returns_to_selection(real_terminal,outer_tmux):
+    t=real_terminal;d=Dashboard(t,['console'],outer_tmux=outer_tmux)
     try:
         d.wait('Real terminal');d.send('\r');d.wait('$')
         d.send('printf dashboard-native-proof > dashboard-proof.txt\r')
@@ -121,5 +125,15 @@ def test_dashboard_context_upload_preserves_local_bytes(real_terminal,tmp_path):
         d.wait('Real terminal');d.send('u');d.wait('Local file path')
         d.send(str(pdf)+'\x13');d.wait('Uploaded:')
         assert any(p.read_bytes()==pdf.read_bytes() for p in t['root'].rglob('*.pdf'))
+        d.quit()
+    finally:d.close()
+
+
+def test_dashboard_edits_notification_settings_without_json(real_terminal):
+    t=real_terminal;d=Dashboard(t)
+    try:
+        d.wait('Real terminal');d.send('7');d.wait('Notification settings')
+        d.send('\t\tharmless-test-topic\x13');d.wait('Save settings completed')
+        assert t['api']('/settings')['ntfy_topic']=='harmless-test-topic'
         d.quit()
     finally:d.close()

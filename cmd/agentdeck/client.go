@@ -60,6 +60,7 @@ func clientCommand(cfg *config.Config, command string, args []string) error {
 			if e != nil {
 				return e
 			}
+			argv = attachmentInWorkspace(argv, os.Getenv("TMUX"))
 			cmd := exec.Command(argv[0], argv[1:]...)
 			cmd.Stdin = os.Stdin
 			cmd.Stdout = os.Stdout

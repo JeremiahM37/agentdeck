@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/JeremiahM37/agentdeck/internal/config"
+	"github.com/JeremiahM37/agentdeck/internal/shellq"
 )
 
 // Desktop launchers send an ID, never a shell command or a destination host.
@@ -22,6 +23,7 @@ func attach(cfg *config.Config, args []string) error {
 	if err != nil {
 		return err
 	}
+	argv = attachmentInWorkspace(argv, os.Getenv("TMUX"))
 	binary, err := exec.LookPath(argv[0])
 	if err != nil {
 		return err
@@ -75,4 +77,18 @@ func attachmentCommand(cfg *config.Config, args []string) ([]string, error) {
 		return nil, fmt.Errorf("no attachment command")
 	}
 	return data.Argv, nil
+}
+
+// A popup owns its input while attached, so the outer workspace's prefix does
+// not detach the dashboard itself. Quote the entire inner command: attachment
+// argv can contain tmux command separators that belong to the inner client.
+func attachmentInWorkspace(argv []string, workspace string) []string {
+	if workspace == "" {
+		return argv
+	}
+	words := make([]string, len(argv))
+	for i, word := range argv {
+		words[i] = shellq.Quote(word)
+	}
+	return []string{"tmux", "display-popup", "-E", "-w", "100%", "-h", "100%", "-T", "AgentDeck · Ctrl-b d returns", "env -u TMUX " + strings.Join(words, " ")}
 }

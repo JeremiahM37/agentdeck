@@ -103,3 +103,7 @@ Configure `AGENTDECK_API` and `AGENTDECK_AUTH_TOKEN` for HTTP. Set
 `AGENTDECK_ATTACH_HOST` to the server's SSH alias on a remote Linux client;
 attachment is resolved on the server, where its tmux sessions and SSH targets
 exist. The Linux installer sets the URL and alias in its launcher.
+
+Inside an existing tmux workspace, native attachment opens a full-size popup
+(tmux 3.2 or newer). The attachment owns its keyboard input; Ctrl-b d closes it
+and returns to the same dashboard selection without detaching the outer workspace.
