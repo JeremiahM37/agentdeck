@@ -2,8 +2,10 @@
 
 This is an internal staging design. Multi-repository execution and UI controls
 are not available yet. The planner and cleanup preflight are implemented and
-unit/integration tested; `RunInteractive` rejects a grouped plan until its worker
-exists, rather than accidentally creating only the primary repository.
+unit/integration tested. `check-create` resolves and validates the grouped plan
+on its target without changing Git or creating directories. `RunInteractive`
+still rejects grouped creation/removal until their worker exists, rather than
+accidentally creating only the primary repository.
 
 A workspace owns one root directory containing separately owned repository
 worktrees. `Interactive.Repositories` records each display name, optional project
@@ -14,9 +16,12 @@ Git. Ownership is recursively redacted from public session responses.
 
 The remaining implementation must provide:
 
-1. Resolve selected registered projects on the same target. Canonicalize Git
-   common directories on that target and reject duplicate repository aliases.
-   Validate all bases and branch names before creating directories.
+1. Resolve selected registered projects on the same target. The target-side
+   preflight now canonicalizes Git common directories (including symlink and
+   linked-worktree aliases), rejects duplicates, resolves each base commit and
+   checks branches and allocation boundaries without mutations. Creation must
+   repeat these checks under its operation lock: preflight is not a reservation
+   of paths or refs. The API project selection/resolution is still outstanding.
 2. Persist the entire plan before mutation. Create an exclusively owned root,
    then allocate children while retaining progress and partial failures. Protect
    against cancellation leaving a Git or hook process writing into an allocation

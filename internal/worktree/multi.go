@@ -1,10 +1,14 @@
 package worktree
 
 import (
+	_ "embed"
 	"fmt"
 	"path/filepath"
 	"strings"
 )
+
+//go:embed multi_preflight.py
+var multiPreflightScript string
 
 // WorkspaceRepository records each allocation independently, including a failed
 // or removed one. The enclosing workspace owns the root directory separately.
