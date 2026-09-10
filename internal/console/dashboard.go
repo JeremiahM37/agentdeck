@@ -366,6 +366,19 @@ func (m *dashboard) updatePreview() {
 						repo, _ := value.(map[string]any)
 						child, _ := repo["worktree"].(map[string]any)
 						content += "\n" + str(repo["name"]) + ": " + str(child["state"])
+						if command := str(child["setup_command"]); command != "" {
+							state := str(child["setup_state"])
+							if state == "" {
+								state = "not completed"
+							}
+							content += "\n  Project setup: " + state
+							if output := str(child["setup_output"]); output != "" {
+								content += "\n" + output
+							}
+						}
+						if failure := str(child["error"]); failure != "" {
+							content += "\n  Setup error: " + failure
+						}
 					}
 				}
 			}

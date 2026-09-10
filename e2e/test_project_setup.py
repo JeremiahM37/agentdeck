@@ -61,3 +61,24 @@ def test_terminal_edits_project_setup_and_creates_workspace(real_terminal):
         assert (Path(row['workspace']['path'])/'prepared').read_text()=='terminal-ready'
         d.quit()
     finally:d.close()
+
+
+def test_terminal_grouped_setup_results(real_terminal):
+    import subprocess
+    t=real_terminal;primary,git=setup(t)
+    def patch(project,command):
+        req=urllib.request.Request(t['url']+f'/api/projects/{project["id"]}',method='PATCH',headers={'Content-Type':'application/json'},data=json.dumps({'setup_cmd':command}).encode())
+        urllib.request.urlopen(req).close()
+    patch(primary,'echo API_PREPARED')
+    extra_path=t['root'].parent/'setup-extra'
+    subprocess.run(['git','clone','-q',str(t['root']),str(extra_path)],check=True)
+    extra=t['api']('/projects',{'name':'Web setup','target_id':t['target_id'],'repo_path':str(extra_path),'setup_cmd':'echo WEB_PREPARED'})
+    row=t['api']('/sessions',{'name':'Grouped setup results','project_id':primary['id'],'worktree':{'extra_repositories':[{'project_id':extra['id']}]}})
+    d=Dashboard(t)
+    try:
+        d.wait('Grouped setup results');d.send('/Grouped setup results\r')
+        d.wait('API_PREPARED');d.wait('WEB_PREPARED')
+        d.wait('Project setup: complete')
+        assert all(repo['worktree']['setup_state']=='complete' for repo in row['workspace']['repositories'])
+        d.quit()
+    finally:d.close()
