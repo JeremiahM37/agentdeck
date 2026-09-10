@@ -7,6 +7,8 @@ import json
 import os
 import subprocess
 import sys
+import pathlib
+import stat
 
 
 def git(repo, *args):
@@ -19,20 +21,20 @@ def git(repo, *args):
     return result.stdout.strip()
 
 
-def preflight(plan):
+def preflight(plan, existing=0):
     repositories = plan.get('repositories', [])
     if not 1 <= len(repositories) <= 8:
         raise ValueError('A workspace needs between one and eight repositories')
     root = plan['path']
     if not os.path.isabs(root):
         raise ValueError('Workspace paths must be absolute')
-    if os.path.lexists(root):
+    if not existing and os.path.lexists(root):
         raise ValueError('Workspace path already exists; nothing was changed')
     root = os.path.realpath(root)
     paths, common_dirs, tokens = set(), set(), {plan['token']}
     if not plan['token']:
         raise ValueError('Workspace ownership is missing')
-    for entry in repositories:
+    for index, entry in enumerate(repositories):
         child = entry['worktree']
         if child.get('repositories'):
             raise ValueError('Nested repository groups are not supported')
@@ -41,7 +43,7 @@ def preflight(plan):
         dest = os.path.realpath(child['path'])
         if os.path.dirname(dest) != root or dest in paths:
             raise ValueError('Repository paths must be distinct children of the workspace')
-        if os.path.lexists(child['path']):
+        if index >= existing and os.path.lexists(child['path']):
             raise ValueError('Repository allocation already exists')
         if not child['token'] or child['token'] in tokens:
             raise ValueError('Each repository needs separate ownership')
@@ -51,6 +53,20 @@ def preflight(plan):
         common = os.path.realpath(git(repo, 'rev-parse', '--path-format=absolute', '--git-common-dir'))
         if common in common_dirs:
             raise ValueError('The same Git repository was selected more than once')
+        if index < existing:
+            if os.path.islink(child['path']) or git(dest,'rev-parse','--show-toplevel') != dest:
+                raise ValueError('An existing checkout path was replaced')
+            if os.path.realpath(git(dest,'rev-parse','--path-format=absolute','--git-common-dir')) != common:
+                raise ValueError('An existing checkout repository changed')
+            if git(dest,'symbolic-ref','--quiet','--short','HEAD') != child['branch']:
+                raise ValueError('An existing checkout branch changed')
+            owner=pathlib.Path(git(dest,'rev-parse','--absolute-git-dir'))/'agentdeck-owner'
+            fd=os.open(owner,os.O_RDONLY|os.O_NOFOLLOW|os.O_NONBLOCK)
+            with os.fdopen(fd) as file:
+                if not stat.S_ISREG(os.fstat(file.fileno()).st_mode) or file.read()!=child['token']:
+                    raise ValueError('An existing checkout owner changed')
+            common_dirs.add(common);paths.add(dest);tokens.add(child['token'])
+            continue
         git(repo, 'check-ref-format', '--branch', child['branch'])
         git(repo, 'check-ref-format', 'refs/heads/' + child['branch'])
         # rev-parse --verify is read-only; show-ref --verify distinguishes a

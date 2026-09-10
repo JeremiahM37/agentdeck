@@ -72,6 +72,11 @@ def identity(plan):
               r['worktree']['branch']) for r in plan['repositories']])
 
 
+def prefix_identity(older, newer):
+    left,right=identity(older),identity(newer)
+    return left[:3]==right[:3] and bool(left[3]) and left[3]==right[3][:len(left[3])]
+
+
 def busy():
     receipt = root / '.agentdeck-process.json'
     if os.path.lexists(receipt):
@@ -159,7 +164,7 @@ def run_child(entry, operation):
 
 
 try:
-    if action not in ('create', 'remove', 'check-remove', 'status', 'recover'):
+    if action not in ('create', 'extend', 'remove', 'check-remove', 'status', 'recover'):
         raise ValueError('Unknown workspace operation')
     if action == 'status':
         # The writer atomically replaces its receipt, so readers can inspect
@@ -168,7 +173,7 @@ try:
             raise ValueError('Workspace root is missing or replaced')
         lock = regular_file('.agentdeck-lock', os.O_RDONLY)
         saved = read_record('.agentdeck-state.json')
-        if identity(saved) != identity(p):
+        if not (prefix_identity(saved,p) or prefix_identity(p,saved)):
             raise ValueError('Workspace ownership or repository allocation does not match')
         lock_stat = os.fstat(lock.fileno())
         if saved.get('operation_lock') != [lock_stat.st_dev, lock_stat.st_ino]:
@@ -202,6 +207,26 @@ try:
         lock = regular_file('.agentdeck-lock', os.O_RDWR)
         acquire_lock()
         saved = read_record('.agentdeck-state.json')
+        if action == 'extend':
+            if not prefix_identity(saved,p) or len(p['repositories']) != len(saved['repositories'])+1:
+                raise ValueError('Extension must preserve every existing repository and add exactly one')
+            if any(r['worktree']['state']!='ready' for r in saved['repositories']):
+                raise ValueError('Recover incomplete repositories before extending the workspace')
+            if not p.get('control_token') or p['control_token'] in (saved.get('control_token'),saved['token']):
+                raise ValueError('Extension requires a fresh cancellation identity')
+            lock_stat=os.fstat(lock.fileno())
+            if saved.get('operation_lock') != [lock_stat.st_dev,lock_stat.st_ino]:
+                raise ValueError('Workspace operation lock was replaced')
+            busy()
+            candidate=dict(saved)
+            candidate.update(repositories=saved['repositories']+[p['repositories'][-1]],control_token=p['control_token'],state='extending')
+            p=namespace['preflight'](candidate,len(saved['repositories']))
+            control=SetupControl(p);control.check()
+            owned=True
+            save()  # Publish the full allocation before the new child can mutate.
+            run_child(p['repositories'][-1],'create')
+            busy();p['state']='ready';p.pop('error',None);save()
+            print(json.dumps({'workspace':p}));sys.exit(0)
         if identity(saved) != identity(p):
             raise ValueError('Workspace ownership or repository allocation does not match')
         lock_stat = os.fstat(lock.fileno())

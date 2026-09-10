@@ -6,7 +6,7 @@ class SetupCancelled(ValueError):
 
 class SetupControl:
     def __init__(self, plan, create=True):
-        token=plan.get('token','')
+        token=plan.get('control_token') or plan.get('token','')
         if not re.fullmatch('[0-9a-f]{32}',token) or not os.path.isabs(plan['path']):
             raise ValueError('Invalid setup cancellation identity')
         self.identity={'token':token,'path':os.path.realpath(plan['path']),

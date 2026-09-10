@@ -15,6 +15,7 @@ import (
 // Interactive records an allocation before any remote Git mutation. A failed
 // launch keeps this record so the directory is still discoverable and removable.
 type Interactive struct {
+	ControlToken string                `json:"control_token,omitempty"`
 	SetupCommand string                `json:"setup_command,omitempty"`
 	SetupEnv     map[string]string     `json:"setup_env,omitempty"`
 	SetupState   string                `json:"setup_state,omitempty"`

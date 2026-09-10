@@ -2,6 +2,7 @@ package worktree
 
 import (
 	_ "embed"
+	"encoding/json"
 	"fmt"
 	"path/filepath"
 	"strings"
@@ -96,10 +97,61 @@ func repositoryDirectoryName(name string) string {
 // applied to a decoded copy, never to the persisted ownership records.
 func (p *Interactive) RedactOwnership() {
 	p.Token = ""
+	p.ControlToken = ""
 	p.SetupEnv = nil
 	for _, repo := range p.Repositories {
 		if repo.Worktree != nil {
 			repo.Worktree.RedactOwnership()
 		}
 	}
+}
+
+// PlanWorkspaceExtension preserves existing ownership and stages one new child.
+// The worker must validate the complete plan against the live root receipt.
+func PlanWorkspaceExtension(existing *Interactive, source RepositorySource, id int64) (*Interactive, error) {
+	if existing == nil || len(existing.Repositories) < 1 || len(existing.Repositories) >= 8 {
+		return nil, fmt.Errorf("extend a grouped workspace with fewer than eight repositories")
+	}
+	if existing.State != "ready" && existing.State != "failed" {
+		return nil, fmt.Errorf("workspace is not ready for an extension")
+	}
+	if !filepath.IsAbs(source.Repo) {
+		return nil, fmt.Errorf("repository path must be absolute on target")
+	}
+	used := map[string]bool{}
+	for _, entry := range existing.Repositories {
+		if entry.Worktree == nil || entry.Worktree.State != "ready" {
+			return nil, fmt.Errorf("recover incomplete repositories before extending the workspace")
+		}
+		if filepath.Clean(entry.Worktree.Repo) == filepath.Clean(source.Repo) {
+			return nil, fmt.Errorf("repository is already in this workspace")
+		}
+		used[filepath.Base(entry.Worktree.Path)] = true
+	}
+	data, err := json.Marshal(existing)
+	if err != nil {
+		return nil, err
+	}
+	var next Interactive
+	if err = json.Unmarshal(data, &next); err != nil {
+		return nil, err
+	}
+	name := strings.TrimSpace(source.Name)
+	if name == "" {
+		name = filepath.Base(source.Repo)
+	}
+	slug := repositoryDirectoryName(name)
+	stem := slug
+	for n := 2; used[slug]; n++ {
+		slug = fmt.Sprintf("%s-%d", stem, n)
+	}
+	child := PlanInteractive(source.Repo, id, InteractiveOptions{Base: source.Base, Branch: existing.Branch})
+	child.Path = filepath.Join(existing.Path, slug)
+	child.SetupCommand = source.SetupCommand
+	child.SetupEnv = source.SetupEnv
+	next.Repositories = append(next.Repositories, WorkspaceRepository{Name: name, ProjectID: source.ProjectID, Worktree: child})
+	next.ControlToken = PlanInteractive(source.Repo, id, InteractiveOptions{}).Token
+	next.State = "extending"
+	next.Error = ""
+	return &next, nil
 }
