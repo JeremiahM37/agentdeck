@@ -335,7 +335,8 @@ def test_project_skills_real_server_plain_console_pty_lifecycle(real_skill_serve
     target = call("/api/targets", {"name": "real-pty-target", "kind": "local"}, "POST")
     project = call("/api/projects", {"name": "Real PTY skills", "target_id": target["id"], "repo_path": str(repo),
         "default_agent": "claude", "skill_sources": [str(source_root)]}, "POST")
-    skill_id = call(f"/api/skills?project_id={project['id']}&agent=claude")["skills"][0]["id"]
+    discovered = call(f"/api/skills?project_id={project['id']}&agent=claude")["skills"]
+    skill_id = next(s["id"] for s in discovered if s["id"].startswith("configured:0/"))
     master, slave = pty.openpty()
     def controlling_terminal():
         os.setsid(); import fcntl, termios
