@@ -245,7 +245,9 @@ not selected automatically. No conversation ID is inferred from recency.
 
 This currently covers Linux process information on local/SSH/WSL targets and does
 not persist an inferred binding after the process stops. Unsupported/older runtime
-formats, unmarked legacy terminals and renamed Codex binaries retain manual choice.
+formats and renamed Codex binaries retain manual choice. Older unmarked active
+terminals use a stable pane/process observation without writing a marker or
+claiming continuity with the original session.
 A known but not-yet-persisted Claude conversation is distinguished from saved
 history. Automatic native identity coverage therefore has explicit limits; global
 conversation-content search remains separate work.

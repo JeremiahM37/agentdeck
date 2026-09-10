@@ -230,4 +230,5 @@ Codex must hold its transcript open in the native `codex` process. The active tm
 pane and its identity must remain stable. Ambiguous, unavailable or stale evidence
 leaves manual selection available. A new Claude conversation can be identified
 before it has saved any readable messages; it becomes readable after persistence.
-Older unmarked terminals and renamed Codex binaries may require manual selection.
+Older active terminals are checked through their current pane without changing
+their tracking metadata. Renamed Codex binaries may require manual selection.

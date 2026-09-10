@@ -5,13 +5,13 @@ from pathlib import Path
 
 def native_identity(agent, workspace, home, name, expected):
     unknown = dict(state='unavailable')
-    if not name or not re.fullmatch(r'[a-f0-9]{32}', expected): return unknown
+    if not name or (expected and not re.fullmatch(r'[a-f0-9]{32}', expected)): return unknown
     if not Path('/proc/self/stat').exists(): return unknown
 
     def pane():
         return subprocess.check_output(['tmux', 'display-message', '-p', '-t', '=' + name + ':',
             '#{session_id}\t#{window_id}\t#{pane_id}\t#{pane_pid}\t#{@agentdeck-tracking-identity}'],
-            timeout=2, stderr=subprocess.DEVNULL, text=True).strip().split('\t')
+            timeout=2, stderr=subprocess.DEVNULL, text=True).rstrip('\n').split('\t')
 
     def process(pid):
         # comm may contain spaces or parentheses. Fields after its final ')' start at 3.
@@ -24,7 +24,10 @@ def native_identity(agent, workspace, home, name, expected):
 
     try:
         before = pane()
-        if len(before) != 5 or before[4] != expected: return dict(state='changed')
+        if len(before) != 5 or (expected and before[4] != expected): return dict(state='changed')
+        # Older active records have no persisted marker. Their current pane can
+        # still be observed read-only; do not claim it is the original session
+        # or retain a binding after this observation.
         root = int(before[3]); root_start = process(root)[1]
         # Snapshot ancestry once, and verify each evidence-bearing process again.
         census = {}

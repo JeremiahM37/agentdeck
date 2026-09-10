@@ -1,5 +1,5 @@
 """Native selection follows a live tmux process, never workspace recency."""
-import json,os,re,shlex,shutil,subprocess,sys,time,uuid
+import json,os,re,shlex,shutil,sqlite3,subprocess,sys,time,uuid
 from pathlib import Path
 import pytest
 from playwright.sync_api import expect
@@ -105,3 +105,18 @@ def test_codex_rejects_multiple_live_conversations_and_subagents(real_terminal):
     source=t['api'](f"/sessions/{t['id']}")
     subprocess.run(['tmux','set-option','-t','='+source['tmux_session']+':','@agentdeck-tracking-identity','a'*32],env=t['env'],check=True)
     assert t['api'](f"/sessions/{t['id']}/conversations")['current']['state']=='changed'
+
+
+@pytest.mark.parametrize('agent',['claude','codex'])
+def test_unmarked_legacy_terminal_is_identified_without_writes(real_terminal,agent):
+    t=real_terminal;cid,file,decoy,pid=running(t,agent)
+    source=t['api'](f"/sessions/{t['id']}")
+    with sqlite3.connect(t['root'].parent/'test.db') as db:
+        db.execute("update sessions set tracking_identity='' where id=?",(t['id'],))
+    subprocess.run(['tmux','set-option','-u','-t','='+source['tmux_session']+':','@agentdeck-tracking-identity'],env=t['env'],check=True)
+    current=t['api'](f"/sessions/{t['id']}/conversations")['current']
+    assert current=={'state':'identified','id':cid,'saved':True}
+    with sqlite3.connect(t['root'].parent/'test.db') as db:
+        assert db.execute('select tracking_identity from sessions where id=?',(t['id'],)).fetchone()[0]==''
+    marker=subprocess.check_output(['tmux','show-options','-qv','-t','='+source['tmux_session']+':','@agentdeck-tracking-identity'],env=t['env'],text=True)
+    assert not marker.strip()

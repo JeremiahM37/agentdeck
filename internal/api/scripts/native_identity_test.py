@@ -49,6 +49,13 @@ class IdentityTests(unittest.TestCase):
     def test_reused_pane_during_observation(self):
         self.claude();self.tmux.side_effect=[self.pane,self.pane.replace('%1','%2')]
         self.assertEqual(self.read('claude')['state'],'changed')
+    def test_unmarked_live_pane_still_has_process_identity(self):
+        self.claude();self.tmux.return_value=self.pane.replace(self.marker,'')
+        result=module.native_identity('claude',self.workspace,str(self.home),'owned','')
+        self.assertEqual(result,dict(state='identified',id=self.cid))
+        self.tmux.side_effect=[self.tmux.return_value,self.tmux.return_value.replace('%1','%9')]
+        result=module.native_identity('claude',self.workspace,str(self.home),'owned','')
+        self.assertEqual(result['state'],'changed')
     def test_wrong_tmux_identity(self):
         self.claude();self.tmux.return_value=self.pane.replace(self.marker,'b'*32)
         self.assertEqual(self.read('claude')['state'],'changed')
