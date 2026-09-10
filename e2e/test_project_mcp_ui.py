@@ -125,7 +125,7 @@ def test_project_mcp_full_dashboard_editor_keyboard_crud(real_terminal):
         def open_mcp_editor():
             d.send("m")
             d.wait("MCP settings (add / edit / remove)")
-            d.send("jjjjjj\r")
+            d.send("j" * 8 + "\r")
             d.wait("Servers JSON")
 
         open_mcp_editor()

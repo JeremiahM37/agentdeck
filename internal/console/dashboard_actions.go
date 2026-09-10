@@ -180,7 +180,7 @@ func (m *dashboard) rowActions() []dashboardAction {
 	case "routines":
 		actions = []dashboardAction{post("Run now", "/run"), {Label: "Enable schedule", Method: "PATCH", Path: path, Body: map[string]any{"enabled": true}}, {Label: "Disable schedule", Method: "PATCH", Path: path, Body: map[string]any{"enabled": false}}, op("Rename", "rename"), op("Edit routine", "edit")}
 	case "projects":
-		actions = []dashboardAction{op("Open project shell", "attach"), op("Review changes", "review"), read("Project brief", "/brief"), read("Notes", "/notes"), read("Handoffs", "/wraps"), read("Capabilities", "/capability"), op("MCP settings (add / edit / remove)", "mcp"), op("Rename", "rename"), op("Edit project", "edit")}
+		actions = []dashboardAction{op("Open project shell", "attach"), op("Review changes", "review"), read("Project brief", "/brief"), read("Notes", "/notes"), read("Handoffs", "/wraps"), read("Capabilities", "/capability"), op("Rename", "rename"), op("Edit project", "edit"), op("MCP settings (add / edit / remove)", "mcp")}
 	case "targets":
 		actions = []dashboardAction{post("Check connection", "/check"), read("Check agent commands", "/agents"), op("Rename", "rename"), op("Edit target", "edit")}
 	case "approvals":
@@ -904,15 +904,18 @@ func workspaceBranch(r row) string {
 func workspaceActions(r row, path string) []dashboardAction {
 	if ws, ok := r["workspace"].(map[string]any); ok && ws["state"] != "removed" {
 		actions := []dashboardAction{}
-		if r["setup_state"] == "failed" || ws["state"] == "failed" {
+		failed := r["setup_state"] == "failed" || ws["state"] == "failed"
+		if failed {
 			actions = append(actions, dashboardAction{Label: "Cancel remaining checkout", Method: "POST", Path: path + "/setup/cancel", Body: map[string]any{}})
 			actions = append(actions, dashboardAction{Label: "Recover allocation (keep files)", Method: "POST", Path: path + "/worktree/recover", Body: map[string]any{}})
 		}
 		if repositories, ok := ws["repositories"].([]any); ok && len(repositories) > 0 {
-			actions = append(actions, dashboardAction{Label: "Add repository", Operation: "extend-workspace"}, dashboardAction{Label: "Repository addition progress", Method: "GET", Path: path + "/worktree/operations"}, dashboardAction{Label: "Cancel repository addition", Operation: "cancel-extension"}, dashboardAction{Label: "Check interrupted addition", Operation: "recover-extension"})
+			if !failed {
+				actions = append(actions, dashboardAction{Label: "Add repository", Operation: "extend-workspace"}, dashboardAction{Label: "Repository addition progress", Method: "GET", Path: path + "/worktree/operations"}, dashboardAction{Label: "Cancel repository addition", Operation: "cancel-extension"}, dashboardAction{Label: "Check interrupted addition", Operation: "recover-extension"})
+			}
 			actions = append(actions, dashboardAction{Label: "Workspace setup progress", Method: "GET", Path: path + "/worktree?format=text"})
 		}
-		if r["setup_state"] == "creating" {
+		if r["setup_state"] == "creating" && !failed {
 			return actions
 		}
 		return append(actions, dashboardAction{Label: "Remove worktree (keep branch)", Method: "DELETE", Path: path + "/worktree", Warning: "Remove " + str(ws["path"]) + "? End its sessions first. Changed, untracked or ignored files prevent removal. The branch is kept."})
