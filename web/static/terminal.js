@@ -8,6 +8,12 @@ const base = `/api/term/${encodeURIComponent(kind)}/${encodeURIComponent(id)}`;
 const encoder = new TextEncoder();
 const embedded = new URLSearchParams(location.search).get("embed") === "1";
 document.body.classList.toggle("embedded", embedded);
+const mobileTerminal = matchMedia('(max-width:1023px)');
+const applyStandaloneLayout = () => {
+  if (!embedded) document.body.classList.toggle('mobile-terminal', mobileTerminal.matches);
+};
+mobileTerminal.addEventListener('change', applyStandaloneLayout);
+applyStandaloneLayout();
 let disposePDF = () => {};
 let panes = [],
   active,
@@ -381,6 +387,7 @@ window.addEventListener("pageshow", fitPanes);
 window.addEventListener("message", (e) => {
   if (embedded && e.source === parent && e.origin === location.origin && e.data?.type === "adk-terminal-visible") {
     document.body.classList.toggle('compact-terminal', e.data.compact === true);
+    document.body.classList.toggle('mobile-terminal', e.data.mobile === true || (e.data.mobile === undefined && e.data.compact === true));
     fitPanes();
   }
 });

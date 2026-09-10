@@ -1,7 +1,9 @@
 """Mobile reading layout and soft keys against real ttyd/tmux."""
 import subprocess
+import re
+import pytest
 from playwright.sync_api import expect
-from test_terminal_workspace import real_terminal
+from test_terminal_workspace import real_terminal,open_terminal
 from test_terminal_tabs import attach,frame,ready
 
 
@@ -19,7 +21,8 @@ def test_mobile_focus_gains_space_preserves_connection_and_allows_navigation(pag
         phone.screenshot(path='/tmp/agentdeck-mobile-focused.png')
         phone.get_by_role('button',name='Show navigation').tap()
         expect(phone.locator('#tabbar')).to_be_visible()
-        expect(one.locator('#terminal-keybar')).not_to_be_visible()
+        expect(one.locator('body')).not_to_have_class(re.compile('.*compact-terminal.*'))
+        expect(one.locator('#terminal-keybar')).to_be_visible()
         phone.wait_for_function("document.querySelector('#terminal-workspace').getBoundingClientRect().top >= document.querySelector('#topbar').getBoundingClientRect().bottom - 1")
         expanded=one.locator('#agent-terminal').bounding_box()['height']
         assert focused-expanded >= 100,(focused,expanded)
@@ -52,7 +55,8 @@ def test_mobile_focus_gains_space_preserves_connection_and_allows_navigation(pag
         assert len(sockets)==2 # Only the deliberate page reload reconnects.
 
 
-def test_mobile_terminal_keys_reach_real_application_cursor_mode(page,real_terminal):
+@pytest.mark.parametrize('embedded',[True,False],ids=['embedded','standalone'])
+def test_mobile_terminal_keys_reach_real_application_cursor_mode(page,real_terminal,embedded):
     t=real_terminal;page.set_viewport_size({'width':390,'height':844})
     script=t['root']/'read-keys.py'
     script.write_text("""import os,sys,tty,termios
@@ -66,7 +70,10 @@ try:
 finally:
  sys.stdout.write('\\x1b[?1l');sys.stdout.flush();termios.tcsetattr(fd,termios.TCSADRAIN,saved)
 """)
-    page.goto(t['url']+'/#sessions');attach(page,'Real terminal');one=frame(page,t['id']);ready(one)
+    if embedded:
+        page.goto(t['url']+'/#sessions');attach(page,'Real terminal');one=frame(page,t['id']);ready(one)
+    else:
+        open_terminal(page,t);one=page
     one.locator('#terminal-tools-summary').click();one.locator('#pause').click()
     expect(one.get_by_role('button',name='Send Tab',exact=True)).to_be_disabled()
     one.locator('#terminal-tools-summary').click();one.locator('#pause').click()

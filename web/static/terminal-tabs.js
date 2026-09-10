@@ -112,7 +112,7 @@ export class TerminalTabs {
   }
   notifyVisible(tab) {
     if (!this.root.hidden && tab.path === this.active)
-      tab.frame?.contentWindow?.postMessage({type:'adk-terminal-visible', compact:this.mobile.matches && this.compact}, location.origin);
+      tab.frame?.contentWindow?.postMessage({type:'adk-terminal-visible', mobile:this.mobile.matches, compact:this.mobile.matches && this.compact}, location.origin);
   }
   close(path) {
     const tab = this.tabs.get(path);
