@@ -1578,9 +1578,9 @@ function projectCard(p) {
     if (generation !== skillGeneration || agent !== skillAgent.value) return;
     const errors = [];
     if (available.status === "fulfilled") skillCatalog = available.value.skills || [];
-    else errors.push("catalog: " + available.reason.message);
+    else errors.push("catalog: " + (available.reason?.message || String(available.reason)));
     if (attached.status === "fulfilled") skillAttachments = attached.value.attachments || [];
-    else errors.push("attachments: " + attached.reason.message);
+    else errors.push("attachments: " + (attached.reason?.message || String(attached.reason)));
     skillsLoading = false; drawSkills();
     skillStatus.textContent = errors.length ? "Could not load " + errors.join("; ") + ". Use Reload to retry." : `${skillCatalog.length} available · ${skillAttachments.length} attached.`;
     $(".skills-reload", skillsSection).disabled = false;
