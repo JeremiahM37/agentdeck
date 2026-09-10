@@ -185,3 +185,13 @@ profile project directory before native --fork-session succeeded with distinct
 identity and copied history. That wrapper is NOT product code: transcript and
 sidecar integrity, collision handling, stale seed cleanup and real API/browser
 integration still need implementation and tests before Claude grouped forks ship.
+
+Claude fork snapshot groundwork now lives in sessions/claude_fork_seed.py. It
+validates the exact UUID and source cwd, snapshots complete JSONL plus the entire
+session-ID sidecar subtree, checks source file/directory versions across the copy,
+records hashes/sizes, and uses private staging files. Existing destination history
+is untouched. Partial/mismatched transcripts, changing source assets, special
+files/links and size limits fail explicitly with stage cleanup. Limits are64MiB
+per file/256MiB total in this unintegrated helper. Unit coverage is invoked by the
+Go suite. Publication, seed filtering/cleanup and launch integration remain
+unimplemented; this helper alone does not repair production Claude grouped forks.
