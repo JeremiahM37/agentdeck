@@ -1,6 +1,6 @@
 // A full-screen chat owns its transcript; scrolling xterm's empty buffer cannot
 // move it. Route touch drags through xterm's negotiated mouse protocol instead.
-export function installTerminalScroll({host, term, enabled, retainedHistory, liveIntent}) {
+export function installTerminalScroll({host, term, enabled, retainedHistory, liveIntent, autoscrollHost = host, historyViewport = () => null}) {
   let gesture, momentum, disposed = false;
   const linePixels = () => Math.max(8, (term.options.fontSize || 15) * 0.8);
   // tmux itself uses the alternate screen even for a plain shell. Only a
@@ -9,6 +9,8 @@ export function installTerminalScroll({host, term, enabled, retainedHistory, liv
   const stop = () => { cancelAnimationFrame(momentum); momentum = null; };
   function scroll(lines, x, y) {
     if (!lines || !enabled()) return;
+    const history = historyViewport();
+    if (history) { history.scrollTop += lines * linePixels(); return; }
     if (lines > 0) liveIntent();
     if (appScroll()) {
       const viewport = host.querySelector('.xterm-viewport');
@@ -78,5 +80,58 @@ export function installTerminalScroll({host, term, enabled, retainedHistory, liv
   }
   listen('pointerup', end, {capture:true});
   listen('pointercancel', end, {capture:true});
-  return () => { disposed = true; stop(); controller.abort(); };
+  // Browser-native autoscroll is unavailable on many Linux browsers and cannot
+  // reach tmux history or an app's mouse protocol. Use the same routing as touch.
+  let auto, autoFrame;
+  const stopAuto = () => {
+    cancelAnimationFrame(autoFrame);
+    auto?.marker.remove();
+    auto = null;
+    autoscrollHost.classList.remove('autoscrolling');
+  };
+  const globalListen = (target, type, fn, options = {}) =>
+    target.addEventListener(type, fn, {...options, signal:controller.signal});
+  function autoStep(now) {
+    if (!auto || disposed || !enabled()) { stopAuto(); return; }
+    const a = auto, dt = Math.min(50, now - a.last); a.last = now;
+    const distance = a.y - a.origin;
+    const speed = Math.sign(distance) * Math.min(160, Math.pow(Math.max(0, Math.abs(distance)-10)/24, 1.5)*8);
+    a.remainder += speed * dt / 1000;
+    const lines = Math.trunc(a.remainder); a.remainder -= lines;
+    const box = host.getBoundingClientRect();
+    scroll(lines, Math.max(box.left+1, Math.min(box.right-1, a.x)),
+      Math.max(box.top+1, Math.min(box.bottom-1, a.y)));
+    autoFrame = requestAnimationFrame(autoStep);
+  }
+  globalListen(document, 'pointerdown', (e) => {
+    if (e.defaultPrevented) return;
+    if (auto) {
+      stopAuto(); e.preventDefault(); e.stopPropagation(); return;
+    }
+    if (e.button !== 1 || !autoscrollHost.contains(e.target) || !enabled()) return;
+    e.preventDefault(); e.stopPropagation(); stop();
+    const marker = document.createElement('span');
+    marker.className = 'terminal-autoscroll-marker'; marker.textContent = '↕';
+    marker.setAttribute('aria-hidden', 'true');
+    marker.style.left = e.clientX+'px'; marker.style.top = e.clientY+'px';
+    document.body.append(marker);
+    autoscrollHost.classList.add('autoscrolling');
+    auto = {origin:e.clientY, y:e.clientY, x:e.clientX, last:performance.now(), remainder:0, marker};
+    autoFrame = requestAnimationFrame(autoStep);
+  }, {capture:true, passive:false});
+  globalListen(document, 'pointermove', (e) => {
+    if (auto) { auto.x=e.clientX; auto.y=e.clientY; }
+  }, {capture:true});
+  globalListen(autoscrollHost, 'auxclick', (e) => {
+    if (e.button === 1) { e.preventDefault(); e.stopPropagation(); }
+  }, {capture:true});
+  globalListen(document, 'keydown', (e) => {
+    if (!auto) return;
+    stopAuto();
+    if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); }
+  }, {capture:true});
+  globalListen(window, 'blur', stopAuto);
+  globalListen(window, 'pagehide', stopAuto);
+  globalListen(document, 'visibilitychange', () => { if (document.hidden) stopAuto(); });
+  return () => { disposed = true; stop(); stopAuto(); controller.abort(); };
 }

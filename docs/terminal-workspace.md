@@ -123,3 +123,11 @@ handler asks Linux's default-terminal helper or Windows's default console host
 to launch SSH. It does not choose a brand from the browser's OS, or change fonts
 or themes. Minimal Linux environments without a default helper use TERMINAL or
 an installed terminal. Setup remains under Tools → Terminal connection setup.
+
+Middle-click inside a terminal to start directional autoscroll. Move above or
+below the marker to scroll; farther away means faster. Escape, another click,
+typing, or leaving the window stops it. This also works through retained tmux
+history and negotiated application mouse scrolling. A slim draggable scrollbar
+remains on the terminal viewport and retained history. Opening a desktop terminal
+keeps the browser terminal alive: external links can fire beforeunload without
+leaving the page, so cleanup waits for an actual pagehide instead.

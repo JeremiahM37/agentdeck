@@ -29,6 +29,21 @@ while True:
     page.mouse.wheel(0,-350)
     expect(page.locator('#agent-terminal .xterm-screen')).to_contain_text('SCROLLED-OLDER-CONTENT',timeout=3000)
 
+    # Middle-button autoscroll must use that protocol too, without sending a
+    # middle click/paste to the application. Escape stops it without app input.
+    x=box['x']+box['width']/2; y=box['y']+box['height']/2
+    before=(t['root']/'mouse-input.log').read_bytes().count(b'[<64;')
+    page.mouse.click(x,y,button='middle');page.mouse.move(x,y-120)
+    page.wait_for_timeout(400)
+    assert (t['root']/'mouse-input.log').read_bytes().count(b'[<64;')>before
+    page.keyboard.press('Escape')
+    expect(page.locator('.terminal-autoscroll-marker')).to_have_count(0)
+    page.wait_for_timeout(150)
+    stopped=(t['root']/'mouse-input.log').read_bytes()
+    page.wait_for_timeout(200)
+    assert (t['root']/'mouse-input.log').read_bytes()==stopped
+    assert b'[<1;' not in stopped
+
     # Finger swipes must generate the same negotiated mouse-wheel reports.
     before=(t['root']/'mouse-input.log').read_bytes().count(b'[<64;')
     client=page.context.new_cdp_session(page)
@@ -92,3 +107,56 @@ def test_scroll_fetches_retained_history_from_before_attach(page,real_terminal,r
     page.mouse.wheel(0,10000)
     expect(page.locator('#pause')).to_have_text('Resume view')
     expect(frozen).to_be_visible()
+
+@pytest.mark.parametrize('cancel',['Escape','click'])
+def test_middle_autoscroll_reads_history_and_returns_live(page,real_terminal,cancel):
+    t=real_terminal
+    subprocess.run(['tmux','send-keys','-t','=terminal-test:',
+      "for i in $(seq 1 300); do echo AUTO-HISTORY-$i; done",'Enter'],env=t['env'],check=True)
+    time.sleep(.2)
+    open_terminal(page,t)
+    box=page.locator('#agent-terminal').bounding_box()
+    x=box['x']+box['width']/2;y=box['y']+box['height']/2
+    page.mouse.click(x,y,button='middle')
+    expect(page.locator('.terminal-autoscroll-marker')).to_be_visible()
+    page.mouse.move(x,y-120)
+    history=page.locator('.frozen')
+    expect(history).to_be_visible()
+    before=history.evaluate('(el)=>el.scrollTop')
+    page.wait_for_timeout(400)
+    assert history.evaluate('(el)=>el.scrollTop')<before
+    assert history.evaluate('(el)=>getComputedStyle(el).scrollbarWidth')=='thin'
+    assert page.locator('.xterm-viewport').evaluate('(el)=>getComputedStyle(el).scrollbarWidth')=='thin'
+    # Reversing direction reaches the live view without a Resume button.
+    page.mouse.move(x,y+220)
+    expect(history).not_to_be_visible(timeout=10000)
+    if cancel=='Escape':page.keyboard.press('Escape')
+    else:page.mouse.click(x,y,button='middle')
+    expect(page.locator('.terminal-autoscroll-marker')).to_have_count(0)
+    page.locator('#agent-terminal').click();type_command(page,'echo AUTO-RETURNED-LIVE')
+    expect(page.locator('#agent-terminal .xterm-screen')).to_contain_text('AUTO-RETURNED-LIVE')
+    page.mouse.click(x,y,button='middle')
+    page.evaluate("window.dispatchEvent(new Event('blur'))")
+    expect(page.locator('.terminal-autoscroll-marker')).to_have_count(0)
+
+@pytest.mark.parametrize('real_terminal',[{'no_alternate_screen':True}],indirect=True)
+def test_middle_autoscroll_moves_normal_terminal_buffer(page,real_terminal):
+    page.add_init_script('''let Constructor;
+      Object.defineProperty(window,'Terminal',{configurable:true,
+        get(){return Constructor},set(Base){Constructor=class extends Base {
+          constructor(...args){super(...args);window.testTerminal=this;}
+        };}});''')
+    open_terminal(page,real_terminal)
+    type_command(page,'for i in $(seq 1 300); do echo BUFFER-LINE-$i; done')
+    expect(page.locator('#agent-terminal .xterm-screen')).to_contain_text('BUFFER-LINE-300')
+    base=page.evaluate('window.testTerminal.buffer.active.baseY')
+    assert base>100
+    box=page.locator('#agent-terminal').bounding_box()
+    x=box['x']+box['width']/2;y=box['y']+box['height']/2
+    page.mouse.click(x,y,button='middle');page.mouse.move(x,y-150)
+    page.wait_for_function('(base)=>window.testTerminal.buffer.active.viewportY<base-10',arg=base)
+    page.mouse.move(x,y+200)
+    page.wait_for_function('window.testTerminal.buffer.active.viewportY===window.testTerminal.buffer.active.baseY')
+    page.keyboard.press('Escape')
+    expect(page.locator('.terminal-autoscroll-marker')).to_have_count(0)
+    expect(page.locator('.frozen')).not_to_be_visible()

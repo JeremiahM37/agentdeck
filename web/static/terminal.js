@@ -166,7 +166,9 @@ class Pane {
     });
     this.disposeScroll = installTerminalScroll({
       host: el.querySelector(".terminal-host"), term: this.term,
-      enabled: () => this.connected && !this.paused && !this.readingRetainedHistory && !this.stopped,
+      enabled: () => this.connected && !this.paused && !this.stopped,
+      autoscrollHost: el,
+      historyViewport: () => this.readingRetainedHistory ? frozen : null,
       retainedHistory: (lines) => this.readRetainedHistory(lines),
       liveIntent: () => { ++this.historyRevision; },
     });

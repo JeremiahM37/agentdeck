@@ -443,3 +443,21 @@ dialog { border-radius:14px; padding:22px; border-color:#384459; }
 .action-menu.menu-above>.action-menu-panel { top:auto; bottom:calc(100% + 6px); }
 
 nav>a.button { text-decoration:none; display:inline-flex; align-items:center; }
+
+/* Keep a slim, draggable history scrollbar on both terminal surfaces. */
+.xterm-viewport, .frozen {
+  scrollbar-width: thin;
+  scrollbar-color: #667085 transparent;
+}
+.xterm-viewport::-webkit-scrollbar, .frozen::-webkit-scrollbar { width: 6px; height: 6px; }
+.xterm-viewport::-webkit-scrollbar-thumb, .frozen::-webkit-scrollbar-thumb {
+  background: #667085; border-radius: 3px;
+}
+.autoscrolling, .autoscrolling * { cursor: ns-resize !important; }
+.terminal-autoscroll-marker {
+  position: fixed; z-index: 10000; pointer-events: none;
+  transform: translate(-50%, -50%); width: 24px; height: 24px;
+  display: grid; place-items: center; border: 1px solid #98a2b3;
+  border-radius: 50%; background: #10121cee; color: #e4e7ec;
+  font: 18px/1 sans-serif;
+}
