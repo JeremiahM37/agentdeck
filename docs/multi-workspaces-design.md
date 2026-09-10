@@ -126,3 +126,15 @@ row of all project names. Unit tests cover retained draft,503 retry state, remov
 target filtering and width; a realPTY test creates a grouped session end-to-end.
 The firstPTY attempt moved off the already-selected primary project; corrected
 navigation passed without changing implementation semantics.
+
+Metadata hardening found and fixed a real staged-worker defect: failure reporting
+opened `.agentdeck-state.next` with truncation, so a symlink there could overwrite
+an outside file even though cleanup refused the extra root entry. Regression
+proof failed before the fix and passes afterward. Metadata writes now use fresh
+private temporary inodes, fsync and atomic replacement. Reads and operation-lock
+opens reject symlinks/non-regular files. The saved lock device/inode must match
+before cleanup, preventing a replaced lock from bypassing the original operation.
+Malformed process receipts fail closed with repository files preserved. A crash
+between temporary-file creation and rename may leave an extra root entry for
+inspection; cleanup does not silently delete it. Earlier unshipped grouped roots
+without a saved lock identity are deliberately refused, not retroactively claimed.

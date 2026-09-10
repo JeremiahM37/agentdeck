@@ -238,6 +238,67 @@ func TestMultiWorkspaceCreationFailureAndCleanup(t *testing.T) {
 				t.Fatal("first repository removed before later preflight")
 			}
 			os.Remove(artifact)
+			outside := filepath.Join(root, "outside-metadata")
+			if err := os.WriteFile(outside, []byte("preserve outside bytes"), 0600); err != nil {
+				t.Fatal(err)
+			}
+			replacement := filepath.Join(plan.Path, ".agentdeck-state.next")
+			if err := os.Symlink(outside, replacement); err != nil {
+				t.Fatal(err)
+			}
+			if err := RunInteractive(ctx, ex, "remove", plan); err == nil {
+				t.Fatal("unexpected metadata file accepted")
+			}
+			if value, _ := os.ReadFile(outside); string(value) != "preserve outside bytes" {
+				t.Fatal("workspace metadata write followed an outside symlink")
+			}
+			os.Remove(replacement)
+			for _, name := range []string{".agentdeck-lock", ".agentdeck-state.json", ".agentdeck-process.json"} {
+				original := filepath.Join(plan.Path, name)
+				backup := filepath.Join(root, "saved-"+name)
+				if err := os.Rename(original, backup); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Symlink(outside, original); err != nil {
+					t.Fatal(err)
+				}
+				if err := RunInteractive(ctx, ex, "remove", plan); err == nil {
+					t.Fatalf("symlink metadata accepted: %s", name)
+				}
+				if value, _ := os.ReadFile(outside); string(value) != "preserve outside bytes" {
+					t.Fatal("outside file changed")
+				}
+				os.Remove(original)
+				if err := os.Rename(backup, original); err != nil {
+					t.Fatal(err)
+				}
+			}
+			lockPath := filepath.Join(plan.Path, ".agentdeck-lock")
+			savedLock := filepath.Join(root, "original-lock")
+			if err := os.Rename(lockPath, savedLock); err != nil {
+				t.Fatal(err)
+			}
+			os.WriteFile(lockPath, []byte("replacement"), 0600)
+			if err := RunInteractive(ctx, ex, "remove", plan); err == nil || !strings.Contains(err.Error(), "lock was replaced") {
+				t.Fatalf("replacement lock accepted: %v", err)
+			}
+			os.Remove(lockPath)
+			os.Rename(savedLock, lockPath)
+			processReceipt := filepath.Join(plan.Path, ".agentdeck-process.json")
+			receiptBefore, err := os.ReadFile(processReceipt)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, corrupt := range []string{"not JSON", `{"pgid":0}`, `{"pgid":"bad"}`} {
+				os.WriteFile(processReceipt, []byte(corrupt), 0600)
+				if err := RunInteractive(ctx, ex, "remove", plan); err == nil {
+					t.Fatal("corrupt process receipt accepted")
+				}
+				if _, err := os.Stat(plan.Repositories[0].Worktree.Path); err != nil {
+					t.Fatal("corrupt receipt allowed partial cleanup")
+				}
+			}
+			os.WriteFile(processReceipt, receiptBefore, 0600)
 			if out, err := exec.Command("tmux", "new-session", "-d", "-s", "group-root", "-c", plan.Path, "sleep 600").CombinedOutput(); err != nil {
 				t.Fatalf("tmux: %s", out)
 			}

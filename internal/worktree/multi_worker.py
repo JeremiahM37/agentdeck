@@ -6,6 +6,8 @@ import pathlib
 import signal
 import subprocess
 import sys
+import stat
+import tempfile
 
 action, raw, validation, single = sys.argv[1:5]
 p = json.loads(raw)
@@ -16,19 +18,48 @@ namespace = {'__name__': 'workspace_validation'}
 exec(compile(validation, '<workspace-validation>', 'exec'), namespace)
 
 
-def save():
-    temp = root / '.agentdeck-state.next'
-    # The exclusive operation lock serializes this private metadata file.
-    with temp.open('w') as file:
-        json.dump(p, file)
-        file.flush()
-        os.fsync(file.fileno())
-    os.replace(temp, root / '.agentdeck-state.json')
-    fd = os.open(root, os.O_RDONLY | os.O_DIRECTORY)
-    try:
-        os.fsync(fd)
-    finally:
+def regular_file(name, flags):
+    fd = os.open(root / name, flags | os.O_NOFOLLOW | os.O_NONBLOCK, 0o600)
+    if not stat.S_ISREG(os.fstat(fd).st_mode):
         os.close(fd)
+        raise ValueError('Workspace metadata must be a regular file: ' + name)
+    return os.fdopen(fd, 'r+' if flags & os.O_RDWR else 'r')
+
+
+def acquire_lock():
+    try:
+        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        raise ValueError('A workspace operation is still running; try again after it finishes')
+
+
+def read_record(name):
+    with regular_file(name, os.O_RDONLY) as file:
+        return json.load(file)
+
+
+def write_record(name, value):
+    # Never truncate an existing path: it may have been replaced by a symlink
+    # or hard link. A new private inode is atomically installed under the lock.
+    fd, temp = tempfile.mkstemp(prefix='.agentdeck-write-', dir=root)
+    try:
+        with os.fdopen(fd, 'w') as file:
+            json.dump(value, file)
+            file.flush()
+            os.fsync(file.fileno())
+        os.replace(temp, root / name)
+        directory = os.open(root, os.O_RDONLY | os.O_DIRECTORY)
+        try:
+            os.fsync(directory)
+        finally:
+            os.close(directory)
+    finally:
+        if os.path.lexists(temp):
+            os.unlink(temp)
+
+
+def save():
+    write_record('.agentdeck-state.json', p)
 
 
 def identity(plan):
@@ -39,8 +70,10 @@ def identity(plan):
 
 def busy():
     receipt = root / '.agentdeck-process.json'
-    if receipt.exists():
-        pgid = json.loads(receipt.read_text())['pgid']
+    if os.path.lexists(receipt):
+        pgid = read_record('.agentdeck-process.json')['pgid']
+        if type(pgid) is not int or pgid <= 1:
+            raise ValueError('Workspace process receipt is invalid; inspect it before cleanup')
         try:
             os.killpg(pgid, 0)
         except ProcessLookupError:
@@ -92,16 +125,7 @@ def run_child(entry, operation):
             stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
             start_new_session=True, pass_fds=(read_fd, lock.fileno()),
         )
-        receipt = root / '.agentdeck-process.json'
-        with receipt.open('w') as file:
-            json.dump({'pgid': child.pid}, file)
-            file.flush()
-            os.fsync(file.fileno())
-        fd = os.open(root, os.O_RDONLY | os.O_DIRECTORY)
-        try:
-            os.fsync(fd)
-        finally:
-            os.close(fd)
+        write_record('.agentdeck-process.json', {'pgid': child.pid})
         os.write(write_fd, b'1')
     finally:
         os.close(read_fd)
@@ -132,8 +156,10 @@ try:
         root = pathlib.Path(p['path'])
         root.parent.mkdir(parents=True, exist_ok=True)
         root.mkdir(mode=0o700)
-        lock = (root / '.agentdeck-lock').open('x+')
-        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        lock = regular_file('.agentdeck-lock', os.O_RDWR | os.O_CREAT | os.O_EXCL)
+        acquire_lock()
+        lock_stat = os.fstat(lock.fileno())
+        p['operation_lock'] = [lock_stat.st_dev, lock_stat.st_ino]
         owned = True
         save()
         for entry in p['repositories']:
@@ -147,11 +173,14 @@ try:
     else:
         if root.is_symlink() or not root.is_dir():
             raise ValueError('Workspace root is missing or replaced; inspect it before cleanup')
-        lock = (root / '.agentdeck-lock').open('r+')
-        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        saved = json.loads((root / '.agentdeck-state.json').read_text())
+        lock = regular_file('.agentdeck-lock', os.O_RDWR)
+        acquire_lock()
+        saved = read_record('.agentdeck-state.json')
         if identity(saved) != identity(p):
             raise ValueError('Workspace ownership or repository allocation does not match')
+        lock_stat = os.fstat(lock.fileno())
+        if saved.get('operation_lock') != [lock_stat.st_dev, lock_stat.st_ino]:
+            raise ValueError('Workspace operation lock was replaced; inspect it before cleanup')
         p = saved
         owned = True
         busy()
@@ -177,7 +206,10 @@ except (OSError, ValueError, KeyError, TypeError, subprocess.TimeoutExpired) as 
     result = {'error': str(error)}
     if owned:
         p.update(state='failed', error=str(error))
-        save()
+        try:
+            save()
+        except (OSError, ValueError) as persistence_error:
+            result['error'] += '; could not save workspace progress: ' + str(persistence_error)
         result['workspace'] = p
     print(json.dumps(result))
     sys.exit(1)
