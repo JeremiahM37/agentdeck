@@ -52,3 +52,33 @@ def test_desktop_platform_choices_and_terminal_tools(page,real_terminal):
     page.keyboard.press('Escape')
     expect(page.locator('#pause')).not_to_be_visible()
     assert not page.evaluate('document.documentElement.scrollWidth>innerWidth')
+
+@pytest.mark.parametrize('link',['#desktop','#desktop-open'])
+def test_open_in_terminal_keeps_browser_terminal_alive(page,real_terminal,link):
+    t=real_terminal
+    open_terminal(page,t)
+    page.evaluate('''() => {
+      window.departures = [];
+      for (const type of ['beforeunload', 'pagehide'])
+        window.addEventListener(type, () => window.departures.push(type));
+    }''')
+    if link == '#desktop-open':
+        terminal_tool(page,'#desktop-setup')
+    page.locator(link).click()
+    page.wait_for_timeout(300)
+    # Chromium attempts an external-protocol navigation even when the headless
+    # machine has no handler. The document stays; its live terminal must too.
+    assert 'beforeunload' in page.evaluate('window.departures')
+    assert 'pagehide' not in page.evaluate('window.departures')
+    if link == '#desktop-open':
+        page.locator('#desktop-dialog [data-close]').click()
+    expect(page.locator('#agent-terminal .xterm-screen')).to_be_visible()
+    page.locator('#agent-terminal').click()
+    page.keyboard.type('printf click-survived > click-proof.txt')
+    page.keyboard.press('Enter')
+    expect(page.locator('#agent-terminal .xterm-screen')).to_contain_text('click-proof.txt')
+    import time
+    for _ in range(50):
+        if (t['root']/'click-proof.txt').exists():break
+        time.sleep(.1)
+    assert (t['root']/'click-proof.txt').read_text()=='click-survived'

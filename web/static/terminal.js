@@ -743,9 +743,12 @@ function fileLinks(p) {
     },
   });
 }
-window.addEventListener("beforeunload", () =>
-  panes.forEach((p) => p.dispose()),
-);
+// External protocol links (and cancelled navigation) fire beforeunload without
+// leaving this document. Dispose only after an actual departure, and retain
+// panes when the browser caches this page for back/forward restoration.
+window.addEventListener("pagehide", (event) => {
+  if (!event.persisted) panes.forEach((p) => p.dispose());
+});
 act(async () => {
   info = await api("/info");
   $("#desktop").href = info.desktop_uri;
