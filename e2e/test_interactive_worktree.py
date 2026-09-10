@@ -25,6 +25,9 @@ def test_web_launches_and_safely_removes_interactive_worktree(page,real_terminal
     page.locator('#ns-worktree-branch').fill('feature/ui-proof')
     page.locator('#ns-go').click()
     expect(page.locator('#sesslist')).to_contain_text('feature/ui-proof',timeout=15000)
+    # The branch is visible as soon as the allocation is planned. Attach only
+    # appears when setup actually completes.
+    expect(page.locator('.scard',has_text='Isolated UI proof').get_by_role('button',name='⌨ Attach',exact=True)).to_be_visible(timeout=15000)
     row=next(s for s in t['api']('/sessions') if s['name']=='Isolated UI proof')
     dest=Path(row['workspace']['path']);assert dest!=t['root'] and (dest/'hello.txt').exists()
     assert git('status','--porcelain')==''
