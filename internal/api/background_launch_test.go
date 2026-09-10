@@ -33,6 +33,14 @@ func TestBackgroundWorkspaceSurvivesResponseAndRetainsFailures(t *testing.T) {
 	git("-c", "user.name=Fixture", "-c", "user.email=fixture@localhost", "commit", "-qm", "base")
 	target, _ := h.App.DB.InsertTarget(&store.Target{Name: "background fixture", Kind: "local"})
 	h.decode("PUT", "/api/agents", []obj{{"name": "background-fixture", "command": "sleep 600"}}, 200, nil)
+	// Keep a separate ended allocation on the same target. Its cleanup must not
+	// wait behind the held checkout below.
+	unrelatedRepo := filepath.Join(root, "unrelated")
+	git("clone", "-q", repo, unrelatedRepo)
+	var unrelated obj
+	h.decode("POST", "/api/sessions", obj{"agent": "background-fixture", "target_id": target.ID, "workdir": unrelatedRepo, "worktree": obj{}, "yolo": false}, 201, &unrelated)
+	unrelatedEndpoint := fmt.Sprintf("/api/sessions/%d", unrelated.id())
+	h.decode("DELETE", unrelatedEndpoint, nil, 200, nil)
 	started, release := filepath.Join(root, "started"), filepath.Join(root, "release")
 	hook := filepath.Join(repo, ".git/hooks/post-checkout")
 	os.WriteFile(hook, []byte("#!/bin/sh\ntouch "+shellq.Quote(started)+"\nwhile [ ! -f "+shellq.Quote(release)+" ]; do sleep 0.05; done\n"), 0700)
@@ -64,6 +72,22 @@ func TestBackgroundWorkspaceSurvivesResponseAndRetainsFailures(t *testing.T) {
 			t.Fatal("hook did not start")
 		}
 		time.Sleep(20 * time.Millisecond)
+	}
+	cleanupDone := make(chan error, 1)
+	go func() { cleanupDone <- h.App.Sessions.RemoveWorktree(context.Background(), unrelated.id()) }()
+	select {
+	case err := <-cleanupDone:
+		if err != nil {
+			t.Fatalf("unrelated cleanup failed: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		// Release before failing so harness cleanup cannot hang on the worker.
+		os.WriteFile(release, []byte("release"), 0600)
+		<-cleanupDone
+		t.Fatal("unrelated cleanup waited behind a slow setup")
+	}
+	if _, err := os.Stat(release); !os.IsNotExist(err) {
+		t.Fatal("checkout was not held during cleanup")
 	}
 	h.App.DB.Update("sessions", id, map[string]any{"created_at": store.Now() - 180})
 	h.App.Sessions.Poll(context.Background())

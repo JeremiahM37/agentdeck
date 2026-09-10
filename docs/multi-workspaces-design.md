@@ -129,7 +129,23 @@ installed-Claude/Codex test using private synthetic histories and no model turn.
 It checks exact native identity, saved history visibility, captured launch
 profiles, and the correct shared or isolated working directory.
 
-Before rollout, finish the slow-setup lifecycle and progress UI beyond the current
-120-second caller deadline, adding a repository to an existing group, and the
-transition from older single-worktree sessions. Run the full combined verify
-suite on the final source and verify deployment on both server and desktop.
+Before rollout, finish cancellation and restart recovery for setup, extend
+background creation to native conversation forks, add repositories to existing
+groups, and handle the transition from older single-worktree sessions. Fresh
+isolated creation already runs in the background from both interfaces, with
+recorded progress and retained failures. Run the full combined verify suite on
+the final source and verify deployment on both server and desktop.
+
+### Concurrent setup and cleanup
+
+Controller lifecycle reservations cover the source repositories and allocated
+root on their target. Launches can share a directory, but cleanup refuses while
+a launch uses that directory or a descendant. Unrelated directories and other
+targets proceed independently; no mutex is held through checkout or SSH.
+Existing source paths and allocation parents are resolved on the target so
+symlink aliases receive the same protection. Target receipt/operation locks
+remain responsible for surviving workers and filesystem validation.
+
+A real Git integration test holds a checkout hook open while removing another
+ended allocation on the same target. Reservation tests cover shared launches,
+ancestor/descendant conflicts, destination allocation, and symlink aliases.

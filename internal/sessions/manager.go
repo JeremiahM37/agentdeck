@@ -33,13 +33,14 @@ type Manager struct {
 	// before giving up and saying so.
 	HandoffTimeout time.Duration
 
-	lifecycleMu  sync.Mutex
-	workspaceMu  sync.RWMutex
-	sendMu       sync.Mutex
-	mu           sync.Mutex
-	transitions  map[string]bool
-	activeSetups map[int64]bool
-	handoffs     map[int64]bool // sessions with a wrap in flight
+	lifecycleMu   sync.Mutex
+	workspaceMu   sync.Mutex
+	workspaceUses map[*workspaceUse]bool
+	sendMu        sync.Mutex
+	mu            sync.Mutex
+	transitions   map[string]bool
+	activeSetups  map[int64]bool
+	handoffs      map[int64]bool // sessions with a wrap in flight
 }
 
 // New builds a session manager.
@@ -111,8 +112,6 @@ func (m *Manager) Launch(ctx context.Context, o LaunchOpts) (*store.Session, err
 	if err != nil {
 		return nil, err
 	}
-	m.workspaceMu.RLock()
-	defer m.workspaceMu.RUnlock()
 	target, err := m.DB.Target(o.TargetID)
 	if err != nil {
 		return nil, err
@@ -132,6 +131,29 @@ func (m *Manager) Launch(ctx context.Context, o LaunchOpts) (*store.Session, err
 	if err != nil {
 		return nil, err
 	}
+	ex, err := m.Reg.For(target)
+	if err != nil {
+		return nil, err
+	}
+	paths := []string{workdir}
+	for _, source := range workspaceSources {
+		paths = append(paths, source.Repo)
+	}
+	for _, directory := range append([]string(nil), paths...) {
+		if directory == "" {
+			continue
+		}
+		canonical, err := canonicalWorkspaceSource(ctx, ex, directory)
+		if err != nil {
+			return nil, err
+		}
+		paths = append(paths, canonical)
+	}
+	workspaceUse, err := m.reserveWorkspacePaths(o.TargetID, false, paths...)
+	if err != nil {
+		return nil, err
+	}
+	defer m.releaseWorkspacePaths(workspaceUse)
 	sharedWorkspace, err := m.WorkspaceAt(o.TargetID, workdir)
 	if err != nil {
 		return nil, err
@@ -195,10 +217,6 @@ func (m *Manager) Launch(ctx context.Context, o LaunchOpts) (*store.Session, err
 		}
 	}
 
-	ex, err := m.Reg.For(target)
-	if err != nil {
-		return nil, err
-	}
 	if sharedWorkspace != nil {
 		for _, repo := range sharedWorkspace.Repositories {
 			result, probeErr := ex.Run(ctx, "test -d "+shellq.Quote(repo.Worktree.Path), executor.RunOpts{Timeout: 10})
@@ -256,6 +274,15 @@ func (m *Manager) Launch(ctx context.Context, o LaunchOpts) (*store.Session, err
 				m.end(sess.ID, StatusDead)
 				return nil, err
 			}
+		}
+		canonical, err := canonicalWorkspaceAllocation(ctx, ex, plan.Path)
+		if err != nil {
+			m.end(sess.ID, StatusDead)
+			return nil, err
+		}
+		if err := m.extendWorkspacePaths(workspaceUse, plan.Path, canonical); err != nil {
+			m.end(sess.ID, StatusDead)
+			return nil, err
 		}
 		if err := m.DB.Update("sessions", sess.ID, map[string]any{"worktree_json": store.J(plan)}); err != nil {
 			m.end(sess.ID, StatusDead)

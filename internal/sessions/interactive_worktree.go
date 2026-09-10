@@ -34,8 +34,6 @@ func (m *Manager) RemoveWorktree(ctx context.Context, id int64) error {
 	if m.setupActive(id) {
 		return fmt.Errorf("workspace setup is still running; inspect its progress before removing the worktree")
 	}
-	m.workspaceMu.Lock()
-	defer m.workspaceMu.Unlock()
 	row, ex, err := m.resolve(id)
 	if err != nil {
 		return err
@@ -43,6 +41,23 @@ func (m *Manager) RemoveWorktree(ctx context.Context, id int64) error {
 	var plan worktree.Interactive
 	if row.WorktreeJSON == "" || json.Unmarshal([]byte(row.WorktreeJSON), &plan) != nil {
 		return fmt.Errorf("this session does not own a worktree")
+	}
+	canonical, err := canonicalWorkspaceAllocation(ctx, ex, plan.Path)
+	if err != nil {
+		return err
+	}
+	use, err := m.reserveWorkspacePaths(row.TargetID, true, plan.Path, canonical)
+	if err != nil {
+		return err
+	}
+	defer m.releaseWorkspacePaths(use)
+	// Another cleanup may have completed between the initial read and reservation.
+	row, err = m.DB.Session(id)
+	if err != nil {
+		return err
+	}
+	if err := json.Unmarshal([]byte(row.WorktreeJSON), &plan); err != nil {
+		return err
 	}
 	if plan.State == "removed" {
 		return nil
