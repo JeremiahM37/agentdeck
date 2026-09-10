@@ -241,7 +241,7 @@ func SendKeyCommand(tmuxName, key string) (string, bool) {
 
 // KillCommand ends a session's tmux process.
 func KillCommand(tmuxName string) string {
-	return fmt.Sprintf("tmux kill-session -t %s 2>/dev/null || true", shellq.Quote(tmuxName))
+	return fmt.Sprintf("tmux kill-session -t %s", shellq.Quote("="+tmuxName))
 }
 
 // HasSessionCommand asks whether a tmux session still exists.

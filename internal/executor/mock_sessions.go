@@ -24,8 +24,9 @@ const (
 // is typed into it, so the whole session loop (launch → status → send → handoff)
 // is exercised without a real CLI.
 type mockPane struct {
-	lines   []string
-	workdir string
+	trackingIdentity string
+	lines            []string
+	workdir          string
 	// psArgs is how this agent appears in the process table, which is what
 	// discovery joins on.
 	psArgs string
@@ -198,4 +199,37 @@ func firstLine(s string) string {
 		line = line[:80]
 	}
 	return line
+}
+
+var mockIdentitySeed = regexp.MustCompile(`@agentdeck-tracking-identity '?([a-f0-9]{32})'?`)
+var mockIdentityCondition = regexp.MustCompile(`@agentdeck-tracking-identity\},([a-f0-9]{32})\}`)
+
+// handleTracking simulates the session-local option and atomic conditional stop.
+// Real tmux regression tests own refused stops and changed-identity coverage.
+func (m *Mock) handleTracking(cmd string) Result {
+	name := strings.TrimSuffix(strings.TrimPrefix(strings.Trim(firstGroup(targetRe, cmd), "'"), "="), ":")
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	pane, ok := m.panes[name]
+	if !ok {
+		return Result{1, "", "can't find session"}
+	}
+	if strings.HasPrefix(cmd, "tmux set-option") {
+		match := mockIdentitySeed.FindStringSubmatch(cmd)
+		if len(match) != 2 || pane.trackingIdentity != "" {
+			return Result{1, "", "option already set or missing value"}
+		}
+		pane.trackingIdentity = match[1]
+	}
+	if strings.HasPrefix(cmd, "tmux if-shell") {
+		match := mockIdentityCondition.FindStringSubmatch(cmd)
+		if len(match) != 2 {
+			return Result{1, "", "unsupported condition"}
+		}
+		if match[1] == pane.trackingIdentity {
+			delete(m.panes, name)
+		}
+		return Result{0, "", ""}
+	}
+	return Result{0, pane.trackingIdentity + "\n", ""}
 }

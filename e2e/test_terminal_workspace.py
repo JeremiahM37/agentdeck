@@ -5,6 +5,8 @@ import json
 import os
 from pathlib import Path
 import socket
+import shlex
+import shutil
 import subprocess
 import tempfile
 import time
@@ -16,6 +18,7 @@ from conftest import _binary, _unused_port
 
 @pytest.fixture()
 def real_terminal(tmp_path, request):
+    real_tmux = shutil.which('tmux')
     tmux_dir = tempfile.TemporaryDirectory(prefix='adkt-', dir='/tmp')
     env = {**os.environ, 'TMUX_TMPDIR': tmux_dir.name, 'TMUX': '', 'AGENTDECK_MOCK': '0',
            'AGENTDECK_DB': str(tmp_path/'test.db'), 'AGENTDECK_HOST': '127.0.0.1',
@@ -32,6 +35,11 @@ def real_terminal(tmp_path, request):
     if options.get('agent_script'):
         agent = tmp_path/'test-agent'; agent.write_text(options['agent_script']); agent.chmod(0o755)
         env['AGENTDECK_CLAUDE_BIN'] = str(agent); env['AGENTDECK_TICK'] = '0.1'
+    if options.get('controllable_stop'):
+        tools = tmp_path/'tools'; tools.mkdir()
+        wrapper = tools/'tmux'
+        wrapper.write_text('#!/bin/sh\nif [ "$1" = if-shell ] && [ -e '+shlex.quote(str(root/'refuse-stop'))+' ]; then exit 0; fi\nexec '+shlex.quote(shutil.which('tmux'))+' "$@"\n')
+        wrapper.chmod(0o755); env['PATH'] = str(tools)+os.pathsep+env['PATH']
     log = (tmp_path/'server.log').open('w')
     proc = subprocess.Popen([_binary()],cwd=root,env=env,stdout=log,stderr=log)
     def api(path, data=None):
@@ -48,7 +56,7 @@ def real_terminal(tmp_path, request):
         yield dict(url=url,root=root,env=env,id=sess['id'],api=api,proc=proc,port=port,target_id=target['id'])
     finally:
         proc.terminate();proc.wait(timeout=15);log.close()
-        subprocess.run(['tmux','kill-server'],env=env,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
+        subprocess.run([real_tmux,'kill-server'],env=env,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
         tmux_dir.cleanup()
 
 def open_terminal(page, t):

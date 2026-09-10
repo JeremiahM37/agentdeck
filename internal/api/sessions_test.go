@@ -371,10 +371,10 @@ func TestDeleteReleasesAnAdoptedSessionWithoutKillingIt(t *testing.T) {
 		}
 	}
 	// ...and its terminal is still running, so discovery finds it again
-	if !h.cmdLogHas("kill-session -t legacy-claude") {
+	if !h.cmdLogHas("kill-session") {
 		found := false
 		for _, c := range h.getList("/api/sessions/discover") {
-			if c.str("tmux_session") == "legacy-claude" && c["adopted"] == false {
+			if c.str("tmux_session") == "legacy-claude" && c["target_id"] == sess["target_id"] && c["adopted"] == false {
 				found = true
 			}
 		}
@@ -395,8 +395,10 @@ func TestDeleteKillsAnAdoptedSessionOnlyWhenAsked(t *testing.T) {
 	if got["killed"] != true {
 		t.Fatalf("an explicit kill must kill: %v", got)
 	}
-	if !h.cmdLogHas("kill-session -t legacy-claude") {
-		t.Error("the tmux session was not killed")
+	for _, candidate := range h.getList("/api/sessions/discover") {
+		if candidate.str("tmux_session") == "legacy-claude" && candidate["target_id"] == sess["target_id"] {
+			t.Error("stopped terminal is still discoverable")
+		}
 	}
 }
 
@@ -729,7 +731,12 @@ func TestLegacyReleasedRecordRequiresExplicitDiscovery(t *testing.T) {
 	h := newHarness(t)
 	sess := h.post("/api/sessions/adopt", obj{"target_id": h.firstTargetID(), "tmux_session": "legacy-claude", "workdir": "/mock/demo-app"}, 201)
 	path := fmt.Sprintf("/api/sessions/%d", sess.id())
-	// The mock target does not provide a tmux identity, like records predating it.
+	// Represent a record released before identity capture existed. Releasing an
+	// already-released record must not backfill an identity from a newer process.
+	h.request2("DELETE", path, nil, 200)
+	if err := h.App.DB.Update("sessions", sess.id(), map[string]any{"tracking_identity": ""}); err != nil {
+		t.Fatal(err)
+	}
 	h.request2("DELETE", path, nil, 200)
 	if h.get(path)["can_restore"] != false {
 		t.Fatal("legacy record offered automatic recovery")

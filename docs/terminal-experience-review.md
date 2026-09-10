@@ -191,3 +191,18 @@ real tmux processes and native Claude/Codex transcript files: conflicting projec
 and agent configuration directories, settings edits between fork and resume,
 unchanged history files, private API responses, database migration and reopen.
 Named configuration profiles and profile selection remain separate work.
+
+
+## Verified terminal stops
+
+End/Kill now confirms that the exact tmux session has disappeared before closing
+its record. A refused command, timeout, incomplete remote check or no-op stop
+returns an error and leaves the session available for retry. Session-local
+identity guards against a replacement process with the same name; a learned
+identity is retained even if the stop fails. An already-stopped record keeps its
+original end time.
+
+Real tmux tests cover failures, identity changes during the operation, neighboring
+session names and repeated stops. Desktop and phone browser tests confirm that
+a failed stop leaves the card visible and the terminal running, and that a later
+successful retry closes it. Stop tracking remains non-destructive.

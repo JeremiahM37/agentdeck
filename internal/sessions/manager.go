@@ -480,11 +480,25 @@ func (m *Manager) Kill(ctx context.Context, id int64) error {
 	if err != nil {
 		return err
 	}
-	if _, err := ex.Run(ctx, KillCommand(sess.TmuxSession),
-		executor.RunOpts{Timeout: 20}); err != nil {
+	if err := m.stopProcess(ctx, ex, sess); err != nil {
 		return err
 	}
-	m.end(id, StatusDead)
+	m.lifecycleMu.Lock()
+	current, err := m.DB.Session(id)
+	if err == nil && (current.TargetID != sess.TargetID || current.TmuxSession != sess.TmuxSession) {
+		err = fmt.Errorf("session changed during stop; refresh before retrying")
+	}
+	if err == nil {
+		ended := store.Now()
+		if current.EndedAt != nil {
+			ended = *current.EndedAt
+		}
+		err = m.DB.Update("sessions", id, map[string]any{"status": StatusDead, "ended_at": ended, "updated_at": store.Now()})
+	}
+	m.lifecycleMu.Unlock()
+	if err != nil {
+		return err
+	}
 	if fresh, err := m.DB.Session(id); err == nil {
 		m.publish(fresh)
 	}

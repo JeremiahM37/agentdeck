@@ -166,6 +166,8 @@ func (m *Mock) Run(ctx context.Context, cmd string, opts RunOpts) (Result, error
 			m.startAgent(sess, wt)
 		}
 		return Result{0, "", ""}, nil
+	case strings.Contains(cmd, "@agentdeck-tracking-identity"):
+		return m.handleTracking(cmd), nil
 	case strings.Contains(cmd, "capture-pane"):
 		return m.handlePoll(cmd), nil
 	case strings.Contains(cmd, "tmux list-panes -a"):
