@@ -26,8 +26,14 @@ type Interactive struct {
 	Repositories []WorkspaceRepository `json:"repositories,omitempty"`
 }
 type InteractiveOptions struct {
-	Base   string `json:"base"`
-	Branch string `json:"branch"`
+	Base              string                `json:"base"`
+	Branch            string                `json:"branch"`
+	ExtraRepositories []RepositorySelection `json:"extra_repositories,omitempty"`
+}
+
+type RepositorySelection struct {
+	ProjectID int64  `json:"project_id"`
+	Base      string `json:"base,omitempty"`
 }
 
 func PlanInteractive(repo string, id int64, o InteractiveOptions) *Interactive {

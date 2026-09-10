@@ -5,9 +5,12 @@ import (
 	"encoding/json"
 	"net/http"
 	"path"
+	"strconv"
+	"strings"
 
 	"github.com/JeremiahM37/agentdeck/internal/executor"
 	"github.com/JeremiahM37/agentdeck/internal/shellq"
+	"github.com/JeremiahM37/agentdeck/internal/worktree"
 )
 
 //go:embed scripts/review.py
@@ -23,6 +26,31 @@ func (s *Server) terminalChanges(w http.ResponseWriter, r *http.Request) {
 	if err != nil || !path.IsAbs(dir) {
 		httpError(w, 409, "workspace unavailable")
 		return
+	}
+	var repositories []map[string]any
+	selected := 0
+	if strings.TrimSuffix(r.PathValue("kind"), "-shell") == "session" {
+		id, _ := strconv.ParseInt(r.PathValue("id"), 10, 64)
+		if row, loadErr := s.DB.Session(id); loadErr == nil {
+			var workspace worktree.Interactive
+			if json.Unmarshal([]byte(row.WorktreeJSON), &workspace) == nil && len(workspace.Repositories) > 0 {
+				if choice := r.URL.Query().Get("repository"); choice != "" {
+					selected, err = strconv.Atoi(choice)
+				}
+				if err != nil || selected < 0 || selected >= len(workspace.Repositories) {
+					httpError(w, 400, "choose a repository in this workspace")
+					return
+				}
+				for index, repo := range workspace.Repositories {
+					if repo.Worktree == nil {
+						httpError(w, 409, "workspace repository record is unavailable")
+						return
+					}
+					repositories = append(repositories, map[string]any{"id": index, "name": repo.Name, "path": repo.Worktree.Path, "state": repo.Worktree.State})
+				}
+				dir = workspace.Repositories[selected].Worktree.Path
+			}
+		}
 	}
 	ex, err := s.Reg.For(target)
 	if err != nil {
@@ -54,5 +82,9 @@ func (s *Server) terminalChanges(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Cache-Control", "no-store")
+	if len(repositories) > 0 {
+		out["repositories"], _ = json.Marshal(repositories)
+		out["selected_repository"], _ = json.Marshal(selected)
+	}
 	writeJSON(w, 200, out)
 }

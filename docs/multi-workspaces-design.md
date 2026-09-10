@@ -1,7 +1,9 @@
 # Multi-repository workspace implementation plan
 
-This is an internal staging design. Multi-repository UI and API selection are
-not available yet. The planner, target validation and grouped creation/removal
+This is an internal staging design. Multi-repository UI selection is not available yet. Session creation accepts
+`worktree.extra_repositories` entries with `project_id` and optional `base`.
+A primary project is required; all projects must use the same target, and a
+working-directory override is rejected for grouped creation. The planner, target validation and grouped creation/removal
 worker exist, with real Git tests for successful/partial creation, all-repository
 cleanup preflight and supervisor death during checkout. This branch is not deployed.
 
@@ -68,3 +70,24 @@ metadata replacement/corruption handling, concurrent launch/removal attempts,
 partial removal and full API/native-continuation/browser/PTY integration. The
 120-second caller deadline also needs a deliberate asynchronous lifecycle for
 slow multi-repository setup; cancellation safety alone is not a usable progress UI.
+
+## Session API integration
+
+The manager resolves project selections before inserting a session, validates the
+plan on its target, persists it, and then runs grouped creation. Failed creation
+retains its session and child receipts; failed cleanup also saves partial progress.
+The primary project remains the source of agent/environment configuration.
+Additional repositories do not silently merge their launch settings.
+
+`GET /api/term/session/{id}/changes?repository=N` selects a recorded repository by
+zero-based index. Grouped responses include `repositories` and
+`selected_repository`; an omitted selection defaults to the primary repository.
+The server resolves paths from the saved allocation, never from a client path.
+Browser and TUI repository selectors still need wiring before rollout.
+
+A real API/Git/tmux lifecycle test creates both repositories, reviews a change in
+the second without mixing the first, rejects out-of-range selections, protects an
+active session, removes ended worktrees, rejects duplicate/mixed-target projects
+without inserting sessions, and recovers a failed second checkout after its
+untracked artifact is explicitly removed. Public child ownership tokens are
+redacted. This is staging evidence, not deployed multi-repository functionality.

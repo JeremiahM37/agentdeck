@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -64,5 +65,132 @@ func TestInteractiveSessionWorktreeLifecycle(t *testing.T) {
 	h.decode("GET", "/api/sessions?all=true", nil, 200, &all)
 	if len(all) != 2 {
 		t.Fatalf("allocation lost or invalid request created a session: %v", all)
+	}
+}
+
+func TestMultiRepositorySessionLifecycle(t *testing.T) {
+	requireRealTools(t)
+	isolateTmux(t)
+	h := newHarness(t, func(c *config.Config) { c.Mock = false })
+	target, _ := h.App.DB.InsertTarget(&store.Target{Name: "group local", Kind: "local"})
+	other, _ := h.App.DB.InsertTarget(&store.Target{Name: "other local", Kind: "local"})
+	h.decode("PUT", "/api/agents", []obj{{"name": "group-test", "command": "sleep 600"}}, 200, nil)
+	var projects []*store.Project
+	for i := 0; i < 2; i++ {
+		repo := t.TempDir()
+		git := func(args ...string) {
+			t.Helper()
+			out, err := exec.Command("git", append([]string{"-C", repo}, args...)...).CombinedOutput()
+			if err != nil {
+				t.Fatalf("git: %s", out)
+			}
+		}
+		git("init", "-q")
+		os.WriteFile(filepath.Join(repo, "file"), []byte("base"), 0600)
+		git("add", ".")
+		git("-c", "user.name=Test", "-c", "user.email=test@example.invalid", "commit", "-qm", "base")
+		p, err := h.App.DB.InsertProject(&store.Project{Name: fmt.Sprintf("repo%d", i), TargetID: target.ID, RepoPath: repo})
+		if err != nil {
+			t.Fatal(err)
+		}
+		projects = append(projects, p)
+	}
+	input := obj{"name": "grouped", "agent": "group-test", "project_id": projects[0].ID, "worktree": obj{"extra_repositories": []obj{{"project_id": projects[1].ID}}}, "yolo": false}
+	var row obj
+	h.decode("POST", "/api/sessions", input, 201, &row)
+	ws := row["workspace"].(map[string]any)
+	dir := ws["path"].(string)
+	if row["workdir"] != dir || ws["token"] != nil {
+		t.Fatal("group root or public ownership is incorrect")
+	}
+	repositories := ws["repositories"].([]any)
+	if len(repositories) != 2 {
+		t.Fatal("missing repositories")
+	}
+	for _, r := range repositories {
+		child := r.(map[string]any)["worktree"].(map[string]any)
+		if child["token"] != nil {
+			t.Fatal("child token exposed")
+		}
+		if _, err := os.Stat(filepath.Join(child["path"].(string), "file")); err != nil {
+			t.Fatal(err)
+		}
+	}
+	base := fmt.Sprintf("/api/sessions/%d", int64(row.num("id")))
+	if len(repositories) != 2 {
+		t.Fatal("missing grouped review choices")
+	}
+	secondPath := repositories[1].(map[string]any)["worktree"].(map[string]any)["path"].(string)
+	if err := os.WriteFile(filepath.Join(secondPath, "file"), []byte("second repository change\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	reviewURL := fmt.Sprintf("/api/term/session/%d/changes", int64(row.num("id")))
+	var changes obj
+	h.decode("GET", reviewURL+"?repository=1&path=file", nil, 200, &changes)
+	if changes.num("selected_repository") != 1 || !strings.Contains(changes.str("patch"), "second repository change") {
+		t.Fatal("review did not use selected repository")
+	}
+	h.decode("GET", reviewURL+"?repository=0", nil, 200, &changes)
+	if strings.Contains(changes.str("patch"), "second repository change") {
+		t.Fatal("review mixed repository files")
+	}
+	h.decode("GET", reviewURL+"?repository=2", nil, 400, nil)
+	h.decode("GET", reviewURL+"?repository=../outside", nil, 400, nil)
+	if err := os.WriteFile(filepath.Join(secondPath, "file"), []byte("base"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	h.decode("DELETE", base+"/worktree", nil, 409, nil)
+	h.decode("DELETE", base, nil, 200, nil)
+	h.decode("DELETE", base+"/worktree", nil, 200, &row)
+	if row["workspace"].(map[string]any)["state"] != "removed" {
+		t.Fatal("removal not persisted")
+	}
+	// Selection errors occur before a session is inserted, including an explicitly
+	// mismatched target and selecting the primary repository twice.
+	var before, after []obj
+	h.decode("GET", "/api/sessions?all=true", nil, 200, &before)
+	input["target_id"] = other.ID
+	h.decode("POST", "/api/sessions", input, 409, nil)
+	input["target_id"] = target.ID
+	input["worktree"] = obj{"extra_repositories": []obj{{"project_id": projects[0].ID}}}
+	h.decode("POST", "/api/sessions", input, 409, nil)
+	h.decode("GET", "/api/sessions?all=true", nil, 200, &after)
+	if len(after) != len(before) {
+		t.Fatal("invalid selection inserted a session")
+	}
+	hook := filepath.Join(projects[1].RepoPath, ".git/hooks/post-checkout")
+	if err := os.WriteFile(hook, []byte("#!/bin/sh\nprintf keep > setup-artifact\necho grouped-hook-failure >&2\nexit 1\n"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	input["worktree"] = obj{"extra_repositories": []obj{{"project_id": projects[1].ID}}}
+	h.decode("POST", "/api/sessions", input, 409, nil)
+	h.decode("GET", "/api/sessions?all=true", nil, 200, &after)
+	if len(after) != len(before)+1 {
+		t.Fatal("failed allocation was not retained")
+	}
+	var failed obj
+	for _, candidate := range after {
+		workspace, ok := candidate["workspace"].(map[string]any)
+		if ok && workspace["state"] == "failed" {
+			failed = candidate
+		}
+	}
+	if failed == nil {
+		t.Fatal("failed grouped workspace state was lost")
+	}
+	failedWS := failed["workspace"].(map[string]any)
+	children := failedWS["repositories"].([]any)
+	last := children[1].(map[string]any)["worktree"].(map[string]any)
+	if last["token"] != nil || last["state"] != "failed" {
+		t.Fatal("failed child receipt or token redaction incorrect")
+	}
+	failedBase := fmt.Sprintf("/api/sessions/%d", int64(failed.num("id")))
+	h.decode("DELETE", failedBase+"/worktree", nil, 409, nil)
+	if err := os.Remove(filepath.Join(last["path"].(string), "setup-artifact")); err != nil {
+		t.Fatal(err)
+	}
+	h.decode("DELETE", failedBase+"/worktree", nil, 200, &row)
+	if row["workspace"].(map[string]any)["state"] != "removed" {
+		t.Fatal("failed grouped workspace could not be recovered through API")
 	}
 }

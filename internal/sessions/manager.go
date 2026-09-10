@@ -125,6 +125,10 @@ func (m *Manager) Launch(ctx context.Context, o LaunchOpts) (*store.Session, err
 	if o.Worktree != nil && (o.Scratch || o.Resume || o.ResumeID != "" || o.ReservedID != 0) {
 		return nil, fmt.Errorf("an isolated worktree supports fresh context or a conversation fork; it cannot resume an existing conversation")
 	}
+	workspaceSources, err := m.workspaceSources(o)
+	if err != nil {
+		return nil, err
+	}
 	agent := o.Agent
 	if agent == "" {
 		agent = "claude"
@@ -198,12 +202,24 @@ func (m *Manager) Launch(ctx context.Context, o LaunchOpts) (*store.Session, err
 			return nil, fmt.Errorf("worktree source must be an existing Git working directory")
 		}
 		plan := worktree.PlanInteractive(strings.TrimSpace(root.Stdout), sess.ID, *o.Worktree)
+		if len(workspaceSources) > 0 {
+			workspaceSources[0].Repo = strings.TrimSpace(root.Stdout)
+			plan, err = worktree.PlanMultiWorkspace(workspaceSources, sess.ID, *o.Worktree)
+			if err == nil {
+				err = worktree.RunInteractive(ctx, ex, "check-create", plan)
+			}
+			if err != nil {
+				m.end(sess.ID, StatusDead)
+				return nil, err
+			}
+		}
 		if err := m.DB.Update("sessions", sess.ID, map[string]any{"worktree_json": store.J(plan)}); err != nil {
 			m.end(sess.ID, StatusDead)
 			return nil, err
 		}
 		if err := worktree.RunInteractive(ctx, ex, "create", plan); err != nil {
 			plan.State = "failed"
+			plan.Error = err.Error()
 			m.DB.Update("sessions", sess.ID, map[string]any{"worktree_json": store.J(plan)})
 			m.end(sess.ID, StatusDead)
 			return nil, fmt.Errorf("session %d worktree: %w (allocation retained in ended sessions)", sess.ID, err)
