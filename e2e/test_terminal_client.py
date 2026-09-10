@@ -84,7 +84,7 @@ def test_menu_and_direct_attach_use_portable_term(real_terminal,tmp_path):
       'PATH':str(tools)+':'+os.environ['PATH'],'TERM':'xterm-kitty','TERM_RECEIPT':str(receipt)}
     for menu in [False,True]:
         master,slave=pty.openpty()
-        child=subprocess.Popen([_binary(),*(['console'] if menu else ['attach','session',str(t['id'])])],
+        child=subprocess.Popen([_binary(),*(['console','--plain'] if menu else ['attach','session',str(t['id'])])],
           stdin=slave,stdout=slave,stderr=slave,env=env,start_new_session=True)
         os.close(slave)
         output=b''

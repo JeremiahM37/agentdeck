@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"golang.org/x/term"
 	"io"
 	"net/url"
 	"os"
@@ -17,8 +18,10 @@ import (
 
 const clientHelp = `AgentDeck — web and terminal control
 
-  agentdeck                         Start the server
-  agentdeck console                 Interactive terminal management
+  agentdeck                         Open the dashboard in an interactive terminal
+  agentdeck serve                   Start the control-plane server
+  agentdeck console                 Live terminal dashboard (also: tui)
+  agentdeck console --plain         Line-oriented menu for pipes / accessibility
   agentdeck attach KIND ID          Join tmux (Ctrl-b d returns to console)
   agentdeck api METHOD /path [JSON|@file|-]
   agentdeck upload KIND ID FILE     Add a local file as agent context
@@ -52,7 +55,7 @@ func clientCommand(cfg *config.Config, command string, args []string) error {
 	var err error
 	switch command {
 	case "console", "tui":
-		return console.NewUI(c, os.Stdin, os.Stdout, func(kind, id string) error {
+		attachClient := func(kind, id string) error {
 			argv, e := attachmentCommand(cfg, []string{kind, id})
 			if e != nil {
 				return e
@@ -62,7 +65,14 @@ func clientCommand(cfg *config.Config, command string, args []string) error {
 			cmd.Stdout = os.Stdout
 			cmd.Stderr = os.Stderr
 			return cmd.Run()
-		}).Run()
+		}
+		if len(args) > 0 && (len(args) != 1 || args[0] != "--plain") {
+			return fmt.Errorf("usage: agentdeck console [--plain]")
+		}
+		if len(args) == 0 && interactiveTerminal() {
+			return console.RunDashboard(c, os.Stdin, os.Stdout, attachClient)
+		}
+		return console.NewUI(c, os.Stdin, os.Stdout, attachClient).Run()
 	case "api":
 		if len(args) < 2 || len(args) > 3 {
 			return fmt.Errorf("usage: agentdeck api METHOD /path [JSON|@file|-]")
@@ -143,4 +153,8 @@ func validateTerminal(args []string, task bool) error {
 		return fmt.Errorf("invalid terminal ID")
 	}
 	return nil
+}
+
+func interactiveTerminal() bool {
+	return term.IsTerminal(int(os.Stdin.Fd())) && term.IsTerminal(int(os.Stdout.Fd()))
 }

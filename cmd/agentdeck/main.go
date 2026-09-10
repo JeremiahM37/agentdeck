@@ -32,6 +32,13 @@ func main() {
 	slog.SetDefault(log)
 
 	cfg := config.Load()
+	if len(os.Args) == 1 && interactiveTerminal() {
+		if err := clientCommand(cfg, "console", nil); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		return
+	}
 
 	if len(os.Args) > 1 {
 		switch os.Args[1] {
@@ -41,6 +48,11 @@ func main() {
 				os.Exit(1)
 			}
 			return
+		case "serve":
+			if len(os.Args) != 2 {
+				fmt.Fprintln(os.Stderr, "usage: agentdeck serve")
+				os.Exit(2)
+			}
 		case "attach":
 			if err := attach(cfg, os.Args[2:]); err != nil {
 				fmt.Fprintln(os.Stderr, err)

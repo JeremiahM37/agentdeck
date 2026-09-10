@@ -4,14 +4,14 @@
 
 ```bash
 go build ./...                                     # Go 1.25+
-pip install pytest playwright && playwright install chromium   # for the e2e suite
+pip install pytest playwright pyte==0.8.2 && playwright install chromium   # for the e2e suite
 ```
 
 ## Running
 
 ```bash
-AGENTDECK_MOCK=1 go run ./cmd/agentdeck    # fake agents, no infra needed
-go run ./cmd/agentdeck                     # real: needs ssh/git/tmux/claude on targets
+AGENTDECK_MOCK=1 go run ./cmd/agentdeck serve    # fake agents, no infra needed
+go run ./cmd/agentdeck serve               # real: needs ssh/git/tmux/claude on targets
 ```
 
 ## Tests

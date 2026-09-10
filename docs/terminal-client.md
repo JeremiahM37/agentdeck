@@ -1,15 +1,36 @@
 # Use AgentDeck from a terminal
 
-The server binary includes a terminal client. On the server, run:
+Run `agentdeck` in an interactive terminal, or `agentdeck console`, for the live
+dashboard. It opens on Sessions, groups by project, and refreshes automatically.
+Use `agentdeck serve` to start the server explicitly. Existing systemd/container
+launches with no arguments and no terminal still start the server.
 
-```sh
-agentdeck console
-```
+| Keys | Action |
+| --- | --- |
+| ↑/↓ or j/k | Select a session, task, routine, project, target or approval |
+| Enter | Attach; Ctrl-b then d returns to the same selection |
+| / | Fuzzy search names, projects, targets, agent names and paths |
+| @ / ! / # / & at start of search | Waiting / running / idle / failed |
+| 1–6, ←/→ | Switch sections |
+| g / w | Group by project or target / show items needing attention |
+| Tab / p, PgUp/PgDn | Focus and scroll the preview |
+| n / e / m | Create / rename / all actions |
+| h / v / u | Read retained history / review a task diff / upload context |
+| f | Find running agents and add one to tracking by name |
+| 7 / 8 / 9 | Settings / usage / full API |
+| ? / q | Help / quit without stopping agents |
 
-Choose Sessions, Tasks, Routines, Projects, Targets, Approvals, Notifications,
-or Usage. Select an ID for actions. Attach enters the real tmux session;
-Ctrl-b followed by d detaches and returns to the menu. A routine's running task
-has a `takeover` action that creates an interactive session from that attempt.
+The wide layout shows a live preview beside the list. Narrow terminals keep one
+focused pane visible; Tab switches between the list and preview. Forms use named
+project/target choices, accept multiline prompts, and keep your draft after an
+API error. Tab changes fields, arrows choose options, Ctrl-s submits, Esc cancels.
+Task creation can dispatch into an isolated worktree; Tasks → Actions also offers
+routine takeover, follow-up, diff review, completion and cancellation.
+
+`agentdeck console --plain` retains the line-oriented menu. Redirected input or
+output selects it automatically, so scripts keep working. The JSON API commands
+below are unchanged. The TUI polls the existing API; it does not run another
+agent collector or maintain a second session database.
 
 ## Install on another Linux machine
 
@@ -32,7 +53,7 @@ For Windows, download `/desktop/install-agentdeck-cli.ps1` and run it with
 management runs on the server. `agentdeck upload` stages local files over SCP.
 The native Windows launcher requires OpenSSH, with your existing host/key setup.
 
-Kitty and WezTerm are optional; this client works in a normal terminal. The
+This client works in your existing terminal. The
 separate desktop URI installers enable opening an attachment from the web UI.
 
 ## Scripting and context files

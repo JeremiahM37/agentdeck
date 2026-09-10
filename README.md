@@ -360,3 +360,13 @@ agentdeck attach session 4
 [Client installation and commands](docs/terminal-client.md) ·
 [Workspace navigation](docs/workspace-ui.md) ·
 [Routine takeover](docs/routine-takeover.md)
+
+### Terminal dashboard
+
+Run `agentdeck` in a terminal for a live session dashboard with project/target
+groups, fuzzy search, status filters, previews, one-key attachment, and keyboard
+forms. Tasks, routines, targets, approvals, context uploads and worktree diff
+review are available without opening the browser. Ctrl-b then d returns from an
+attached session. Use `agentdeck serve` to run the server explicitly, or
+`agentdeck console --plain` for the line-oriented client.
+See [terminal client](docs/terminal-client.md) for installation and shortcuts.

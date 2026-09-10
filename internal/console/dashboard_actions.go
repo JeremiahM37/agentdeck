@@ -1,0 +1,602 @@
+package console
+
+import (
+	"encoding/json"
+	"fmt"
+	"strconv"
+	"strings"
+
+	"github.com/charmbracelet/bubbles/textarea"
+	tea "github.com/charmbracelet/bubbletea"
+)
+
+type choice struct{ Label, Value string }
+type field struct {
+	Key, Label, Value   string
+	Options             []choice
+	Multiline, Required bool
+}
+type dashboardForm struct {
+	title  string
+	fields []field
+	index  int
+	editor textarea.Model
+	submit func(map[string]any) tea.Cmd
+}
+type dashboardAction struct {
+	Label, Method, Path, Operation, Warning string
+	Body                                    any
+}
+type loadedFormMsg struct {
+	title, method, path string
+	data                []byte
+	err                 error
+}
+type discoveredMsg struct {
+	rows []row
+	err  error
+}
+
+func (m *dashboard) request(label, method, path string, body any, preview bool) tea.Cmd {
+	if m.busy {
+		return nil
+	}
+	m.busy = true
+	c, key := m.client, m.key()
+	return func() tea.Msg { b, e := c.JSON(method, path, body); return resultMsg{label, b, e, preview, key} }
+}
+func (m *dashboard) execute(a dashboardAction) tea.Cmd {
+	return m.request(a.Label, a.Method, a.Path, a.Body, false)
+}
+func (m *dashboard) choose(a dashboardAction) tea.Cmd {
+	if a.Warning != "" {
+		m.pending = &a
+		return nil
+	}
+	switch a.Operation {
+	case "attach":
+		return m.attachSelected(false)
+	case "shell":
+		return m.attachSelected(true)
+	case "rename":
+		return m.renameForm()
+	case "edit":
+		return m.editForm()
+	case "send":
+		return m.sendForm()
+	case "upload":
+		return m.uploadForm()
+	case "history":
+		return m.readDetail("History")
+	case "diff":
+		return m.readDetail("Diff")
+	case "files":
+		return m.readResource("Files", "/term/"+strings.TrimSuffix(sections[m.section], "s")+"/"+id(m.current())+"/files")
+	case "followup":
+		return m.messageAction("Request changes", "/tasks/"+id(m.current())+"/followup", "feedback")
+	case "commit":
+		return m.messageAction("Commit task changes", "/tasks/"+id(m.current())+"/commit", "message")
+	case "handoff":
+		return m.request("Request handoff", "POST", "/sessions/"+id(m.current())+"/handoff", map[string]any{}, false)
+	}
+	if a.Method == "GET" {
+		return m.readResource(a.Label, a.Path)
+	}
+	return m.execute(a)
+}
+func (m *dashboard) actions() []dashboardAction {
+	r := m.current()
+	if r == nil {
+		return nil
+	}
+	kind := sections[m.section]
+	path := "/" + kind + "/" + id(r)
+	op := func(label, operation string) dashboardAction {
+		return dashboardAction{Label: label, Operation: operation}
+	}
+	post := func(label, suffix string) dashboardAction {
+		return dashboardAction{Label: label, Method: "POST", Path: path + suffix, Body: map[string]any{}}
+	}
+	read := func(label, suffix string) dashboardAction {
+		return dashboardAction{Label: label, Method: "GET", Path: path + suffix}
+	}
+	var actions []dashboardAction
+	switch kind {
+	case "sessions":
+		actions = []dashboardAction{op("Attach", "attach"), op("Companion shell", "shell"), op("Send message", "send"), op("Upload context file", "upload"), op("Read history", "history"), op("Browse files", "files"), op("Rename", "rename"), op("Edit advanced fields", "edit"), op("Request handoff", "handoff"), read("Handoff summaries", "/wraps")}
+		actions = append(actions, dashboardAction{Label: "Interrupt agent", Method: "POST", Path: path + "/send", Body: map[string]any{"key": "C-c"}, Warning: "Send Ctrl-c to this session's current command?"})
+	case "tasks":
+		actions = []dashboardAction{op("Attach to attempt", "attach"), op("Companion shell", "shell"), op("Send message", "send"), op("Upload context file", "upload"), op("Review diff", "diff"), read("Messages", "/messages"), read("Events", "/events"), post("Dispatch in worktree", "/dispatch"), post("Take over as interactive session", "/takeover"), op("Request changes", "followup"), op("Commit changes", "commit"), post("Mark complete", "/complete"), op("Edit task", "edit")}
+		cancel := post("Cancel task", "/cancel")
+		cancel.Warning = "Stop this task's active attempt?"
+		actions = append(actions, cancel)
+	case "routines":
+		actions = []dashboardAction{post("Run now", "/run"), {Label: "Enable schedule", Method: "PATCH", Path: path, Body: map[string]any{"enabled": true}}, {Label: "Disable schedule", Method: "PATCH", Path: path, Body: map[string]any{"enabled": false}}, op("Rename", "rename"), op("Edit routine", "edit")}
+	case "projects":
+		actions = []dashboardAction{op("Open project shell", "attach"), read("Project brief", "/brief"), read("Notes", "/notes"), read("Handoffs", "/wraps"), read("Capabilities", "/capability"), op("Rename", "rename"), op("Edit project", "edit")}
+	case "targets":
+		actions = []dashboardAction{post("Check connection", "/check"), op("Rename", "rename"), op("Edit target", "edit")}
+	case "approvals":
+		actions = []dashboardAction{{Label: "Approve", Method: "POST", Path: path + "/decision", Body: map[string]any{"decision": "approved"}, Warning: "Allow the selected pending tool request?"}, {Label: "Deny", Method: "POST", Path: path + "/decision", Body: map[string]any{"decision": "denied"}}}
+	}
+	if kind != "approvals" {
+		warning := "Delete this " + strings.TrimSuffix(kind, "s") + "?"
+		label := "Delete"
+		if kind == "sessions" {
+			if str(r["origin"]) == "discovered" {
+				label = "Stop tracking (leave running)"
+				warning = "Remove this adopted session from tracking? It keeps running and can be found again with f."
+			} else {
+				label = "End session"
+				warning = "Stop this AgentDeck-owned session and remove it from tracking?"
+			}
+		}
+		actions = append(actions, dashboardAction{Label: label, Method: "DELETE", Path: path, Warning: warning})
+	}
+	return actions
+}
+func (m *dashboard) openForm(title string, fields []field, submit func(map[string]any) tea.Cmd) tea.Cmd {
+	if len(fields) == 0 {
+		return nil
+	}
+	e := textarea.New()
+	e.ShowLineNumbers = false
+	e.Prompt = "│ "
+	e.CharLimit = 100000
+	e.SetWidth(max(10, m.width-10))
+	e.SetHeight(5)
+	m.form = &dashboardForm{title: title, fields: fields, editor: e, submit: submit}
+	m.notice = ""
+	return m.focusField()
+}
+func (m *dashboard) focusField() tea.Cmd {
+	f := m.form
+	current := f.fields[f.index]
+	f.editor.SetValue(current.Value)
+	if current.Multiline {
+		f.editor.SetHeight(max(3, min(7, m.height-16)))
+	} else {
+		f.editor.SetHeight(1)
+	}
+	if len(current.Options) > 0 {
+		f.editor.Blur()
+		return nil
+	}
+	return f.editor.Focus()
+}
+func (m *dashboard) saveField() {
+	f := m.form
+	if len(f.fields[f.index].Options) == 0 {
+		f.fields[f.index].Value = f.editor.Value()
+	}
+}
+func (m *dashboard) updateForm(msg tea.KeyMsg) tea.Cmd {
+	f := m.form
+	if m.busy {
+		if msg.String() == "esc" {
+			m.notice = "Waiting for the current request; your fields are preserved."
+		}
+		return nil
+	}
+	switch msg.String() {
+	case "esc":
+		m.form = nil
+		m.notice = "Cancelled"
+		return nil
+	case "ctrl+s":
+		m.saveField()
+		body, e := formBody(f.fields)
+		if e != nil {
+			m.notice = e.Error()
+			return nil
+		}
+		return f.submit(body)
+	case "tab", "shift+tab":
+		m.saveField()
+		delta := 1
+		if msg.String() == "shift+tab" {
+			delta = -1
+		}
+		f.index = (f.index + delta + len(f.fields)) % len(f.fields)
+		return m.focusField()
+	case "enter":
+		if !f.fields[f.index].Multiline {
+			m.saveField()
+			f.index = (f.index + 1) % len(f.fields)
+			return m.focusField()
+		}
+	}
+	current := &f.fields[f.index]
+	if len(current.Options) > 0 {
+		delta := 0
+		switch msg.String() {
+		case "left", "up", "k":
+			delta = -1
+		case "right", "down", "j", " ":
+			delta = 1
+		}
+		if delta != 0 {
+			i := 0
+			for n, c := range current.Options {
+				if c.Value == current.Value {
+					i = n
+					break
+				}
+			}
+			current.Value = current.Options[(i+delta+len(current.Options))%len(current.Options)].Value
+		}
+		return nil
+	}
+	var cmd tea.Cmd
+	f.editor, cmd = f.editor.Update(msg)
+	return cmd
+}
+func formBody(fields []field) (map[string]any, error) {
+	out := map[string]any{}
+	for _, f := range fields {
+		v := f.Value
+		if !f.Multiline {
+			v = strings.TrimSpace(v)
+		}
+		if f.Required && strings.TrimSpace(v) == "" {
+			return nil, fmt.Errorf("%s is required", f.Label)
+		}
+		if v == "" {
+			continue
+		}
+		switch {
+		case strings.HasSuffix(f.Key, "_id") || f.Key == "port" || f.Key == "max_concurrent":
+			n, e := strconv.ParseInt(v, 10, 64)
+			if e != nil || n <= 0 {
+				return nil, fmt.Errorf("Choose a valid %s", f.Label)
+			}
+			out[f.Key] = n
+		case f.Key == "project_ids":
+			n, e := strconv.ParseInt(v, 10, 64)
+			if e != nil || n <= 0 {
+				return nil, fmt.Errorf("Choose a project")
+			}
+			out[f.Key] = []int64{n}
+		case f.Key == "resume" || f.Key == "brief" || f.Key == "yolo" || f.Key == "enabled" || f.Key == "dispatch":
+			out[f.Key] = v == "true"
+		default:
+			out[f.Key] = v
+		}
+	}
+	return out, nil
+}
+func (m *dashboard) formView() string {
+	f := m.form
+	lines := []string{accent.Bold(true).Render(" " + f.title), muted.Render(" Tab next · ←/→ choose · Ctrl-s submit · Esc cancel"), ""}
+	start := max(0, f.index-max(1, m.height-17))
+	for i := start; i < len(f.fields) && len(lines) < max(5, m.height-12); i++ {
+		v := f.fields[i]
+		value := v.Value
+		for _, c := range v.Options {
+			if c.Value == value {
+				value = c.Label
+				break
+			}
+		}
+		if value == "" {
+			value = "—"
+		}
+		line := "  " + v.Label + ": " + oneLine(value)
+		if i == f.index {
+			line = chosen.Render("› " + v.Label + ": " + oneLine(value))
+		}
+		lines = append(lines, clip(line, m.width-4))
+	}
+	current := f.fields[f.index]
+	lines = append(lines, "", accent.Render(" "+current.Label))
+	if len(current.Options) > 0 {
+		var opts []string
+		for _, c := range current.Options {
+			label := c.Label
+			if c.Value == current.Value {
+				label = "[" + label + "]"
+			}
+			opts = append(opts, label)
+		}
+		lines = append(lines, " ← "+strings.Join(opts, " · ")+" →")
+	} else {
+		lines = append(lines, f.editor.View())
+	}
+	return strings.Join(lines, "\n")
+}
+func options(rows []row, blank string) []choice {
+	out := []choice{}
+	if blank != "" {
+		out = append(out, choice{blank, ""})
+	}
+	for _, r := range rows {
+		out = append(out, choice{name(r), id(r)})
+	}
+	return out
+}
+func optionField(key, label, value string, opts []choice, required bool) field {
+	if value == "" && required && len(opts) > 0 {
+		value = opts[0].Value
+	}
+	return field{Key: key, Label: label, Value: value, Options: opts, Required: required}
+}
+func boolField(key, label string, def bool) field {
+	return optionField(key, label, strconv.FormatBool(def), []choice{{"No", "false"}, {"Yes", "true"}}, false)
+}
+func (m *dashboard) newForm() tea.Cmd {
+	kind := sections[m.section]
+	r := m.current()
+	project := str(r["project_id"])
+	target := str(r["target_id"])
+	if kind == "approvals" {
+		m.notice = "Approvals are created by agents when they need a decision."
+		return nil
+	}
+	projects := options(m.projects, "Scratch / no project")
+	targets := options(m.targets, "Server default")
+	agents := []choice{}
+	for _, a := range m.agents {
+		value := str(a["id"])
+		if value == "" {
+			value = str(a["name"])
+		}
+		agents = append(agents, choice{value, value})
+	}
+	if len(agents) == 0 {
+		agents = []choice{{"Codex", "codex"}, {"Claude", "claude"}}
+	}
+	agent := optionField("agent", "Agent", "codex", agents, true)
+	var fields []field
+	switch kind {
+	case "sessions":
+		fields = []field{{Key: "name", Label: "Session name", Required: true}, optionField("project_id", "Project", project, projects, false), optionField("target_id", "Target", target, targets, false), agent, {Key: "model", Label: "Model (blank uses default)"}, {Key: "workdir", Label: "Directory (blank uses project or scratch)"}, {Key: "prime", Label: "Initial prompt", Multiline: true}, boolField("resume", "Resume latest conversation", false), boolField("brief", "Include project brief", true), boolField("yolo", "Skip agent permission prompts", false)}
+	case "tasks":
+		fields = []field{{Key: "title", Label: "Task title", Required: true}, optionField("project_id", "Project", project, options(m.projects, ""), true), {Key: "prompt", Label: "Task prompt", Multiline: true, Required: true}, agent, {Key: "model", Label: "Model"}, {Key: "base_branch", Label: "Base branch (blank uses project default)"}, boolField("dispatch", "Dispatch now in an isolated worktree", true)}
+	case "routines":
+		fields = []field{{Key: "name", Label: "Routine name", Required: true}, optionField("project_ids", "Project", "", options(m.projects, ""), true), {Key: "prompt", Label: "Prompt", Multiline: true, Required: true}, {Key: "schedule", Label: "Schedule (blank for manual)"}, agent, boolField("dispatch", "Dispatch generated tasks", true)}
+	case "projects":
+		fields = []field{{Key: "name", Label: "Project name", Required: true}, optionField("target_id", "Target", target, options(m.targets, ""), true), {Key: "repo_path", Label: "Repository path", Required: true}, {Key: "default_base_branch", Label: "Base branch", Value: "main"}}
+	case "targets":
+		fields = []field{{Key: "name", Label: "Target name", Required: true}, optionField("kind", "Connection", "ssh", []choice{{"SSH", "ssh"}, {"Local", "local"}}, true), {Key: "host", Label: "Host / SSH alias"}, {Key: "user", Label: "SSH user"}, {Key: "port", Label: "SSH port", Value: "22"}, {Key: "key_path", Label: "SSH key path on server"}, {Key: "max_concurrent", Label: "Concurrent agents", Value: "4"}}
+	}
+	return m.openForm("New "+strings.TrimSuffix(kind, "s"), fields, func(body map[string]any) tea.Cmd {
+		if kind == "sessions" {
+			if body["project_id"] != nil {
+				delete(body, "target_id")
+			}
+			if body["project_id"] == nil && body["workdir"] == nil {
+				body["scratch"] = true
+			}
+		}
+		if kind == "tasks" && body["dispatch"] == true {
+			return m.createAndDispatch(body)
+		}
+		return m.request("Create "+strings.TrimSuffix(kind, "s"), "POST", "/"+kind, body, false)
+	})
+}
+func (m *dashboard) renameForm() tea.Cmd {
+	r := m.current()
+	if r == nil {
+		return nil
+	}
+	kind := sections[m.section]
+	if kind == "approvals" {
+		return nil
+	}
+	key := "name"
+	if kind == "tasks" {
+		key = "title"
+	}
+	path := "/" + kind + "/" + id(r)
+	return m.openForm("Rename", []field{{Key: key, Label: "Name", Value: name(r), Required: true}}, func(body map[string]any) tea.Cmd { return m.request("Rename", "PATCH", path, body, false) })
+}
+func (m *dashboard) messageAction(label, path, key string) tea.Cmd {
+	return m.openForm(label, []field{{Key: key, Label: label, Multiline: true, Required: true}}, func(body map[string]any) tea.Cmd { return m.request(label, "POST", path, body, false) })
+}
+func (m *dashboard) sendForm() tea.Cmd {
+	r := m.current()
+	if r == nil {
+		return nil
+	}
+	path := "/" + sections[m.section] + "/" + id(r)
+	if sections[m.section] == "sessions" {
+		path += "/send"
+	} else {
+		path += "/messages"
+	}
+	return m.messageAction("Send message", path, "text")
+}
+func (m *dashboard) uploadForm() tea.Cmd {
+	r := m.current()
+	kind := strings.TrimSuffix(sections[m.section], "s")
+	if r == nil || kind != "session" && kind != "task" {
+		m.notice = "Select a session or task to upload context."
+		return nil
+	}
+	rid := id(r)
+	return m.openForm("Upload context", []field{{Key: "file", Label: "Local file path", Required: true}}, func(body map[string]any) tea.Cmd {
+		if m.busy {
+			return nil
+		}
+		m.busy = true
+		c := m.client
+		path := str(body["file"])
+		return func() tea.Msg {
+			data, e := c.Upload(kind, rid, path)
+			label := "Upload"
+			if e == nil {
+				var v row
+				_ = json.Unmarshal(data, &v)
+				label = "Uploaded: " + str(v["path"])
+			}
+			return resultMsg{label: label, data: data, err: e}
+		}
+	})
+}
+func (m *dashboard) jsonForm(title, method, path string, value any) tea.Cmd {
+	return m.openForm(title, []field{{Key: "json", Label: "Changed fields (JSON)", Value: pretty(value), Multiline: true, Required: true}}, func(body map[string]any) tea.Cmd {
+		var data map[string]any
+		if e := json.Unmarshal([]byte(str(body["json"])), &data); e != nil {
+			m.notice = "Invalid JSON: " + e.Error()
+			return nil
+		}
+		return m.request(title, method, path, data, false)
+	})
+}
+func (m *dashboard) editForm() tea.Cmd {
+	if m.current() == nil {
+		return nil
+	}
+	return m.jsonForm("Edit fields", "PATCH", "/"+sections[m.section]+"/"+id(m.current()), map[string]any{})
+}
+func (m *dashboard) settingsForm() tea.Cmd {
+	if m.busy {
+		return nil
+	}
+	m.busy = true
+	c := m.client
+	return func() tea.Msg {
+		data, e := c.JSON("GET", "/settings", nil)
+		return loadedFormMsg{"Settings", "PUT", "/settings", data, e}
+	}
+}
+func (m *dashboard) apiForm() tea.Cmd {
+	return m.openForm("Full API", []field{optionField("method", "Method", "GET", []choice{{"GET", "GET"}, {"POST", "POST"}, {"PATCH", "PATCH"}, {"PUT", "PUT"}, {"DELETE", "DELETE"}}, true), {Key: "path", Label: "API path", Value: "/health", Required: true}, {Key: "json", Label: "JSON body", Value: "{}", Multiline: true}}, func(body map[string]any) tea.Cmd {
+		var payload any
+		if e := json.Unmarshal([]byte(str(body["json"])), &payload); e != nil {
+			m.notice = "Invalid JSON: " + e.Error()
+			return nil
+		}
+		method, path := str(body["method"]), str(body["path"])
+		if method == "GET" {
+			m.form = nil
+			return m.readResource("API result", path)
+		}
+		m.form = nil
+		m.pending = &dashboardAction{Label: method + " " + path, Method: method, Path: path, Body: payload, Warning: "Send this API request?\n" + pretty(payload)}
+		return nil
+	})
+}
+func (m *dashboard) readResource(label, path string) tea.Cmd {
+	return m.request(label, "GET", path, nil, true)
+}
+func (m *dashboard) readDetail(label string) tea.Cmd {
+	r := m.current()
+	if r == nil {
+		return nil
+	}
+	kind := sections[m.section]
+	if label == "Diff" {
+		if kind != "tasks" {
+			m.notice = "Diff review is available for task worktrees. Choose Tasks (2)."
+			return nil
+		}
+		return m.readResource(label, "/tasks/"+id(r)+"/diff")
+	}
+	terminalKind, rid := strings.TrimSuffix(kind, "s"), id(r)
+	if kind == "tasks" {
+		a, _ := r["attempt"].(map[string]any)
+		if a == nil {
+			m.notice = "No task attempt yet"
+			return nil
+		}
+		terminalKind = "attempt"
+		rid = id(row(a))
+	}
+	if kind != "sessions" && kind != "tasks" && kind != "projects" {
+		return nil
+	}
+	return m.readResource(label, "/term/"+terminalKind+"/"+rid+"/history?lines=1000")
+}
+func formatDetail(label string, data []byte) string {
+	var value any
+	if json.Unmarshal(data, &value) != nil {
+		return string(data)
+	}
+	if r, ok := value.(map[string]any); ok {
+		if s, ok := r["text"].(string); ok {
+			return s
+		}
+		if label == "Diff" {
+			var patches []string
+			if files, ok := r["files"].([]any); ok {
+				for _, v := range files {
+					if f, ok := v.(map[string]any); ok {
+						patches = append(patches, str(f["path"])+"\n"+str(f["patch"]))
+					}
+				}
+			}
+			if len(patches) > 0 {
+				return strings.Join(patches, "\n\n")
+			}
+			return "No changed files in the captured diff."
+		}
+	}
+	return pretty(value)
+}
+func (m *dashboard) discover() tea.Cmd {
+	if m.busy {
+		return nil
+	}
+	m.busy = true
+	c := m.client
+	return func() tea.Msg {
+		b, e := c.JSON("GET", "/sessions/discover", nil)
+		var rows []row
+		if e == nil {
+			e = json.Unmarshal(b, &rows)
+		}
+		return discoveredMsg{rows, e}
+	}
+}
+func (m *dashboard) adoptForm(rows []row) tea.Cmd {
+	choices := []choice{}
+	for i, r := range rows {
+		if r["tracked"] == true || r["adopted"] == true {
+			continue
+		}
+		label := str(r["tmux_session"]) + " · " + str(r["target_name"])
+		choices = append(choices, choice{label, strconv.Itoa(i)})
+	}
+	if len(choices) == 0 {
+		m.notice = "No untracked running agents found."
+		return nil
+	}
+	return m.openForm("Track running agent", []field{optionField("candidate", "Running session", choices[0].Value, choices, true), {Key: "name", Label: "Display name (optional)"}, optionField("project_id", "Project", "", options(m.projects, "Unassigned"), false)}, func(body map[string]any) tea.Cmd {
+		index, _ := strconv.Atoi(str(body["candidate"]))
+		r := rows[index]
+		delete(body, "candidate")
+		for _, k := range []string{"target_id", "tmux_session", "agent", "workdir"} {
+			if r[k] != nil {
+				body[k] = r[k]
+			}
+		}
+		return m.request("Track session", "POST", "/sessions/adopt", body, false)
+	})
+}
+
+// Creation is durable even if dispatch fails. Close the form and identify the
+// created card so retrying dispatch cannot accidentally create another task.
+func (m *dashboard) createAndDispatch(body map[string]any) tea.Cmd {
+	if m.busy {
+		return nil
+	}
+	m.busy = true
+	c := m.client
+	return func() tea.Msg {
+		data, e := c.JSON("POST", "/tasks", body)
+		if e != nil {
+			return resultMsg{err: e}
+		}
+		var task row
+		if e = json.Unmarshal(data, &task); e != nil {
+			return resultMsg{err: e}
+		}
+		_, e = c.JSON("POST", "/tasks/"+id(task)+"/dispatch", map[string]any{})
+		label := "Created and dispatched task " + id(task)
+		if e != nil {
+			label = "Created task " + id(task) + "; dispatch failed: " + e.Error() + ". Use Actions → Dispatch to retry"
+		}
+		return resultMsg{label: label, data: data}
+	}
+}
