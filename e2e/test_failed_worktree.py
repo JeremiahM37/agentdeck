@@ -16,12 +16,12 @@ def test_failed_checkout_hook_is_visible_and_safely_recoverable(page,real_termin
     page.locator('#sess-new').click();page.locator('#ns-name').fill('Failed setup proof');page.locator('#ns-worktree').check()
     page.locator('#ns-worktree-branch').fill('recoverable-setup')
     with page.expect_response(lambda r:r.request.method=='POST' and r.url.endswith('/sessions')) as response:page.locator('#ns-go').click()
-    assert response.value.status==409
-    expect(page.locator('#toasts')).to_contain_text('SETUP FAILURE SENTINEL')
-    expect(page.locator('#ns-name')).to_have_value('Failed setup proof')
-    page.locator('#sheet .x').click();page.locator('#sess-scope').select_option('all')
+    assert response.value.status==202
+    expect(page.locator('#ns-name')).not_to_be_visible()
     card=page.locator('.scard').filter(has=page.locator('.nm',has_text='Failed setup proof'))
-    expect(card).to_be_visible();card.locator('.session-worktree summary').click()
+    expect(card).to_be_visible();expect(card.locator('.spane')).to_contain_text('SETUP FAILURE SENTINEL',timeout=15000)
+    assert page.locator('#sess-scope').input_value()=='active'
+    card.locator('.session-worktree summary').click()
     expect(card.locator('.session-worktree')).to_contain_text('Setup error:')
     expect(card.locator('.session-worktree')).to_contain_text('SETUP FAILURE SENTINEL')
     rows=t['api']('/sessions?all=true');row=next(r for r in rows if r['name']=='Failed setup proof')

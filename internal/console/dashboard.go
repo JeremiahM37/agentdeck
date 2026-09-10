@@ -167,6 +167,7 @@ func (m *dashboard) refresh() tea.Cmd {
 	m.loading = true
 	m.generation++
 	section, generation, c := sections[m.section], m.generation, m.client
+	selected := m.selectionID()
 	path := "/" + section
 	if section == "approvals" {
 		path += "?status=pending"
@@ -176,6 +177,8 @@ func (m *dashboard) refresh() tea.Cmd {
 			path += "?archived=true"
 		} else if m.ended {
 			path += "?all=true"
+		} else {
+			path += "?include_setup_failures=true"
 		}
 	}
 	return func() tea.Msg {
@@ -183,6 +186,22 @@ func (m *dashboard) refresh() tea.Cmd {
 		r := rowsMsg{section: section, generation: generation, err: e}
 		if e == nil {
 			r.err = json.Unmarshal(b, &r.rows)
+			if section == "sessions" && r.err == nil {
+				for _, item := range r.rows {
+					ws, _ := item["workspace"].(map[string]any)
+					if id(item) == selected && item["setup_state"] == "creating" && ws["repositories"] != nil {
+						progress, err := c.JSON("GET", "/sessions/"+id(item)+"/worktree", nil)
+						if err == nil {
+							var current map[string]any
+							if json.Unmarshal(progress, &current) == nil {
+								item["workspace"] = current
+							}
+						} else {
+							item["setup_progress_error"] = err.Error()
+						}
+					}
+				}
+			}
 		}
 		return r
 	}
@@ -234,7 +253,7 @@ func (m *dashboard) filter() {
 	m.visible = nil
 	for _, r := range m.rows {
 		s := str(r["status"])
-		if m.attention && s != "waiting" && s != "review" && s != "pending" && s != "failed" {
+		if m.attention && s != "waiting" && s != "review" && s != "pending" && s != "failed" && r["setup_state"] != "failed" {
 			continue
 		}
 		if status != "" && s != status {
@@ -320,6 +339,24 @@ func (m *dashboard) updatePreview() {
 				content = "Worktree: " + str(ws["branch"]) + " · " + str(ws["state"]) + "\nBase: " + str(ws["base"]) + "\n\n" + content
 				if failure := str(ws["error"]); failure != "" {
 					content = "Setup error: " + failure + "\n\n" + content
+				}
+			}
+			if r["setup_state"] == "creating" {
+				content = "Setting up workspace…\nAttach becomes available when setup finishes.\n\n" + content
+			}
+			if failure := str(r["setup_error"]); failure != "" {
+				content = "Setup failed: " + failure + "\n\n" + content
+			}
+			if failure := str(r["setup_progress_error"]); failure != "" {
+				content += "\nProgress unavailable: " + failure
+			}
+			if ws, ok := r["workspace"].(map[string]any); ok {
+				if repos, ok := ws["repositories"].([]any); ok {
+					for _, value := range repos {
+						repo, _ := value.(map[string]any)
+						child, _ := repo["worktree"].(map[string]any)
+						content += "\n" + str(repo["name"]) + ": " + str(child["state"])
+					}
 				}
 			}
 		case "tasks":
@@ -459,6 +496,10 @@ func (m *dashboard) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.form = nil
 		m.pending = nil
 		m.notice = v.label + " completed"
+		var reserved row
+		if json.Unmarshal(v.data, &reserved) == nil && reserved["setup_state"] == "creating" {
+			m.notice = "Workspace setup started. Progress appears in the session preview."
+		}
 		return m, tea.Batch(m.refresh(), m.references())
 	case loadedFormMsg:
 		m.busy = false
@@ -734,6 +775,14 @@ func (m *dashboard) attachSelected(shell bool) tea.Cmd {
 	}
 	kind := strings.TrimSuffix(sections[m.section], "s")
 	rid := id(r)
+	if kind == "session" && r["setup_state"] == "creating" {
+		m.notice = "Workspace is setting up. Attach becomes available when setup finishes."
+		return nil
+	}
+	if kind == "session" && r["setup_state"] == "failed" {
+		m.notice = "Workspace setup failed. Inspect its error and retained files before launching again."
+		return nil
+	}
 	if kind == "session" && r["ended_at"] != nil {
 		m.menu = true
 		m.menuIndex = 0
@@ -930,6 +979,12 @@ func (m *dashboard) listView(height int) string {
 			continue
 		}
 		s := str(r["status"])
+		if r["setup_state"] == "creating" {
+			s = "setting up"
+		}
+		if r["setup_state"] == "failed" {
+			s = "setup failed"
+		}
 		if sections[m.section] == "routines" {
 			s = str(r["schedule"])
 			if r["enabled"] == false {
@@ -946,11 +1001,11 @@ func (m *dashboard) listView(height int) string {
 		}
 		color := "245"
 		switch s {
-		case "running", "starting":
+		case "running", "starting", "setting up":
 			color = "114"
 		case "waiting", "pending", "review":
 			color = "214"
-		case "failed", "dead":
+		case "failed", "dead", "setup failed":
 			color = "203"
 		}
 		meta := muted.Render("  "+m.group(r)+" · ") + lipgloss.NewStyle().Foreground(lipgloss.Color(color)).Render(s) + muted.Render(" · "+str(r["agent"]))

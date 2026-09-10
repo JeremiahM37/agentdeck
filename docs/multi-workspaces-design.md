@@ -44,8 +44,9 @@ redacted snapshot; `?format=text` returns a readable terminal view.
 
 The read validates allocation and lock ownership and never writes the receipt or
 session database. It reports the last recorded state, not a guarantee that an
-orphaned process is still running. Background creation, automatic polling, and
-long-running setup remain separate work; this endpoint supplies their status read.
+orphaned process is still running. During background creation, the browser refreshes
+per-repository progress automatically; the terminal refreshes the selected
+session's progress in its preview. Manual inspection remains available afterward.
 
 ## Background setup API
 
@@ -61,8 +62,20 @@ reservation whose controller worker is gone becomes an interrupted failure,
 even if its SSH target is unavailable. Allocation files remain for inspection.
 Stop, archive and removal refuse an active setup instead of falsely reporting it
 stopped while its worker continues. Explicit cancellation and restart recovery
-beyond inspection are still pending. Normal browser/TUI creation has not yet
-opted into this API; automatic progress and terminal-ready navigation remain next.
+beyond inspection are still pending. Normal browser and terminal isolated-session
+creation now use this API. The creation form closes once the reservation is
+accepted, the session shows Setting up, and attachment becomes available after
+setup finishes. Navigating away or reloading does not abandon setup. Native
+conversation-fork creation still uses the synchronous API and needs the same
+background treatment separately.
+
+Setup failures remain in the current-session view until archived, with their
+error and retained worktree details. They count as needing attention in the
+terminal. The regular API remains live-only unless callers request
+`include_setup_failures=true`. Failed or incomplete setup cannot open an empty
+terminal through the attachment endpoint. Browser tests at390/1440 and a real
+terminal PTY hold the second checkout, verify the first repository's ready state,
+and then release setup into a usable session; browser tests also reload midway.
 
 The real API lifecycle test returns while a Git hook is paused, observes setup
 past the poller's grace period, releases the hook, and verifies both success and

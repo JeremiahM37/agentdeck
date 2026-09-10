@@ -21,9 +21,10 @@ steps:
     actions:
       - shell:
           cmd: /home/admin/projects/agentdeck/.venv/bin/python -m pytest -q e2e
-          # The 173-case real tmux/browser suite crossed 600s while finishing its
-          # last four cases. Keep individual Playwright deadlines unchanged.
-          timeout: 780
+          # The expanded 193-case suite finished just after the 780s aggregate
+          # cutoff. Background setup adds three more real browser/PTY flows.
+          # Keep individual Playwright deadlines unchanged.
+          timeout: 900
     expect:
       no_log_contains: "failed"
 

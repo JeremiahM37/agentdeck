@@ -432,6 +432,7 @@ func (m *dashboard) newForm() tea.Cmd {
 				delete(body, "agent") // The selected profile determines its agent.
 			}
 			if body["isolated"] == true {
+				body["background"] = true
 				body["worktree"] = map[string]any{"base": body["worktree_base"], "branch": body["worktree_branch"]}
 			}
 			delete(body, "isolated")

@@ -1,4 +1,4 @@
-import json,subprocess,urllib.request
+import json,subprocess,urllib.request,time
 from pathlib import Path
 import pytest
 from playwright.sync_api import expect
@@ -54,9 +54,13 @@ def test_terminal_form_creates_an_isolated_session(real_terminal):
         d.wait('Real terminal');d.send('n');d.wait('New session');d.send('TUI worktree')
         # Name -> profile (defaults) -> project (choose project) -> target -> agent -> model -> workdir -> prompt -> isolation.
         d.send('\t\t\x1b[C'+'\t'*6+'\x1b[C')
-        d.send('\x13');d.wait('Create session completed')
+        d.send('\x13');d.wait('Workspace setup started')
         row=next(s for s in t['api']('/sessions') if s['name']=='TUI worktree')
-        assert row['workspace']['state']=='ready' and row['workdir']!=str(t['root'])
+        deadline=time.monotonic()+15
+        while row.get('setup_state')=='creating' and time.monotonic()<deadline:
+            time.sleep(.05);row=t['api'](f"/sessions/{row['id']}")
+        assert row['setup_state']=='ready',row
+        assert row['workspace']['state']=='ready'  and row['workdir']!=str(t['root'])
         assert git('status','--porcelain')==''
         d.quit()
     finally:d.close()

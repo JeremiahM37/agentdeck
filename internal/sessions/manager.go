@@ -261,6 +261,11 @@ func (m *Manager) Launch(ctx context.Context, o LaunchOpts) (*store.Session, err
 			m.end(sess.ID, StatusDead)
 			return nil, err
 		}
+		if o.OnReserved != nil {
+			if preparing, err := m.DB.Session(sess.ID); err == nil {
+				m.publish(preparing)
+			}
+		}
 		setupTimeout := 120.0
 		if o.SetupTimeout > 0 {
 			setupTimeout = o.SetupTimeout

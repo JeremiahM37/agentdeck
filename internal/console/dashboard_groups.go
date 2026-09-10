@@ -54,7 +54,11 @@ func (m *dashboard) groupTree(rows []row) []row {
 				node.children[label] = child
 			}
 			child.count++
-			switch str(r["status"]) {
+			status := str(r["status"])
+			if r["setup_state"] == "failed" {
+				status = "failed"
+			}
+			switch status {
 			case "waiting", "review", "pending", "failed":
 				child.attention++
 			}

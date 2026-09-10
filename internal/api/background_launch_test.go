@@ -84,6 +84,7 @@ func TestBackgroundWorkspaceSurvivesResponseAndRetainsFailures(t *testing.T) {
 		}
 	}
 	h.decode("DELETE", endpoint, nil, 409, nil)
+	h.decode("POST", endpoint+"/terminal", obj{}, 409, nil)
 	h.decode("DELETE", endpoint+"/worktree", nil, 409, nil)
 	os.WriteFile(release, []byte("release"), 0600)
 	wait := func(id int64) *store.Session {
@@ -116,5 +117,12 @@ func TestBackgroundWorkspaceSurvivesResponseAndRetainsFailures(t *testing.T) {
 	}
 	if failed.WorktreeJSON == "" {
 		t.Fatal("failed allocation was lost")
+	}
+	visible := h.getList("/api/sessions?include_setup_failures=true")
+	if len(visible) != 1 || visible[0].id() != failed.ID {
+		t.Fatalf("setup failure was not retained in the current view: %v", visible)
+	}
+	if live := h.getList("/api/sessions"); len(live) != 0 {
+		t.Fatal("default API live-only filtering changed")
 	}
 }

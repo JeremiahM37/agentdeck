@@ -330,3 +330,22 @@ func TestConfirmationWrapsConversationIdentity(t *testing.T) {
 		}
 	}
 }
+
+func TestSetupPhaseGuardsAttachmentAndKeepsFailuresInAttention(t *testing.T) {
+	m := sampleDashboard()
+	for _, phase := range []string{"creating", "failed"} {
+		m.rows = []row{{"id": float64(9), "name": "Workspace", "status": "dead", "setup_state": phase, "setup_error": "checkout error"}}
+		m.filter()
+		if cmd := m.attachSelected(false); cmd != nil {
+			t.Fatalf("attachment allowed during %s", phase)
+		}
+		if !strings.Contains(strings.ToLower(m.notice), "setup") && !strings.Contains(m.notice, "setting up") {
+			t.Fatalf("missing setup explanation: %s", m.notice)
+		}
+	}
+	m.attention = true
+	m.filter()
+	if len(m.visible) != 1 {
+		t.Fatal("failed setup vanished from attention view")
+	}
+}

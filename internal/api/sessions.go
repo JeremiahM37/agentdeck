@@ -62,13 +62,18 @@ func (s *Server) sessionView(row *store.Session) *sessionView {
 
 func (s *Server) listSessions(w http.ResponseWriter, r *http.Request) {
 	archived := r.URL.Query().Get("archived") == "true"
-	rows, err := s.DB.Sessions(archived || r.URL.Query().Get("all") == "true")
+	setupFailures := r.URL.Query().Get("include_setup_failures") == "true"
+	all := archived || r.URL.Query().Get("all") == "true"
+	rows, err := s.DB.Sessions(all || setupFailures)
 	if err != nil {
 		respondErr(w, err)
 		return
 	}
 	out := make([]*sessionView, 0, len(rows))
 	for _, row := range rows {
+		if setupFailures && !all && row.EndedAt != nil && row.SetupState != "failed" {
+			continue
+		}
 		if (row.ArchivedAt != nil) != archived {
 			continue
 		}
@@ -411,6 +416,14 @@ func (s *Server) sendToSession(w http.ResponseWriter, r *http.Request) {
 func (s *Server) attachSession(w http.ResponseWriter, r *http.Request) {
 	row, ok := s.sessionParam(w, r)
 	if !ok {
+		return
+	}
+	if row.SetupState == "creating" {
+		httpError(w, 409, "workspace is setting up; attach becomes available when setup finishes")
+		return
+	}
+	if row.SetupState == "failed" {
+		httpError(w, 409, "workspace setup failed; inspect its error and retained files before launching again")
 		return
 	}
 	if row.Status == sessions.StatusDead || row.EndedAt != nil {

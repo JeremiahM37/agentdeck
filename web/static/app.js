@@ -131,16 +131,35 @@ const collapsedSessionGroups = new Set((()=>{try{const value=JSON.parse(sessionS
 let sessionRefreshVersion=0;
 async function refreshSessions() {
   const generation=++sessionRefreshVersion;
-  const [rows, archived] = await Promise.all([api(state.showEndedSessions ? "/sessions?all=true" : "/sessions"),state.showArchivedSessions ? api("/sessions?archived=true") : Promise.resolve([])]);
+  const [rows, archived] = await Promise.all([api(state.showEndedSessions ? "/sessions?all=true" : "/sessions?include_setup_failures=true"),state.showArchivedSessions ? api("/sessions?archived=true") : Promise.resolve([])]);
   if(generation!==sessionRefreshVersion)return;
-  state.sessions = rows.filter(s => s.ended_at == null);
-  state.endedSessions = rows.filter(s => s.ended_at != null);
+  state.sessions = rows.filter(s => s.ended_at == null || s.setup_state === "failed");
+  state.endedSessions = rows.filter(s => s.ended_at != null && s.setup_state !== "failed");
   state.archivedSessions = archived;
   const live = state.sessions.filter((s) => s.status !== "dead").length;
   const b = $("#sess-badge");
   b.hidden = live === 0;
   b.textContent = live;
   if (state.tab === "sessions") renderSessions();
+}
+let setupPollBusy=false;
+async function pollWorkspaceSetups() {
+  if(setupPollBusy || state.tab!=="sessions" || !state.sessions.some(s=>s.setup_state==='creating'))return;
+  setupPollBusy=true;
+  try {
+    await refreshSessions();
+    const pending=state.sessions.filter(s=>s.setup_state==='creating' && s.workspace?.repositories?.length);
+    await Promise.all(pending.map(async session=>{
+      let progress,error;
+      try { progress=await api(`/sessions/${session.id}/worktree`); } catch(e) { error=e.message; }
+      const current=state.sessions.find(s=>s.id===session.id);
+      if(current?.setup_state==='creating' && current.workspace?.path===session.workspace.path) {
+        if(progress)current.workspace=progress;
+        current.setup_progress_error=error;
+      }
+    }));
+    if(state.tab==='sessions')renderSessions();
+  } finally { setupPollBusy=false; }
 }
 async function refreshMeta() {
   [state.projects, state.targets, state.models] = await Promise.all([
@@ -464,8 +483,9 @@ const SESSION_LABEL = { waiting: "wants you", running: "working",
                         starting: "starting", idle: "idle", dead: "ended" };
 
 function sessionCard(s) {
+  const settingUp=s.setup_state === "creating";
   const el = document.createElement("div");
-  el.className = `scard s-${s.status}`;
+  el.className = `scard s-${s.setup_state === "failed" ? "failed" : s.status}`;
   const live = s.status === "running";
   const ctx = s.context_pct;
   const ctxClass = ctx == null ? "" : ctx <= 10 ? " crit" : ctx <= 25 ? " low" : "";
@@ -474,13 +494,13 @@ function sessionCard(s) {
     <div class="scard-top">
       <span class="dot${live ? " live" : ""}"></span>
       <span class="nm"></span>
-      <span class="sstate">${s.archived_at != null ? "archived" : s.ended_at != null ? (s.status === "dead" ? "ended" : "untracked") : (SESSION_LABEL[s.status] || esc(s.status))}</span>
-      <span class="sidle">${s.status === "dead" ? "" : "quiet " + fmtDuration(s.idle_seconds)}</span>
+      <span class="sstate">${settingUp ? "setting up" : s.setup_state === "failed" ? "setup failed" : s.archived_at != null ? "archived" : s.ended_at != null ? (s.status === "dead" ? "ended" : "untracked") : (SESSION_LABEL[s.status] || esc(s.status))}</span>
+      <span class="sidle">${s.status === "dead" || settingUp ? "" : "quiet " + fmtDuration(s.idle_seconds)}</span>
     </div>
     <div class="smeta">
       <span class="chip">${esc(s.agent)}${s.model ? " · " + esc(s.model) : ""}</span>
       <span class="chip tgt">${esc(s.target_name || "")}</span>
-      <span class="chip">up ${fmtDuration(s.uptime_seconds)}</span>
+      <span class="chip">${settingUp?"setup":"up"} ${fmtDuration(s.uptime_seconds)}</span>
       ${s.launch_profile ? `<span class="chip" title="Captured launch profile">${esc(s.launch_profile)}</span>` : ""}
       ${s.origin === "discovered" ? '<span class="chip info" title="started outside agentdeck and adopted">adopted</span>' : ""}
       ${s.wraps ? `<span class="chip info" title="handoffs written from this session">⇥ ${s.wraps}</span>` : ""}
@@ -507,7 +527,7 @@ function sessionCard(s) {
       refreshSessions();
     } catch (e) { toast(e.message, true); }
   };
-  $(".spane", el).textContent = s.pane_tail || "";
+  $(".spane", el).textContent = settingUp ? "Setting up workspace… Attach becomes available when setup finishes."+(s.workspace?.repositories||[]).map(repo=>`\n${repo.name}: ${repo.worktree.state}`).join('')+(s.setup_progress_error?'\nProgress unavailable: '+s.setup_progress_error:'') : s.setup_error ? 'Setup failed: '+s.setup_error : s.pane_tail || "";
 
   const row = $(".btnrow", el);
   const {menu, panel} = actionMenu('More ···', `More actions for ${s.name}`);
@@ -516,8 +536,10 @@ function sessionCard(s) {
     const b = document.createElement("button");
     b.className = `b ${cls}`; b.textContent = label; b.onclick = fn;
     actionRow.appendChild(b);
+    return b;
   };
-  if (s.ended_at == null && s.status !== "dead") {
+  if(settingUp) act("Setting up", "", ()=>{}).disabled=true;
+  if (s.ended_at == null && s.status !== "dead" && !settingUp) {
     // the whole point: one tap into the real terminal, same tmux, same chat
     act("⌨ Attach", "attach", () => attachSession(s));
     act("Chat", "grow", () => openConversation({kind:"session",id:s.id,name:s.name,api,attachMic,onClose:refreshSessions}));
@@ -543,7 +565,7 @@ function sessionCard(s) {
     act("Saved conversations", "", () => openNativeHistory({id:s.id,name:s.name,api,onResume:session=>{refreshSessions();attachSession(session);toast("Resumed the selected conversation.");},onFork:()=>{refreshSessions();toast("Fork started. The original session keeps running.");}}));
   }
   if (s.workspace) {
-    const info=document.createElement('details');info.className='session-worktree';const heading=document.createElement('summary');heading.textContent=`Worktree · ${s.workspace.branch} · ${s.workspace.state}`;const location=document.createElement('code');location.textContent=s.workspace.path;const base=document.createElement('small');base.textContent=`Base: ${s.workspace.base} · ${s.workspace.commit?.slice(0,12)||'not created'}`;info.append(heading,location,base);if(s.workspace.error){const failure=document.createElement('p');failure.textContent='Setup error: '+s.workspace.error;failure.style.whiteSpace='pre-wrap';info.append(failure);}el.insertBefore(info,row);
+    const info=document.createElement('details');info.className='session-worktree';const heading=document.createElement('summary');heading.textContent=`${s.workspace.repositories?.length?'Workspace':'Worktree'} · ${s.workspace.branch} · ${s.workspace.state}`;const location=document.createElement('code');location.textContent=s.workspace.path;const base=document.createElement('small');base.textContent=s.workspace.repositories?.length?`${s.workspace.repositories.length} repositories`:`Base: ${s.workspace.base} · ${s.workspace.commit?.slice(0,12)||'not created'}`;info.append(heading,location,base);if(s.workspace.error){const failure=document.createElement('p');failure.textContent='Setup error: '+s.workspace.error;failure.style.whiteSpace='pre-wrap';info.append(failure);}el.insertBefore(info,row);
     if(s.workspace.repositories?.length) {
       const progress=document.createElement('pre');progress.style.whiteSpace='pre-wrap';progress.setAttribute('aria-live','polite');
       const refresh=document.createElement('button');refresh.type='button';refresh.textContent='Refresh setup progress';
@@ -579,6 +601,8 @@ function sessionCard(s) {
     }
   } else if (s.status === "dead") {
     act("Dismiss", "no", () => endSession(s, false));
+  } else if (settingUp) {
+    // Setup owns this reservation until its worker finishes.
   } else if (adopted) {
     act("Stop tracking", "", () => endSession(s, false));
     act("Kill", "no", async () => {
@@ -615,6 +639,8 @@ async function endSession(s, kill) {
 }
 
 async function attachSession(s) {
+  if(s.setup_state === "failed") { toast(s.setup_error || "Workspace setup failed. Inspect its retained files before launching again.",true);return; }
+  if(s.setup_state === "creating") { toast("Workspace is setting up. Attach becomes available when setup finishes.");return; }
   try {
     const r = await api(`/sessions/${s.id}/terminal`, { method: "POST" });
     openTerminal(r.url, s.name);
@@ -802,7 +828,7 @@ function renderSessions() {
 }
 
 function renderSessionList() {
-  const live = state.showArchivedSessions ? state.archivedSessions : state.showEndedSessions ? [...state.sessions, ...state.endedSessions] : state.sessions.filter((s) => s.status !== 'dead');
+  const live = state.showArchivedSessions ? state.archivedSessions : state.showEndedSessions ? [...state.sessions, ...state.endedSessions] : state.sessions.filter((s) => s.status !== 'dead' || s.setup_state === 'failed');
   const list = $('#sesslist');
   list.replaceChildren();
   if (!live.length) {
@@ -1013,7 +1039,8 @@ function renderNewSession(sheet) {
     $("#ns-go").disabled=true;
     try {
       const projectID = projBox.value ? +projBox.value : null;
-      await api("/sessions", { method: "POST", body: {
+      const launched=await api("/sessions", { method: "POST", body: {
+        background: $("#ns-worktree").checked,
         profile_id: profileBox.value ? Number(profileBox.value) : 0,
         project_id: projectID,
         scratch: projectID === null,
@@ -1029,7 +1056,8 @@ function renderNewSession(sheet) {
       } });
       closeSheet();
       switchTab("sessions");
-      toast("Session started");
+      await refreshSessions();
+      toast(launched.setup_state === "creating" ? "Workspace setup started. You can keep using AgentDeck." : "Session started");
     } catch (e) { toast(e.message, true); } finally {const button=$("#ns-go");if(button)button.disabled=false;}
   };
 }
@@ -2402,6 +2430,7 @@ if ("serviceWorker" in navigator) navigator.serviceWorker.register("/sw.js");
   connectSSE();
   await Promise.all([refreshMeta(), refreshTasks(), refreshApprovals(), refreshSessions()]);
   if (!applyHash()) renderBoard();
+  setInterval(()=>pollWorkspaceSetups().catch(()=>{}),4000);
   setInterval(refreshTasks, 30000);   // safety net if SSE hiccups
   // sessions carry a live idle clock, so the list is re-rendered on a cadence
   // even when nothing changed — "quiet for 40 minutes" is the number you act on

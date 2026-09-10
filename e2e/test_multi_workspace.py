@@ -1,6 +1,7 @@
 """Grouped review against real owned worktrees and a live tmux session."""
 from pathlib import Path
 import subprocess
+import time
 import pytest
 from playwright.sync_api import expect
 from test_terminal_workspace import real_terminal, terminal_tool
@@ -96,8 +97,13 @@ def test_browser_creates_grouped_workspace(page,real_terminal,width):
     page.unroute('**/api/sessions',unavailable)
     with page.expect_response(lambda r:r.request.method=='POST' and r.url.endswith('/sessions')) as response:
         page.locator('#ns-go').click()
-    assert response.value.status==201,response.value.text()
-    row=response.value.json();repositories=row['workspace']['repositories']
+    assert response.value.status==202,response.value.text()
+    row=response.value.json()
+    deadline=time.monotonic()+15
+    while row.get('setup_state')=='creating' and time.monotonic()<deadline:
+        time.sleep(.05);row=t['api'](f"/sessions/{row['id']}")
+    assert row['setup_state']=='ready',row
+    repositories=row['workspace']['repositories']
     assert len(repositories)==2 and repositories[1]['worktree']['base']=='review-base'
     assert (Path(repositories[1]['worktree']['path'])/'extra.txt').read_text()=='extra repository\n'
     assert row['workdir']==row['workspace']['path']
@@ -113,8 +119,12 @@ def test_terminal_creates_grouped_workspace(real_terminal):
         d.send('\t\x1b[C\x13');d.wait('Workspace repositories:')
         d.wait('Add Second repository');d.send('\x13');d.wait('Base (blank uses committed HEAD)')
         d.send('HEAD\x13');d.wait('Second repository @ HEAD');d.wait('Create session')
-        d.send('\x13');d.wait('Create session completed',timeout=20)
+        d.send('\x13');d.wait('Workspace setup started',timeout=20)
         row=next(r for r in t['api']('/sessions') if r['name']=='Terminal grouped creation')
+        deadline=time.monotonic()+15
+        while row.get('setup_state')=='creating' and time.monotonic()<deadline:
+            time.sleep(.05);row=t['api'](f"/sessions/{row['id']}")
+        assert row['setup_state']=='ready',row
         assert len(row['workspace']['repositories'])==2
         assert row['workspace']['repositories'][1]['worktree']['base']=='HEAD'
         assert row['workdir']==row['workspace']['path']
