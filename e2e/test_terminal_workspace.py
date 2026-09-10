@@ -25,8 +25,10 @@ def real_terminal(tmp_path, request):
     root = tmp_path/'workspace'; root.mkdir()
     (root/'hello.txt').write_text('A useful artifact\n<script>window.bad=true</script>\n')
     subprocess.run(['git','init','-q',str(root)], check=True)
-    subprocess.run(['tmux','new-session','-d','-s','terminal-test','-c',str(root),'bash --norc'],env=env,check=True)
+    subprocess.run(['tmux','-f','/dev/null','new-session','-d','-s','terminal-test','-c',str(root),'bash --norc'],env=env,check=True)
     options = getattr(request, 'param', {})
+    if options.get('no_alternate_screen'):
+        subprocess.run(['tmux','set-option','-g','terminal-overrides',',*:smcup@:rmcup@'],env=env,check=True)
     if options.get('agent_script'):
         agent = tmp_path/'test-agent'; agent.write_text(options['agent_script']); agent.chmod(0o755)
         env['AGENTDECK_CLAUDE_BIN'] = str(agent); env['AGENTDECK_TICK'] = '0.1'
@@ -200,6 +202,7 @@ def test_real_terminal_previews_failure_recovery_and_reconnect(page,real_termina
 
 def test_terminal_resize_and_reconnect_during_fullscreen_output(page, real_terminal):
     t = real_terminal
+    subprocess.run(['tmux','set-window-option','-g','window-size','latest'],env=t['env'],check=True)
     errors = []
     page.on('pageerror', lambda e: errors.append(str(e)))
     page.add_init_script('''window.terminalSockets=[];

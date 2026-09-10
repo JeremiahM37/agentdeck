@@ -46,6 +46,7 @@ while True:
     client.detach()
 
 
+@pytest.mark.parametrize('real_terminal', [{}, {'no_alternate_screen':True}], indirect=True, ids=['tmux-default','tmux-normal-screen'])
 @pytest.mark.parametrize('return_gesture', ['wheel', 'touch'])
 def test_scroll_fetches_retained_history_from_before_attach(page,real_terminal,return_gesture):
     t=real_terminal

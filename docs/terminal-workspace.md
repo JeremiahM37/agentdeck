@@ -109,3 +109,9 @@ The toolbar keeps files and desktop access visible; Tools contains search,
 history, split shell, appearance, pause, and reconnect. Scrolling alone never
 pauses the live stream. Scrolling back to the bottom or typing returns to live
 output. Pause is an explicit action.
+
+Scrolling follows the negotiated mouse protocol, not the alternate-screen flag:
+tmux uses the alternate screen even for a plain shell. Without mouse reporting,
+AgentDeck can retrieve retained tmux history. End-to-end tests run with an empty
+tmux config and cover both its default alternate screen and a normal-screen
+configuration, so host customizations cannot hide this behavior.

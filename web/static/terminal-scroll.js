@@ -3,7 +3,9 @@
 export function installTerminalScroll({host, term, enabled, retainedHistory, liveIntent}) {
   let gesture, momentum, disposed = false;
   const linePixels = () => Math.max(8, (term.options.fontSize || 15) * 0.8);
-  const appScroll = () => term.modes.mouseTrackingMode !== 'none' || term.buffer.active.type === 'alternate';
+  // tmux itself uses the alternate screen even for a plain shell. Only a
+  // negotiated mouse protocol establishes that the application owns scrolling.
+  const appScroll = () => term.modes.mouseTrackingMode !== 'none';
   const stop = () => { cancelAnimationFrame(momentum); momentum = null; };
   function scroll(lines, x, y) {
     if (!lines || !enabled()) return;
