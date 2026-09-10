@@ -16,6 +16,7 @@ import (
 	"github.com/JeremiahM37/agentdeck/internal/executor"
 	"github.com/JeremiahM37/agentdeck/internal/memory"
 	"github.com/JeremiahM37/agentdeck/internal/shellq"
+	"github.com/JeremiahM37/agentdeck/internal/skills"
 	"github.com/JeremiahM37/agentdeck/internal/store"
 	"github.com/JeremiahM37/agentdeck/internal/worktree"
 )
@@ -403,6 +404,15 @@ func (m *Manager) Launch(ctx context.Context, o LaunchOpts) (*store.Session, err
 	if err != nil || !directory.OK() {
 		m.end(sess.ID, StatusDead)
 		return nil, fmt.Errorf("working directory is unavailable on target: %s", workdir)
+	}
+	// Desired project skills are reasserted for every new process, including an
+	// exact resume or native fork. This only touches the selected workdir and
+	// never restarts or mutates another live session.
+	if project != nil {
+		if err := skills.Reassert(ctx, ex, m.DB, project, agent, workdir); err != nil {
+			m.end(sess.ID, StatusDead)
+			return nil, fmt.Errorf("project skills: %w", err)
+		}
 	}
 	// Project MCP declarations must reach interactive sessions as well as tasks.
 	// Materialize only AgentDeck-owned runtime files; Codex receives additive

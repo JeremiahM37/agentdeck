@@ -13,6 +13,7 @@ import (
 	"github.com/JeremiahM37/agentdeck/internal/agents"
 	"github.com/JeremiahM37/agentdeck/internal/executor"
 	"github.com/JeremiahM37/agentdeck/internal/scheduler"
+	"github.com/JeremiahM37/agentdeck/internal/skills"
 	"github.com/JeremiahM37/agentdeck/internal/state"
 	"github.com/JeremiahM37/agentdeck/internal/store"
 	"github.com/JeremiahM37/agentdeck/internal/terminal"
@@ -367,6 +368,7 @@ func (s *Server) removeTask(ctx context.Context, task *store.Task) {
 			for _, a := range attempts {
 				if a.WorktreePath != "" && !s.DB.SessionWorkdir(target.ID, a.WorktreePath) {
 					// best-effort: the DB rows still get cleaned below
+					_ = skills.Clean(ctx, ex, s.DB, proj, a.WorktreePath)
 					_ = worktree.Remove(ctx, ex, proj.RepoPath, a.WorktreePath)
 				}
 			}
@@ -560,6 +562,7 @@ func (s *Server) cleanupTask(w http.ResponseWriter, r *http.Request) {
 			httpError(w, 409, "Worktree belongs to an interactive session")
 			return
 		}
+		_ = skills.Clean(r.Context(), ex, s.DB, proj, a.WorktreePath)
 		if err := worktree.Remove(r.Context(), ex, proj.RepoPath, a.WorktreePath); err != nil {
 			respondErr(w, err)
 			return

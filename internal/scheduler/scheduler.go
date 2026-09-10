@@ -27,6 +27,7 @@ import (
 	"github.com/JeremiahM37/agentdeck/internal/executor"
 	"github.com/JeremiahM37/agentdeck/internal/sandbox"
 	"github.com/JeremiahM37/agentdeck/internal/sinks"
+	"github.com/JeremiahM37/agentdeck/internal/skills"
 	"github.com/JeremiahM37/agentdeck/internal/state"
 	"github.com/JeremiahM37/agentdeck/internal/store"
 	"github.com/JeremiahM37/agentdeck/internal/worktree"
@@ -303,6 +304,9 @@ func (s *Scheduler) launch(ctx context.Context, att *store.Attempt, c *runCtx) e
 		if err := worktree.Ensure(ctx, ex, c.Project.RepoPath, base, branch, wt); err != nil {
 			return err
 		}
+	}
+	if err := skills.Reassert(ctx, ex, s.DB, c.Project, firstNonEmpty(c.Task.Agent, "claude"), wt); err != nil {
+		return fmt.Errorf("project skills: %w", err)
 	}
 
 	launchKW, err := s.stageRuntime(ctx, ex, wt, att, c)
@@ -812,6 +816,7 @@ func (s *Scheduler) Janitor(ctx context.Context, days float64) (map[string]any, 
 		if err != nil {
 			continue
 		}
+		_ = skills.Clean(ctx, ex, s.DB, c.Project, att.WorktreePath)
 		if err := worktree.Remove(ctx, ex, c.Project.RepoPath, att.WorktreePath); err != nil {
 			s.Log.Warn("janitor: worktree removal failed", "attempt", att.ID, "err", err)
 			continue

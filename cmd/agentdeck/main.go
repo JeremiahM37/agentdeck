@@ -42,7 +42,7 @@ func main() {
 
 	if len(os.Args) > 1 {
 		switch os.Args[1] {
-		case "console", "tui", "api", "upload", "files", "download", "help", "--help", "-h":
+		case "console", "tui", "api", "upload", "files", "download", "skill", "help", "--help", "-h":
 			if err := clientCommand(cfg, os.Args[1], os.Args[2:]); err != nil {
 				fmt.Fprintln(os.Stderr, err)
 				os.Exit(1)

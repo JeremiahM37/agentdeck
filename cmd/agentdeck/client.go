@@ -27,6 +27,10 @@ const clientHelp = `AgentDeck — web and terminal control
   agentdeck upload KIND ID FILE     Add a local file as agent context
   agentdeck files KIND ID [PATH]    Browse files on the agent's machine
   agentdeck download KIND ID REMOTE LOCAL
+  agentdeck skill list PROJECT [--agent claude|codex]
+  agentdeck skill attached PROJECT [--agent claude|codex]
+  agentdeck skill attach PROJECT SKILL_ID [--agent claude|codex]
+  agentdeck skill detach PROJECT ATTACHMENT_ID
   agentdeck mcp                     MCP on standard input/output
   agentdeck version
 
@@ -95,6 +99,8 @@ func clientCommand(cfg *config.Config, command string, args []string) error {
 			body = bytes.NewReader(b)
 		}
 		data, err = c.Request(strings.ToUpper(args[0]), args[1], body, "application/json")
+	case "skill":
+		data, err = skillCommand(c, args)
 	case "upload":
 		if len(args) != 3 {
 			return fmt.Errorf("usage: agentdeck upload KIND ID FILE")
@@ -135,6 +141,55 @@ func clientCommand(cfg *config.Config, command string, args []string) error {
 		}
 	}
 	return err
+}
+
+func skillCommand(c *console.Client, args []string) ([]byte, error) {
+	if len(args) < 2 {
+		return nil, fmt.Errorf("usage: agentdeck skill list|attached|attach|detach PROJECT ...")
+	}
+	op, project := args[0], args[1]
+	agent := ""
+	for i := 2; i < len(args); i++ {
+		if args[i] == "--agent" && i+1 < len(args) {
+			agent = args[i+1]
+			i++
+		} else if strings.HasPrefix(args[i], "--") {
+			return nil, fmt.Errorf("unknown skill option %s", args[i])
+		}
+	}
+	var method, path string
+	var body io.Reader
+	switch op {
+	case "list":
+		method = "GET"
+		path = "/api/skills?project_id=" + url.QueryEscape(project)
+		if agent != "" {
+			path += "&agent=" + url.QueryEscape(agent)
+		}
+	case "attached":
+		method = "GET"
+		path = "/api/projects/" + url.PathEscape(project) + "/skills"
+		if agent != "" {
+			path += "?agent=" + url.QueryEscape(agent)
+		}
+	case "attach":
+		if len(args) < 3 {
+			return nil, fmt.Errorf("usage: agentdeck skill attach PROJECT SKILL_ID [--agent claude|codex]")
+		}
+		method = "POST"
+		path = "/api/projects/" + url.PathEscape(project) + "/skills"
+		b, _ := json.Marshal(map[string]any{"skill_id": args[2], "agent": agent})
+		body = bytes.NewReader(b)
+	case "detach":
+		if len(args) < 3 {
+			return nil, fmt.Errorf("usage: agentdeck skill detach PROJECT ATTACHMENT_ID")
+		}
+		method = "DELETE"
+		path = "/api/projects/" + url.PathEscape(project) + "/skills/" + url.PathEscape(args[2])
+	default:
+		return nil, fmt.Errorf("unknown skill operation %q", op)
+	}
+	return c.Request(method, path, body, "application/json")
 }
 func validateTerminal(args []string, task bool) error {
 	if len(args) != 2 {
