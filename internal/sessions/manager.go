@@ -210,6 +210,67 @@ func (m *Manager) Launch(ctx context.Context, o LaunchOpts) (*store.Session, err
 		return nil, err
 	}
 	sess.TmuxSession = tmuxName
+	// Persist the exact launch settings before publishing a background reservation.
+	// A failed checkout must retain its profile rather than falling back to later
+	// edits of the reusable agent or profile settings.
+	config, err := m.launchConfiguration(agent, o.ProjectID, o.Configuration)
+	if err != nil {
+		m.end(sess.ID, "dead")
+		return nil, err
+	}
+	spec := config.Spec
+	if o.ForkID != "" && len(spec.ForkArgs) == 0 {
+		m.end(sess.ID, "dead")
+		return nil, fmt.Errorf("agent %q does not support forking", agent)
+	}
+	if o.ResumeID != "" && len(spec.ResumeIDArgs) == 0 {
+		m.end(sess.ID, "dead")
+		return nil, fmt.Errorf("agent %q does not support resuming an exact conversation", agent)
+	}
+
+	spec.Args = append([]string(nil), spec.Args...)
+	for _, arg := range o.ExtraArgs {
+		spec.Args = append(spec.Args, shellq.Quote(arg))
+	}
+	// resuming replays a conversation, and the CLIs do not accept an opening
+	// message alongside that — so a prime on a resumed session still has to be
+	// typed in once it is up
+	argPrompt := ""
+	if o.Prime != "" && !o.Resume && o.ResumeID == "" && spec.PromptArg {
+		argPrompt = o.Prime
+	}
+	// agent-wide env first, then the project's, so a project can point one agent
+	// at a different endpoint without redefining the agent
+	env := map[string]string{}
+	for k, v := range spec.Env {
+		env[k] = v
+	}
+	for k, v := range o.Env {
+		env[k] = v
+	}
+	envPrefix, err := EnvPrefix(env)
+	if err != nil {
+		m.end(sess.ID, "dead")
+		return nil, err
+	}
+	if o.Worktree != nil && o.ForkID != "" && agent == "codex" {
+		// Codex otherwise offers a directory picker defaulting to the parent's
+		// directory. Keep a template, so future continuations follow their own
+		// recorded workspace instead of freezing this allocation's path.
+		spec.ForkArgs = nativeDirectoryArgs(spec.ForkArgs)
+		if len(spec.ResumeIDArgs) > 0 {
+			spec.ResumeIDArgs = nativeDirectoryArgs(spec.ResumeIDArgs)
+		}
+	}
+	spec.Env = env
+	if o.Configuration != nil {
+		o.Yolo = config.Yolo
+	}
+	config.Spec, config.Yolo = spec, o.Yolo
+	if err := m.DB.Update("sessions", sess.ID, map[string]any{"launch_config_json": store.J(config)}); err != nil {
+		m.end(sess.ID, StatusDead)
+		return nil, err
+	}
 	if o.OnReserved != nil {
 		if err := o.OnReserved(sess); err != nil {
 			m.end(sess.ID, StatusDead)
@@ -225,20 +286,6 @@ func (m *Manager) Launch(ctx context.Context, o LaunchOpts) (*store.Session, err
 				return nil, fmt.Errorf("workspace repository %q is unavailable on target", repo.Name)
 			}
 		}
-	}
-	config, err := m.launchConfiguration(agent, o.ProjectID, o.Configuration)
-	if err != nil {
-		m.end(sess.ID, "dead")
-		return nil, err
-	}
-	spec := config.Spec
-	if o.ForkID != "" && len(spec.ForkArgs) == 0 {
-		m.end(sess.ID, "dead")
-		return nil, fmt.Errorf("agent %q does not support forking", agent)
-	}
-	if o.ResumeID != "" && len(spec.ResumeIDArgs) == 0 {
-		m.end(sess.ID, "dead")
-		return nil, fmt.Errorf("agent %q does not support resuming an exact conversation", agent)
 	}
 
 	sourceWorkdir := workdir
@@ -314,49 +361,6 @@ func (m *Manager) Launch(ctx context.Context, o LaunchOpts) (*store.Session, err
 	if err != nil || !directory.OK() {
 		m.end(sess.ID, StatusDead)
 		return nil, fmt.Errorf("working directory is unavailable on target: %s", workdir)
-	}
-	spec.Args = append([]string(nil), spec.Args...)
-	for _, arg := range o.ExtraArgs {
-		spec.Args = append(spec.Args, shellq.Quote(arg))
-	}
-	// resuming replays a conversation, and the CLIs do not accept an opening
-	// message alongside that — so a prime on a resumed session still has to be
-	// typed in once it is up
-	argPrompt := ""
-	if o.Prime != "" && !o.Resume && o.ResumeID == "" && spec.PromptArg {
-		argPrompt = o.Prime
-	}
-	// agent-wide env first, then the project's, so a project can point one agent
-	// at a different endpoint without redefining the agent
-	env := map[string]string{}
-	for k, v := range spec.Env {
-		env[k] = v
-	}
-	for k, v := range o.Env {
-		env[k] = v
-	}
-	envPrefix, err := EnvPrefix(env)
-	if err != nil {
-		m.end(sess.ID, "dead")
-		return nil, err
-	}
-	if o.Worktree != nil && o.ForkID != "" && agent == "codex" {
-		// Codex otherwise offers a directory picker defaulting to the parent's
-		// directory. Keep a template, so future continuations follow their own
-		// recorded workspace instead of freezing this allocation's path.
-		spec.ForkArgs = nativeDirectoryArgs(spec.ForkArgs)
-		if len(spec.ResumeIDArgs) > 0 {
-			spec.ResumeIDArgs = nativeDirectoryArgs(spec.ResumeIDArgs)
-		}
-	}
-	spec.Env = env
-	if o.Configuration != nil {
-		o.Yolo = config.Yolo
-	}
-	config.Spec, config.Yolo = spec, o.Yolo
-	if err := m.DB.Update("sessions", sess.ID, map[string]any{"launch_config_json": store.J(config)}); err != nil {
-		m.end(sess.ID, StatusDead)
-		return nil, err
 	}
 	// answer the CLI's "do you trust this folder?" before it can ask: starting an
 	// agent here, on purpose, is the answer. Best-effort — a CLI that changes

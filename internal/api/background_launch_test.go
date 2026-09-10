@@ -2,6 +2,7 @@ package api_test
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -11,6 +12,7 @@ import (
 	"time"
 
 	"github.com/JeremiahM37/agentdeck/internal/config"
+	"github.com/JeremiahM37/agentdeck/internal/sessions"
 	"github.com/JeremiahM37/agentdeck/internal/shellq"
 	"github.com/JeremiahM37/agentdeck/internal/store"
 )
@@ -60,6 +62,20 @@ func TestBackgroundWorkspaceSurvivesResponseAndRetainsFailures(t *testing.T) {
 	h.decode("POST", "/api/sessions", input, 202, &row)
 	id := row.id()
 	endpoint := fmt.Sprintf("/api/sessions/%d", id)
+	reserved, err := h.App.DB.Session(id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var captured sessions.LaunchConfiguration
+	if err := json.Unmarshal([]byte(reserved.LaunchConfigJSON), &captured); err != nil {
+		t.Fatalf("reservation lost launch configuration: %v", err)
+	}
+	if captured.Spec.Command != "sleep 600" {
+		t.Fatal("reservation did not capture requested command")
+	}
+	// Reusable settings may change while checkout runs; this reservation must
+	// keep its original command, both at launch and if checkout fails.
+	h.decode("PUT", "/api/agents", []obj{{"name": "background-fixture", "command": "sleep 601"}}, 200, nil)
 	if row["setup_state"] != "creating" {
 		t.Fatal(row)
 	}
@@ -138,6 +154,17 @@ func TestBackgroundWorkspaceSurvivesResponseAndRetainsFailures(t *testing.T) {
 	failed := wait(row.id())
 	if failed.SetupState != "failed" || failed.EndedAt == nil || !strings.Contains(failed.SetupError, "background-setup-failure") {
 		t.Fatalf("failure was hidden: %+v", failed)
+	}
+	if err := json.Unmarshal([]byte(failed.LaunchConfigJSON), &captured); err != nil {
+		t.Fatalf("failed setup lost launch configuration: %v", err)
+	}
+	if captured.Spec.Command != "sleep 601" {
+		t.Fatal("failed setup lost its own requested command")
+	}
+	h.decode("PUT", "/api/agents", []obj{{"name": "background-fixture", "command": "sleep 602"}}, 200, nil)
+	retained, err := h.App.Sessions.SessionLaunchConfiguration(failed)
+	if err != nil || retained.Spec.Command != "sleep 601" {
+		t.Fatal("failed setup followed later agent settings")
 	}
 	if failed.WorktreeJSON == "" {
 		t.Fatal("failed allocation was lost")

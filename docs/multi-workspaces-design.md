@@ -160,3 +160,10 @@ Sessions instead of attempting to attach to an unfinished terminal. Terminal
 search selects the new reservation and reports setup in its preview. A held
 second-repository checkout test covers phone and desktop reloads, the absence of
 a premature agent launch, and the exact native history path after release.
+
+Setup reservations persist their private launch configuration before returning
+HTTP202. A checkout failure therefore retains its command, declared environment,
+profile identity, and permission setting even if reusable settings change later.
+The settings do not enter the checkout environment; Git still runs with the
+same target environment as before. Regression coverage changes agent settings
+both during setup and after failure and checks the retained snapshot.
