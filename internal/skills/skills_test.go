@@ -398,6 +398,72 @@ func TestNativeSkillForeignUntrackedDestinationIsPreserved(t *testing.T) {
 	}
 }
 
+func TestNativeSkillNestedDestinationCannotBorrowTrackedSource(t *testing.T) {
+	root := t.TempDir()
+	repo := filepath.Join(root, "repo")
+	native := filepath.Join(repo, ".agents", "skills", "native")
+	nested := filepath.Join(repo, "nested", ".agents", "skills", "native")
+	if err := os.MkdirAll(native, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(nested, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(native, "SKILL.md"), []byte("tracked source\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(nested, "SKILL.md"), []byte("nested foreign\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := exec.Command("git", "init", "-q", repo).Run(); err != nil {
+		t.Fatal(err)
+	}
+	if err := exec.Command("git", "-C", repo, "add", "-f", ".agents/skills/native/SKILL.md").Run(); err != nil {
+		t.Fatal(err)
+	}
+	if out, err := exec.Command("git", "-C", repo, "-c", "user.name=AgentDeck nested", "-c", "user.email=agentdeck@example.invalid", "commit", "-qm", "native").CombinedOutput(); err != nil {
+		t.Fatalf("commit: %v %s", err, out)
+	}
+	db, err := store.Open(filepath.Join(root, "state.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	target, err := db.InsertTarget(&store.Target{Name: "nested-target", Kind: "local"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	p, err := db.InsertProject(&store.Project{Name: "nested-project", TargetID: target.ID, RepoPath: repo, DefaultAgent: "codex"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	xs, err := Discover(context.Background(), executor.NewLocal(), p, "codex")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var skill Skill
+	for _, candidate := range xs {
+		if candidate.SourcePath == native {
+			skill = candidate
+		}
+	}
+	attachment, err := db.InsertProjectSkill(&store.ProjectSkill{ProjectID: p.ID, TargetID: target.ID, Agent: "codex", SkillID: skill.ID, SourceID: skill.Source, SourcePath: native, EntryName: "native", TargetRel: ".agents/skills/native"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = Reassert(context.Background(), executor.NewLocal(), db, p, "codex", filepath.Join(repo, "nested"))
+	if err == nil || !strings.Contains(err.Error(), "destination already exists") {
+		t.Fatalf("nested foreign destination result: %v", err)
+	}
+	if body, err := os.ReadFile(filepath.Join(nested, "SKILL.md")); err != nil || string(body) != "nested foreign\n" {
+		t.Fatalf("nested foreign content changed: %q err=%v", body, err)
+	}
+	mats, err := db.Materializations(attachment.ID)
+	if err != nil || len(mats) != 1 || mats[0].State != "pending" {
+		t.Fatalf("nested destination state: mats=%+v err=%v", mats, err)
+	}
+}
+
 func TestSkillDBErrorsAreReturned(t *testing.T) {
 	root := t.TempDir()
 	repo := filepath.Join(root, "repo")
