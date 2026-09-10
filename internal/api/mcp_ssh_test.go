@@ -119,7 +119,7 @@ func TestInteractiveMCPManagerLaunchLifecycle(t *testing.T) {
 					t.Cleanup(func() {
 						ex, err := h.App.Reg.For(target)
 						if err == nil {
-							_, _ = ex.Run(context.Background(), "rm -rf -- "+shellQuoteForTest(filepath.Join(repo, ".agentdeck", "interactive"))+" "+shellQuoteForTest(filepath.Join(home, ".local"))+"; chmod -R a+rwx -- "+shellQuoteForTest(filepath.Join(repo, ".claude"))+" "+shellQuoteForTest(filepath.Join(repo, ".agents"))+" "+shellQuoteForTest(filepath.Join(filepath.Dir(repo), ".agentdeck-worktrees"))+" 2>/dev/null || true", executor.RunOpts{Timeout: 20})
+							_, _ = ex.Run(context.Background(), "rm -rf -- "+shellQuoteForTest(filepath.Join(repo, ".agentdeck", "interactive"))+" "+shellQuoteForTest(filepath.Join(home, ".local"))+"; chmod -R a+rwx -- "+shellQuoteForTest(filepath.Join(repo, ".claude"))+" "+shellQuoteForTest(filepath.Join(repo, ".agents"))+" "+shellQuoteForTest(filepath.Join(filepath.Dir(repo), ".agentdeck-worktrees"))+" 2>/dev/null || true; git config --global --unset-all safe.directory "+shellQuoteForTest(repo)+" 2>/dev/null || true", executor.RunOpts{Timeout: 20})
 						}
 					})
 				}
