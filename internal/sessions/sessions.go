@@ -103,19 +103,7 @@ const PollDelimiter = "\x1e---AGENTDECK-PANE---\x1e"
 // One exec per target per tick, not one per session: over SSH the round trip
 // dominates, and a board with a dozen live sessions would otherwise spend the
 // whole tick opening channels.
-func PollCommand(names []string) string {
-	var b strings.Builder
-	for i, name := range names {
-		if i > 0 {
-			b.WriteString("; ")
-		}
-		q := shellq.Quote(name)
-		fmt.Fprintf(&b, "printf '%%s' %s; ", shellq.Quote(PollDelimiter+name+"\n"))
-		// a missing session prints nothing and is reported as dead by absence
-		fmt.Fprintf(&b, "tmux capture-pane -p -t %s -S -%d 2>/dev/null || true", q, PaneLines)
-	}
-	return b.String()
-}
+func PollCommand(names []string) string { return buildPollCommand(names) }
 
 // ParsePoll splits a batched capture back into per-session pane text.
 func ParsePoll(out string) map[string]string {

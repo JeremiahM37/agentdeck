@@ -91,7 +91,7 @@ func (m *Manager) Restore(ctx context.Context, id int64) (*store.Session, error)
 	if err != nil {
 		return nil, err
 	}
-	m.Poll(ctx)
+	m.pollTarget(ctx, sess.TargetID)
 	fresh, err := m.DB.Session(id)
 	if err != nil {
 		return nil, err

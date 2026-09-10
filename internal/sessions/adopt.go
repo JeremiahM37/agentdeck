@@ -146,7 +146,7 @@ func (m *Manager) Adopt(ctx context.Context, o AdoptOpts) (*store.Session, error
 		return nil, err
 	}
 	// pull its state straight away so the card is truthful the moment it appears
-	m.Poll(ctx)
+	m.pollTarget(ctx, sess.TargetID)
 	fresh, err := m.DB.Session(sess.ID)
 	if err != nil {
 		return sess, nil

@@ -343,10 +343,15 @@ func (m *Manager) primeWhenReady(id int64, text string) {
 		}
 		out, err := ex.Run(ctx, PollCommand([]string{sess.TmuxSession}),
 			RunOptsShort())
-		if err != nil {
+		if err != nil || !out.OK() {
 			continue
 		}
-		pane := ParsePoll(out.Stdout)[sess.TmuxSession]
+		panes, complete := ParsePollSnapshot(out.Stdout, []string{sess.TmuxSession})
+		capture := panes[sess.TmuxSession]
+		if !complete || capture.Missing || capture.Failed {
+			continue
+		}
+		pane := capture.Text
 		if strings.TrimSpace(pane) == "" {
 			continue
 		}

@@ -259,6 +259,9 @@ func TestIdleForFallsBackToCreation(t *testing.T) {
 func TestMockDelimitersMatchSessions(t *testing.T) {
 	m := executor.NewMock(0)
 	_ = m
+	if executor.MockPollEnd != PollEnd {
+		t.Fatal("poll footer drifted")
+	}
 	if executor.MockPaneDelimiter != PollDelimiter {
 		t.Errorf("pane delimiter drifted: %q vs %q", executor.MockPaneDelimiter, PollDelimiter)
 	}

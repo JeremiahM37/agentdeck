@@ -148,3 +148,25 @@ def test_legacy_live_release_captures_identity_without_blocking_offline(real_ter
         assert request(t,'DELETE',path)[0]==200
         assert request(t,'POST',path+'/restore',{})[0]==409
     subprocess.run(['tmux','has-session','-t','=terminal-test'],env=t['env'],check=True)
+
+
+def test_adopt_and_restore_do_not_poll_unrelated_targets(real_terminal):
+    t=real_terminal;key=t['root']/'unrelated-key'
+    subprocess.run(['ssh-keygen','-q','-t','ed25519','-N','','-f',str(key)],check=True)
+    listener=socket.socket();listener.bind(('127.0.0.1',0));listener.listen();listener.settimeout(.1)
+    try:
+        target=t['api']('/targets',{'name':'unrelated-stalled','kind':'ssh','host':'127.0.0.1','port':listener.getsockname()[1],'user':'nobody','key_path':str(key)})
+        with sqlite3.connect(t['env']['AGENTDECK_DB']) as db:
+            db.execute("INSERT INTO sessions(target_id,name,tmux_session,workdir,agent,status,origin,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?)",(target['id'],'Unrelated session','unrelated',str(t['root']),'claude','idle','discovered',time.time(),time.time()))
+        subprocess.run(['tmux','new-session','-d','-s','targeted-adoption','-c',str(t['root']),'bash --norc'],env=t['env'],check=True)
+        start=time.monotonic()
+        adopted=t['api']('/sessions/adopt',{'target_id':t['target_id'],'tmux_session':'targeted-adoption','workdir':str(t['root']),'name':'Targeted adoption','agent':'claude'})
+        assert time.monotonic()-start<2
+        path=f"/sessions/{adopted['id']}"
+        assert request(t,'DELETE',path)[0]==200
+        start=time.monotonic()
+        assert request(t,'POST',path+'/restore',{})[0]==200
+        assert time.monotonic()-start<2
+        with pytest.raises(socket.timeout):listener.accept()
+        assert t['api'](path)['pane_tail']
+    finally:listener.close()

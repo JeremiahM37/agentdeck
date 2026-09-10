@@ -99,3 +99,12 @@ connection, reconnection and concurrent commands under the race detector.
 Capturing identity while releasing an older live record is best effort and
 limited to three seconds. An unreachable target still leaves tracking normally;
 an already-released record never receives a guessed identity later.
+
+Polling requires a complete framed response and a successful control command.
+Blank panes remain live; capture errors and truncated replies preserve the last
+known session state. Only explicit tmux absence marks a session dead. Pane text
+is encoded so delimiter-shaped output cannot impersonate another session.
+Real-command regression tests reproduce the previous false deaths and exercise
+blank, long Unicode and missing panes. Adoption and Track again refresh only
+the affected target; an integration test verifies they never contact an
+unrelated target with a stalled SSH handshake.

@@ -1,6 +1,7 @@
 package executor
 
 import (
+	"encoding/base64"
 	"fmt"
 	"regexp"
 	"strings"
@@ -14,6 +15,7 @@ import (
 // the sessions package depends on this one; TestMockDelimitersMatchSessions
 // asserts they have not drifted.
 const (
+	MockPollEnd           = "ADK-POLL-END-v2"
 	MockPaneDelimiter     = "\x1e---AGENTDECK-PANE---\x1e"
 	MockDiscoverDelimiter = "\x1e---AGENTDECK-PS---\x1e"
 )
@@ -76,10 +78,21 @@ func (m *Mock) handlePoll(cmd string) Result {
 	for _, match := range capturePaneRe.FindAllStringSubmatch(cmd, -1) {
 		name := strings.TrimSuffix(strings.TrimPrefix(match[1], "="), ":")
 		pane, ok := m.capture(name)
-		b.WriteString(MockPaneDelimiter + name + "\n")
-		if ok {
-			b.WriteString(pane)
+		if strings.Contains(cmd, MockPollEnd) {
+			state := "ok"
+			if !ok {
+				state = "missing"
+			}
+			fmt.Fprintf(&b, "%s\t%s\t%s\n", base64.StdEncoding.EncodeToString([]byte(name)), state, base64.StdEncoding.EncodeToString([]byte(pane)))
+		} else {
+			b.WriteString(MockPaneDelimiter + name + "\n")
+			if ok {
+				b.WriteString(pane)
+			}
 		}
+	}
+	if strings.Contains(cmd, MockPollEnd) {
+		b.WriteString(MockPollEnd + "\n")
 	}
 	return Result{0, b.String(), ""}
 }

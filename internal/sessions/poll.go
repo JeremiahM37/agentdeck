@@ -14,13 +14,21 @@ import (
 // sessions are on it. Status is derived from what the pane is actually doing —
 // see DeriveStatus — and `last_activity_at` is only moved when the pane really
 // changed, because "quiet for 40 minutes" is the number an operator acts on.
-func (m *Manager) Poll(ctx context.Context) {
+func (m *Manager) Poll(ctx context.Context) { m.poll(ctx, nil) }
+
+// Action refreshes visit only the affected target, not every machine in the fleet.
+func (m *Manager) pollTarget(ctx context.Context, targetID int64) { m.poll(ctx, &targetID) }
+
+func (m *Manager) poll(ctx context.Context, onlyTarget *int64) {
 	live, err := m.DB.LiveSessions()
 	if err != nil || len(live) == 0 {
 		return
 	}
 	byTarget := map[int64][]*store.Session{}
 	for _, s := range live {
+		if onlyTarget != nil && s.TargetID != *onlyTarget {
+			continue
+		}
 		byTarget[s.TargetID] = append(byTarget[s.TargetID], s)
 	}
 	for targetID, group := range byTarget {
@@ -37,29 +45,36 @@ func (m *Manager) Poll(ctx context.Context) {
 			names = append(names, s.TmuxSession)
 		}
 		r, err := ex.Run(ctx, PollCommand(names), executor.RunOpts{Timeout: 45})
-		if err != nil {
+		if err != nil || !r.OK() {
 			// an unreachable target is not evidence a session died; leave the
 			// rows alone and try again next tick
-			m.Log.Debug("session poll failed", "target", target.Name, "err", err)
+			m.Log.Debug("session poll failed", "target", target.Name, "err", err, "exit_code", r.RC)
 			continue
 		}
-		panes := ParsePoll(r.Stdout)
+		panes, complete := ParsePollSnapshot(r.Stdout, names)
+		if !complete {
+			m.Log.Debug("incomplete session poll", "target", target.Name)
+			continue
+		}
 		for _, s := range group {
-			m.applyPane(s, panes[s.TmuxSession])
+			pane := panes[s.TmuxSession]
+			if pane.Failed {
+				continue
+			}
+			m.applyPane(s, pane.Text, pane.Missing)
 		}
 	}
 }
 
 // applyPane folds one capture into a session row, publishing only on a real
 // change so the board's SSE stream stays quiet while nothing is happening.
-func (m *Manager) applyPane(s *store.Session, pane string) {
+func (m *Manager) applyPane(s *store.Session, pane string, missing bool) {
 	now := store.Now()
 	fields := map[string]any{"updated_at": now}
 	var status string
 
-	if pane == "" {
-		// nothing came back for this session: either tmux does not have it, or
-		// it has not drawn anything yet. A brand-new session gets a grace period
+	if missing {
+		// Only an explicit missing-session response establishes absence. A brand-new session gets a grace period
 		// before we call it dead, since launch and first paint are not instant.
 		if s.Status == StatusStarting && now-s.CreatedAt < 20 {
 			return
