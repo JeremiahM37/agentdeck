@@ -63,6 +63,18 @@ def edit_exclude(repo,marker,line,remove):
   if new!=old:
    fd,tmp=tempfile.mkstemp(prefix='.agentdeck-exclude-',dir=os.path.dirname(p)); os.write(fd,new.encode()); os.close(fd); os.replace(tmp,p)
  return p
+def tracked_native(src,dst):
+ try:
+  import subprocess
+  sr=subprocess.check_output(['git','-C',src,'rev-parse','--show-toplevel'],stderr=subprocess.DEVNULL,text=True).strip()
+  dr=subprocess.check_output(['git','-C',dst,'rev-parse','--show-toplevel'],stderr=subprocess.DEVNULL,text=True).strip()
+  sc=subprocess.check_output(['git','-C',src,'rev-parse','--git-common-dir'],stderr=subprocess.DEVNULL,text=True).strip()
+  dc=subprocess.check_output(['git','-C',dst,'rev-parse','--git-common-dir'],stderr=subprocess.DEVNULL,text=True).strip()
+  if os.path.realpath(os.path.join(src,sc)) != os.path.realpath(os.path.join(dst,dc)): return False
+  rel=os.path.relpath(src,sr)
+  if rel.startswith('..'+os.sep) or rel=='..': return False
+  return subprocess.run(['git','-C',dr,'ls-files','--error-unmatch','--',os.path.join(rel,'SKILL.md')],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL).returncode == 0
+ except Exception: return False
 def roots(a):
  repo=os.path.abspath(a.get('repo')) if a.get('repo') else ''; agent=a.get('agent','claude'); out=[]
  def add(kind,p):
@@ -111,7 +123,7 @@ def main(a):
   except FileNotFoundError: st=None
   if st:
    if os.path.abspath(src)==dst: os.close(fd); return {'preexisting':True}
-   if a.get('source_kind','').startswith('repo:') and not os.path.islink(dst) and os.path.isdir(dst) and os.path.isfile(os.path.join(dst,'SKILL.md')):
+   if a.get('source_kind','').startswith('repo:') and not os.path.islink(dst) and os.path.isdir(dst) and os.path.isfile(os.path.join(dst,'SKILL.md')) and tracked_native(src,dst):
     os.close(fd); return {'preexisting':True}
    if os.path.islink(dst) and os.path.realpath(dst)==src and a.get('owned'): os.close(fd); return {'already':True}
    os.close(fd); return {'error':'skill destination already exists'}
