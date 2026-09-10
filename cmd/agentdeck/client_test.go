@@ -16,7 +16,7 @@ func TestAttachmentResolvesOnServerAndRejectsShellInput(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !reflect.DeepEqual(argv, []string{"ssh", "-tt", "my-server", "/usr/local/bin/agentdeck", "attach", "session", "17"}) {
+	if !reflect.DeepEqual(argv, []string{"env", "TERM=xterm-256color", "ssh", "-tt", "my-server", "/usr/local/bin/agentdeck", "attach", "session", "17"}) {
 		t.Fatal(argv)
 	}
 	for _, args := range [][]string{{"session", "17;touch bad"}, {"-c", "17"}, {"session", "0"}} {

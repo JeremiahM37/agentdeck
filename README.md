@@ -325,14 +325,30 @@ keeping the browser attached. Connection setup is available under Tools.
 The shared tmux screen fits the smaller connected terminal, so a larger native
 window cannot crop the browser into a blank view. Attachments open as tabs inside
 AgentDeck; **Pop out** remains available.
+
+Middle-click inside the terminal, then move the pointer up or down to autoscroll;
+move farther from the starting point to scroll faster. Escape, another click,
+or typing stops it. Slim scrollbars remain available for terminal scrollback
+and retained history. Returning to the bottom resumes live output automatically.
 See [Terminal workspace](docs/terminal-workspace.md).
 
 ### Terminal-only management
 
 Run `agentdeck console` on your server to manage sessions, tasks, routines,
 projects, targets, approvals and settings. Install the client on your computer
-to run `agentdeck` directly from Kitty, WezTerm or another terminal. It includes
-native attachment, PDF/file uploads, downloads, and a scriptable API:
+to run `agentdeck` directly from your terminal. Choose **Sessions**, enter the
+session ID, then type **attach** at the **Action:** prompt to enter its live
+terminal. Use **shell** for a separate command shell alongside the agent.
+Press **Ctrl+B**, then **D** to detach and return to the menu without stopping
+the session. Skip the menus with `agentdeck attach session ID`.
+
+Remote CLI attachments automatically use a portable `xterm-256color` terminal
+type for SSH, so a server without your terminal emulator's terminfo can still
+attach. This applies to both the menu and direct command; no manual `TERM`
+override or local terminal configuration change is needed. After updating the
+client, quit and reopen any running CLI menu to use the new version.
+
+The CLI also includes PDF/file uploads, downloads, and a scriptable API:
 
 ```sh
 agentdeck api GET /sessions

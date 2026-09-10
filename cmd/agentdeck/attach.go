@@ -36,7 +36,9 @@ func attachmentCommand(cfg *config.Config, args []string) ([]string, error) {
 		if strings.HasPrefix(host, "-") || strings.ContainsAny(host, " \t\r\n") {
 			return nil, fmt.Errorf("invalid SSH alias")
 		}
-		return []string{"ssh", "-tt", host, "/usr/local/bin/agentdeck", "attach", args[0], args[1]}, nil
+		// The SSH peer may not have the local emulator's terminfo (e.g. xterm-kitty).
+		// Scope a portable terminal type to this attachment, for both CLI entry points.
+		return []string{"env", "TERM=xterm-256color", "ssh", "-tt", host, "/usr/local/bin/agentdeck", "attach", args[0], args[1]}, nil
 	}
 	// attach_argv contains paths on the control-plane host. Never execute it on
 	// a remote client where those paths name a different machine.

@@ -69,3 +69,53 @@ def test_linux_installer_and_default_console(real_terminal, tmp_path):
     assert list((home/'.local/state/agentdeck').glob('cli-*/client'))
     result = subprocess.run([str(client),'api','GET','/sessions'],env=env,capture_output=True,text=True,check=True)
     assert json.loads(result.stdout)[0]['id']==t['id']
+
+
+def test_menu_and_direct_attach_use_portable_term(real_terminal,tmp_path):
+    """Real CLI and tmux PTY, with SSH transport replaced at the peer boundary."""
+    import pty,select,time
+    t=real_terminal
+    tools=tmp_path/'transport';tools.mkdir()
+    ssh=tools/'ssh'
+    ssh.write_text('#!/bin/sh\nprintf "%s" "$TERM" > "$TERM_RECEIPT"\nexec tmux attach -t =terminal-test\n')
+    ssh.chmod(0o755)
+    receipt=tmp_path/'term.txt'
+    env={**t['env'],'AGENTDECK_API':t['url'],'AGENTDECK_ATTACH_HOST':'test-peer',
+      'PATH':str(tools)+':'+os.environ['PATH'],'TERM':'xterm-kitty','TERM_RECEIPT':str(receipt)}
+    for menu in [False,True]:
+        master,slave=pty.openpty()
+        child=subprocess.Popen([_binary(),*(['console'] if menu else ['attach','session',str(t['id'])])],
+          stdin=slave,stdout=slave,stderr=slave,env=env,start_new_session=True)
+        os.close(slave)
+        output=b''
+        def until(token):
+            nonlocal output
+            deadline=time.time()+10
+            while time.time()<deadline:
+                if token in output: output=b'';return
+                if select.select([master],[],[],.1)[0]:
+                    try:output+=os.read(master,65536)
+                    except OSError:break
+            raise AssertionError(output.decode(errors='replace'))
+        try:
+            if menu:
+                until(b'Open:');os.write(master,b'1\n')
+                until(b'Choose:');os.write(master,(str(t['id'])+'\n').encode())
+                until(b'Action:');os.write(master,b'attach\n')
+            until(b'$')
+            assert receipt.read_text()=='xterm-256color'
+            proof='menu-proof' if menu else 'direct-proof'
+            os.write(master,('printf '+proof+' > '+proof+'.txt\r').encode())
+            deadline=time.time()+5
+            while time.time()<deadline and not (t['root']/(proof+'.txt')).exists():time.sleep(.05)
+            assert (t['root']/(proof+'.txt')).read_text()==proof
+            os.write(master,b'\x02d')
+            if menu:
+                until(b'Action:');os.write(master,b'b\n')
+                until(b'Choose:');os.write(master,b'b\n')
+                until(b'Open:');os.write(master,b'q\n')
+            child.wait(timeout=10)
+            assert child.returncode==0
+        finally:
+            if child.poll() is None:child.terminate();child.wait(timeout=10)
+            os.close(master)
