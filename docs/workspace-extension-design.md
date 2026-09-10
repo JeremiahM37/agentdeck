@@ -25,9 +25,9 @@ assumes no agent exists yet. Keep extension state separate from initial launch.
 Real Git/tmux tests cover dirty-file preservation, no repeated setup, canonical
 alias rejection with an unchanged receipt, failed-extension discovery from an
 old record, stale cleanup rejection, and cancellation with an active terminal.
-This is worker infrastructure; the user-facing operation is not connected yet.
+The browser and terminal dashboards now connect to this worker through durable background operations.
 
-## Background operation still to implement
+## Durable background operation
 
 Persist a workspace operation independently of initial session setup, including
 session ID, captured expanded plan, state, error, cancellation intent and times.
@@ -50,3 +50,22 @@ the same named selection and operation feedback. API/integration/PTY/browser tes
 must prove the original tmux identity remains usable throughout, including after
 server restart and cancellation. Legacy single-worktree conversion remains a
 separate operation; it must not relocate a directory underneath a live agent.
+
+
+Implemented API: POST session `worktree/repositories` reserves an addition and
+returns 202; `worktree/operations` lists progress, with ID-scoped cancel/recover
+POSTs. Private plans and captured environment are not serialized. A transactional
+compare-and-swap reserves the plan, and terminal operations cannot overwrite a
+newer operation's allocation. Cancellation intent survives failed delivery.
+
+Browser: Workspace repositories in the session action menu offers a same-target
+project selector, optional base, setup command preview, close/reopen progress,
+and cancellation/recovery. Adding never replaces the attached terminal frame.
+Terminal: Add repository, Repository addition progress, Cancel repository
+addition, and Check interrupted addition are named session actions.
+
+Tests exercise real Git/tmux API completion/cancellation, stale reservations and
+late completions, phone/desktop browser retry and reopening, a real dashboard PTY
+form, and a killed/restarted isolated server during the new repository's setup.
+The latter explicitly requests reconciliation after restart; automatic recovery
+is wired to the normal session polling pass.

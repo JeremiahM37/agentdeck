@@ -189,7 +189,7 @@ func (m *dashboard) refresh() tea.Cmd {
 			if section == "sessions" && r.err == nil {
 				for _, item := range r.rows {
 					ws, _ := item["workspace"].(map[string]any)
-					if id(item) == selected && item["setup_state"] == "creating" && ws["repositories"] != nil {
+					if id(item) == selected && (item["setup_state"] == "creating" || ws["state"] == "extending") && ws["repositories"] != nil {
 						progress, err := c.JSON("GET", "/sessions/"+id(item)+"/worktree", nil)
 						if err == nil {
 							var current map[string]any
@@ -519,6 +519,9 @@ func (m *dashboard) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.form = nil
 		m.pending = nil
 		m.notice = v.label + " completed"
+		if v.label == "Add repository" {
+			m.notice = "Repository addition started; the original terminal stays available"
+		}
 		var reserved row
 		if json.Unmarshal(v.data, &reserved) == nil && reserved["setup_state"] == "creating" && (v.label == "Create session" || v.label == "Fork conversation") {
 			m.notice = "Workspace setup started. Progress appears in the session preview."

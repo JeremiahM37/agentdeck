@@ -1,3 +1,4 @@
+import { openWorkspaceExtension } from "/workspace-extension.js";
 import { openAgentCommands } from "/agent-commands.js";
 import { SheetFocus } from "/sheet-focus.js";
 import { workspaceRepositories } from "/workspace-repositories.js";
@@ -576,7 +577,8 @@ function sessionCard(s) {
     act("Saved conversations", "", () => openNativeHistory({id:s.id,name:s.name,api,onResume:session=>{refreshSessions();attachSession(session);toast("Resumed the selected conversation.");},onFork:session=>handleNativeFork(session,false)}));
   }
   if (s.workspace) {
-    if(s.setup_state === "failed" && s.workspace.state !== "removed") act("Recover allocation","",async()=>{
+    if(s.workspace.repositories?.length && !settingUp && s.workspace.state !== "removed") act("Workspace repositories", "", () => openWorkspaceExtension({api,session:s,onChange:refreshSessions}));
+    if((s.setup_state === "failed" || s.workspace.state === "failed") && s.workspace.state !== "removed") act("Recover allocation","",async()=>{
       try{await api(`/sessions/${s.id}/worktree/recover`,{method:"POST",body:{}});toast("Allocation validated; files retained. Setup did not restart.");}
       catch(e){toast(e.message,true);}
       finally{await refreshSessions();}

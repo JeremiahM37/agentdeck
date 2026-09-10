@@ -57,6 +57,12 @@ func (m *dashboard) choose(a dashboardAction) tea.Cmd {
 		return nil
 	}
 	switch a.Operation {
+	case "extend-workspace":
+		return m.extendWorkspaceForm()
+	case "cancel-extension":
+		return m.workspaceExtensionAction("cancel")
+	case "recover-extension":
+		return m.workspaceExtensionAction("recover")
 	case "launch-profiles":
 		return m.manageProfilesForm()
 	case "toggle-group":
@@ -599,6 +605,31 @@ func (m *dashboard) readDetail(label string) tea.Cmd {
 	return m.readResource(label, "/term/"+terminalKind+"/"+rid+"/history?lines=1000")
 }
 func formatDetail(label string, data []byte) string {
+	if label == "Repository addition progress" {
+		var rows []struct {
+			ID              int64
+			State, Error    string
+			CancelRequested bool `json:"cancel_requested"`
+		}
+		if json.Unmarshal(data, &rows) == nil {
+			lines := []string{"Repository additions (newest first)", "Original session terminal remains available.", ""}
+			if len(rows) == 0 {
+				lines = append(lines, "No repository additions yet.")
+			}
+			for _, op := range rows {
+				line := fmt.Sprintf("Addition %d: %s", op.ID, op.State)
+				if op.CancelRequested {
+					line += " · cancellation requested"
+				}
+				if op.Error != "" {
+					line += "\n" + op.Error
+				}
+				lines = append(lines, line)
+			}
+			return strings.Join(lines, "\n")
+		}
+	}
+
 	if label == "Check agent commands" {
 		var rows []struct{ Name, State, Path, Detail string }
 		if json.Unmarshal(data, &rows) == nil {
@@ -808,11 +839,12 @@ func workspaceBranch(r row) string {
 func workspaceActions(r row, path string) []dashboardAction {
 	if ws, ok := r["workspace"].(map[string]any); ok && ws["state"] != "removed" {
 		actions := []dashboardAction{}
-		if r["setup_state"] == "failed" {
+		if r["setup_state"] == "failed" || ws["state"] == "failed" {
 			actions = append(actions, dashboardAction{Label: "Cancel remaining checkout", Method: "POST", Path: path + "/setup/cancel", Body: map[string]any{}})
 			actions = append(actions, dashboardAction{Label: "Recover allocation (keep files)", Method: "POST", Path: path + "/worktree/recover", Body: map[string]any{}})
 		}
 		if repositories, ok := ws["repositories"].([]any); ok && len(repositories) > 0 {
+			actions = append(actions, dashboardAction{Label: "Add repository", Operation: "extend-workspace"}, dashboardAction{Label: "Repository addition progress", Method: "GET", Path: path + "/worktree/operations"}, dashboardAction{Label: "Cancel repository addition", Operation: "cancel-extension"}, dashboardAction{Label: "Check interrupted addition", Operation: "recover-extension"})
 			actions = append(actions, dashboardAction{Label: "Workspace setup progress", Method: "GET", Path: path + "/worktree?format=text"})
 		}
 		if r["setup_state"] == "creating" {
