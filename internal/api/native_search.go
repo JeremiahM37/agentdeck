@@ -109,6 +109,10 @@ func (s *Server) conversationSearchScopes(targetID int64, agent string) ([]*conv
 	if err != nil {
 		return nil, err
 	}
+	profiles, err := s.DB.LaunchProfiles()
+	if err != nil {
+		return nil, err
+	}
 	rows, err := s.DB.Sessions(true)
 	if err != nil {
 		return nil, err
@@ -161,6 +165,8 @@ func (s *Server) conversationSearchScopes(targetID int64, agent string) ([]*conv
 					if row.LaunchConfigJSON != "" {
 						label = "Saved settings from session: " + row.Name
 					}
+				} else if cfg.ProfileID != 0 {
+					label = "Launch profile: " + cfg.ProfileName
 				} else if row.ProjectID != nil {
 					for _, project := range projects {
 						if project.ID == *row.ProjectID {
@@ -195,6 +201,17 @@ func (s *Server) conversationSearchScopes(targetID int64, agent string) ([]*conv
 		}
 	}
 	for _, target := range targets {
+		for _, profile := range profiles {
+			if profile.Agent != "claude" && profile.Agent != "codex" {
+				continue
+			}
+			options, err := s.Sessions.ApplyLaunchProfile(sessions.LaunchOpts{ProfileID: profile.ID})
+			encoded := "{"
+			if err == nil {
+				encoded = store.J(options.Configuration)
+			}
+			add(&store.Session{TargetID: target.ID, Agent: profile.Agent, Model: options.Model, LaunchConfigJSON: encoded})
+		}
 		for _, name := range []string{"claude", "codex"} {
 			add(&store.Session{TargetID: target.ID, Agent: name})
 		}

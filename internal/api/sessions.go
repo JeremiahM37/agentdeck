@@ -24,8 +24,9 @@ import (
 // sessionView is a session plus the two things a card always needs: how long it
 // has been quiet, and whether a handoff is currently being written.
 type sessionView struct {
-	CanRestore bool                  `json:"can_restore"`
-	Workspace  *worktree.Interactive `json:"workspace,omitempty"`
+	LaunchProfile string                `json:"launch_profile,omitempty"`
+	CanRestore    bool                  `json:"can_restore"`
+	Workspace     *worktree.Interactive `json:"workspace,omitempty"`
 	*store.Session
 	IdleSeconds     float64 `json:"idle_seconds"`
 	UptimeSeconds   float64 `json:"uptime_seconds"`
@@ -45,6 +46,12 @@ func (s *Server) sessionView(row *store.Session) *sessionView {
 		json.Unmarshal([]byte(row.WorktreeJSON), &v.Workspace)
 		if v.Workspace != nil {
 			v.Workspace.Token = ""
+		}
+	}
+	if row.LaunchConfigJSON != "" {
+		var cfg sessions.LaunchConfiguration
+		if json.Unmarshal([]byte(row.LaunchConfigJSON), &cfg) == nil {
+			v.LaunchProfile = cfg.ProfileName
 		}
 	}
 	if wraps, err := s.DB.SessionWraps(row.ID); err == nil {
@@ -79,6 +86,7 @@ func (s *Server) getSession(w http.ResponseWriter, r *http.Request) {
 }
 
 type sessionIn struct {
+	ProfileID int64                        `json:"profile_id"`
 	GroupPath string                       `json:"group_path"`
 	Worktree  *worktree.InteractiveOptions `json:"worktree"`
 	ProjectID *int64                       `json:"project_id"`
@@ -159,12 +167,11 @@ func (s *Server) createSession(w http.ResponseWriter, r *http.Request) {
 		yolo = *in.Yolo
 	}
 	sess, err := s.Sessions.Launch(r.Context(), sessions.LaunchOpts{
+		ProfileID: in.ProfileID,
 		GroupPath: in.GroupPath, Worktree: in.Worktree, ProjectID: in.ProjectID, TargetID: in.TargetID, Name: in.Name,
 		Agent: in.Agent, Model: in.Model, Workdir: in.Workdir,
 		Resume: in.Resume, Prime: prime, Scratch: in.Scratch, Yolo: yolo,
-		// a project's env is how a session reaches a local model, exactly as it
-		// is for a dispatched task
-		Env: s.Sessions.ProjectEnv(in.ProjectID),
+		// The manager layers project defaults before the selected launch profile.
 	})
 	if err != nil {
 		httpError(w, 409, "%s", err.Error())

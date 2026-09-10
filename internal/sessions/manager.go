@@ -60,6 +60,7 @@ func (m *Manager) publish(s *store.Session) {
 
 // LaunchOpts are the inputs of a new interactive session.
 type LaunchOpts struct {
+	ProfileID int64
 	// Configuration is internal: native continuations keep the source launch settings.
 	Configuration *LaunchConfiguration
 	GroupPath     string
@@ -98,6 +99,11 @@ type LaunchOpts struct {
 
 // Launch starts an interactive agent and records it.
 func (m *Manager) Launch(ctx context.Context, o LaunchOpts) (*store.Session, error) {
+	var profileErr error
+	o, profileErr = m.ApplyLaunchProfile(o)
+	if profileErr != nil {
+		return nil, profileErr
+	}
 	group, err := NormalizeGroup(o.GroupPath)
 	if err != nil {
 		return nil, err

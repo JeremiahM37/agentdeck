@@ -11,9 +11,54 @@ import (
 // environment or the contents of its credential/configuration files. It is
 // private because explicitly configured environment values may contain secrets.
 type LaunchConfiguration struct {
-	Version int  `json:"version"`
-	Spec    Spec `json:"spec"`
-	Yolo    bool `json:"yolo"`
+	Version     int    `json:"version"`
+	Spec        Spec   `json:"spec"`
+	Yolo        bool   `json:"yolo"`
+	ProfileID   int64  `json:"profile_id,omitempty"`
+	ProfileName string `json:"profile_name,omitempty"`
+}
+
+// ApplyLaunchProfile resolves a named profile before creating a session record.
+// Once launched, continuations use the captured configuration, even if the
+// reusable profile is edited or deleted later.
+func (m *Manager) ApplyLaunchProfile(o LaunchOpts) (LaunchOpts, error) {
+	if o.ProfileID == 0 {
+		return o, nil
+	}
+	if o.Configuration != nil {
+		return o, fmt.Errorf("a saved continuation cannot replace its launch profile")
+	}
+	p, err := m.DB.LaunchProfile(o.ProfileID)
+	if err != nil {
+		return o, fmt.Errorf("launch profile is unavailable")
+	}
+	if o.Agent != "" && o.Agent != p.Agent {
+		return o, fmt.Errorf("launch profile belongs to agent %q", p.Agent)
+	}
+	cfg, err := m.launchConfiguration(p.Agent, o.ProjectID, nil)
+	if err != nil {
+		return o, err
+	}
+	var env map[string]string
+	if err := json.Unmarshal([]byte(p.EnvJSON), &env); err != nil {
+		return o, fmt.Errorf("launch profile environment is unreadable")
+	}
+	if _, err := EnvPrefix(env); err != nil {
+		return o, err
+	}
+	for k, v := range env {
+		cfg.Spec.Env[k] = v
+	}
+	if p.Command != "" {
+		cfg.Spec.Command = p.Command
+	}
+	cfg.ProfileID, cfg.ProfileName, cfg.Yolo = p.ID, p.Name, o.Yolo
+	o.Configuration, o.Agent = cfg, p.Agent
+	if o.Model == "" {
+		o.Model = p.Model
+	}
+	o.ProfileID = 0
+	return o, nil
 }
 
 // SessionLaunchConfiguration falls back to current settings only for records

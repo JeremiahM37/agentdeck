@@ -130,6 +130,14 @@ CREATE TRIGGER IF NOT EXISTS takeover_blocks_message BEFORE INSERT ON task_messa
 WHEN EXISTS(SELECT 1 FROM task_takeovers WHERE task_id=NEW.task_id)
 BEGIN SELECT RAISE(ABORT, 'Send messages to the interactive session'); END;
 CREATE TABLE IF NOT EXISTS settings(key TEXT PRIMARY KEY, value TEXT);
+CREATE TABLE IF NOT EXISTS launch_profiles(
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT NOT NULL COLLATE NOCASE UNIQUE,
+  agent TEXT NOT NULL,
+  command TEXT NOT NULL DEFAULT '',
+  model TEXT NOT NULL DEFAULT '',
+  env_json TEXT NOT NULL DEFAULT '{}'
+);
 CREATE TABLE IF NOT EXISTS memories(
   id INTEGER PRIMARY KEY, project_id INTEGER NOT NULL REFERENCES projects(id),
   note TEXT NOT NULL, created_by_attempt INTEGER, created_at REAL
