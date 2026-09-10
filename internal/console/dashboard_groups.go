@@ -161,14 +161,19 @@ func (m *dashboard) rowsHeight(start, end int) int {
 	return total
 }
 func (m *dashboard) rowAt(y int) int {
-	if y < 0 || y >= max(3, m.height-8) {
+	remaining := max(3, m.height-8)
+	if y < 0 || y >= remaining {
 		return -1
 	}
 	for i := m.offset; i < len(m.visible); i++ {
+		if m.rowHeight(i) > remaining {
+			return -1
+		}
 		if y < m.rowHeight(i) {
 			return i
 		}
 		y -= m.rowHeight(i)
+		remaining -= m.rowHeight(i)
 	}
 	return -1
 }

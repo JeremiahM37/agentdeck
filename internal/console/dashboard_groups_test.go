@@ -104,3 +104,19 @@ func TestDashboardUngroupedIdentityAndTreeMouseGeometry(t *testing.T) {
 		t.Fatal("group click did not fold")
 	}
 }
+
+func TestDashboardBlankSpaceBelowTreeDoesNotSelectClippedSession(t *testing.T) {
+	m := groupedDashboard()
+	m.height = 12 // Four body lines: header + session + header, then no room.
+	m.offset = 0
+	m.collapsed = nil
+	m.filter()
+	// Start at Work: Work/Backend's first two-line session cannot fit in the
+	// one remaining line after its sibling/header arrangement below.
+	selectDisplay(t, m, "group:Work/Backend")
+	m.offset = m.selected
+	m.height = 12
+	if m.rowAt(3) != -1 {
+		t.Fatal("blank space selected a session omitted by listView")
+	}
+}
