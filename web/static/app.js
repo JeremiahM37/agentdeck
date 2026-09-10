@@ -544,6 +544,19 @@ function sessionCard(s) {
   }
   if (s.workspace) {
     const info=document.createElement('details');info.className='session-worktree';const heading=document.createElement('summary');heading.textContent=`Worktree · ${s.workspace.branch} · ${s.workspace.state}`;const location=document.createElement('code');location.textContent=s.workspace.path;const base=document.createElement('small');base.textContent=`Base: ${s.workspace.base} · ${s.workspace.commit?.slice(0,12)||'not created'}`;info.append(heading,location,base);if(s.workspace.error){const failure=document.createElement('p');failure.textContent='Setup error: '+s.workspace.error;failure.style.whiteSpace='pre-wrap';info.append(failure);}el.insertBefore(info,row);
+    if(s.workspace.repositories?.length) {
+      const progress=document.createElement('pre');progress.style.whiteSpace='pre-wrap';progress.setAttribute('aria-live','polite');
+      const refresh=document.createElement('button');refresh.type='button';refresh.textContent='Refresh setup progress';
+      refresh.onclick=async()=>{
+        refresh.disabled=true;
+        try {
+          const current=await api(`/sessions/${s.id}/worktree`);
+          progress.textContent=`Recorded workspace state: ${current.state}\n`+current.repositories.map(repo=>`${repo.name}: ${repo.worktree.state}${repo.worktree.error?' — '+repo.worktree.error:''}`).join('\n')+(current.error?'\n'+current.error:'');
+        } catch(error) { progress.textContent=error.message; }
+        finally { refresh.disabled=false; }
+      };
+      info.append(refresh,progress);
+    }
     if(s.workspace.state!=='removed') act("Remove worktree", "", async()=>{
       if(!confirm(`Remove ${s.workspace.path}? End its sessions first. Changed, untracked or ignored files prevent removal. The Git branch is kept.`))return;
       try{await api(`/sessions/${s.id}/worktree`,{method:'DELETE'});await refreshSessions();toast('Worktree removed; branch kept.');}catch(e){toast(e.message,true);}

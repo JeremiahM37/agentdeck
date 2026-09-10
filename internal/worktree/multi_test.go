@@ -414,6 +414,26 @@ func TestMultiWorkspaceSupervisorDeathKeepsCheckoutGuarded(t *testing.T) {
 		time.Sleep(20 * time.Millisecond)
 	}
 	concurrentExecutor := executor.NewLocal()
+	receiptPath := filepath.Join(plan.Path, ".agentdeck-state.json")
+	beforeStatus, err := os.ReadFile(receiptPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	statusPlan := *plan
+	if err := RunInteractive(context.Background(), concurrentExecutor, "status", &statusPlan); err != nil {
+		t.Fatalf("status blocked by active checkout: %v", err)
+	}
+	if statusPlan.State != "creating" || len(statusPlan.Repositories) != 1 {
+		t.Fatalf("unexpected live progress: %+v", statusPlan)
+	}
+	statusPlan.Token = "wrong-owner"
+	if err := RunInteractive(context.Background(), concurrentExecutor, "status", &statusPlan); err == nil {
+		t.Fatal("status accepted a different owner")
+	}
+	afterStatus, err := os.ReadFile(receiptPath)
+	if err != nil || !bytes.Equal(beforeStatus, afterStatus) {
+		t.Fatalf("status changed the live receipt: %v", err)
+	}
 	if err := RunInteractive(context.Background(), concurrentExecutor, "remove", plan); err == nil || !strings.Contains(err.Error(), "operation is still running") {
 		t.Fatalf("live checkout not guarded: %v", err)
 	}

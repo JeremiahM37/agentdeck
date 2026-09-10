@@ -12,6 +12,24 @@ import (
 	"strings"
 )
 
+// WorkspaceProgress reads an atomic target receipt without blocking a live
+// checkout or overwriting the launcher's newer database state.
+func (m *Manager) WorkspaceProgress(ctx context.Context, id int64) (*worktree.Interactive, error) {
+	row, ex, err := m.resolve(id)
+	if err != nil {
+		return nil, err
+	}
+	var plan worktree.Interactive
+	if json.Unmarshal([]byte(row.WorktreeJSON), &plan) != nil || len(plan.Repositories) == 0 {
+		return nil, fmt.Errorf("this session does not own a grouped workspace")
+	}
+	if err := worktree.RunInteractive(ctx, ex, "status", &plan); err != nil {
+		return nil, err
+	}
+	plan.RedactOwnership()
+	return &plan, nil
+}
+
 func (m *Manager) RemoveWorktree(ctx context.Context, id int64) error {
 	m.workspaceMu.Lock()
 	defer m.workspaceMu.Unlock()

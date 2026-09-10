@@ -779,7 +779,11 @@ func workspaceBranch(r row) string {
 
 func workspaceActions(r row, path string) []dashboardAction {
 	if ws, ok := r["workspace"].(map[string]any); ok && ws["state"] != "removed" {
-		return []dashboardAction{{Label: "Remove worktree (keep branch)", Method: "DELETE", Path: path + "/worktree", Warning: "Remove " + str(ws["path"]) + "? End its sessions first. Changed, untracked or ignored files prevent removal. The branch is kept."}}
+		actions := []dashboardAction{}
+		if repositories, ok := ws["repositories"].([]any); ok && len(repositories) > 0 {
+			actions = append(actions, dashboardAction{Label: "Workspace setup progress", Method: "GET", Path: path + "/worktree?format=text"})
+		}
+		return append(actions, dashboardAction{Label: "Remove worktree (keep branch)", Method: "DELETE", Path: path + "/worktree", Warning: "Remove " + str(ws["path"]) + "? End its sessions first. Changed, untracked or ignored files prevent removal. The branch is kept."})
 	}
 	return nil
 }

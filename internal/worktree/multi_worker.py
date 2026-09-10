@@ -149,8 +149,22 @@ def run_child(entry, operation):
 
 
 try:
-    if action not in ('create', 'remove', 'check-remove'):
+    if action not in ('create', 'remove', 'check-remove', 'status'):
         raise ValueError('Unknown workspace operation')
+    if action == 'status':
+        # The writer atomically replaces its receipt, so readers can inspect
+        # progress while a checkout holds the operation lock. Never save here.
+        if root.is_symlink() or not root.is_dir():
+            raise ValueError('Workspace root is missing or replaced')
+        lock = regular_file('.agentdeck-lock', os.O_RDONLY)
+        saved = read_record('.agentdeck-state.json')
+        if identity(saved) != identity(p):
+            raise ValueError('Workspace ownership or repository allocation does not match')
+        lock_stat = os.fstat(lock.fileno())
+        if saved.get('operation_lock') != [lock_stat.st_dev, lock_stat.st_ino]:
+            raise ValueError('Workspace operation lock was replaced')
+        print(json.dumps({'workspace': saved}))
+        sys.exit(0)
     if action == 'create':
         p = namespace['preflight'](p)
         root = pathlib.Path(p['path'])

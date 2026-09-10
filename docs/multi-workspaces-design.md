@@ -34,6 +34,19 @@ Metadata writes use a fresh private inode and atomic replacement. Reads reject
 symlinks and special files, validate process-group receipts, and check the saved
 operation-lock identity. Replaced locks and damaged receipts require inspection.
 
+## Inspect setup progress
+
+Workspace details in the browser include Refresh setup progress. The terminal
+session actions include Workspace setup progress. Both read the target's atomic
+allocation receipt, including per-repository states and setup errors, even while
+checkout holds the operation lock. `GET /api/sessions/{id}/worktree` returns this
+redacted snapshot; `?format=text` returns a readable terminal view.
+
+The read validates allocation and lock ownership and never writes the receipt or
+session database. It reports the last recorded state, not a guarantee that an
+orphaned process is still running. Background creation, automatic polling, and
+long-running setup remain separate work; this endpoint supplies their status read.
+
 ## Review and continuation
 
 The agent starts at the shared root. Web review offers a repository selector;

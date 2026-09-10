@@ -68,7 +68,11 @@ func RunInteractive(ctx context.Context, ex executor.Executor, action string, pl
 		}
 	}
 	data, _ := json.Marshal(plan)
-	result, err := ex.Run(ctx, "python3 -c "+executor.ShellQuote(script)+" "+executor.ShellQuote(action)+" "+executor.ShellQuote(string(data))+extra, executor.RunOpts{Timeout: 120})
+	timeout := 120.0
+	if action == "status" {
+		timeout = 10
+	}
+	result, err := ex.Run(ctx, "python3 -c "+executor.ShellQuote(script)+" "+executor.ShellQuote(action)+" "+executor.ShellQuote(string(data))+extra, executor.RunOpts{Timeout: timeout})
 	if err != nil {
 		return err
 	}
