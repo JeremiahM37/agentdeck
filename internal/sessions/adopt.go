@@ -77,6 +77,8 @@ var ErrAlreadyAdopted = errors.New("this tmux session is already tracked")
 
 // Adopt starts tracking an externally-started agent.
 func (m *Manager) Adopt(ctx context.Context, o AdoptOpts) (*store.Session, error) {
+	m.lifecycleMu.Lock()
+	defer m.lifecycleMu.Unlock()
 	if o.TmuxSession == "" {
 		return nil, fmt.Errorf("a tmux session name is required")
 	}
@@ -124,6 +126,11 @@ func (m *Manager) Adopt(ctx context.Context, o AdoptOpts) (*store.Session, error
 			fields["last_activity_at"] = activity
 		}
 		m.DB.Update("sessions", sess.ID, fields)
+	}
+	if identity := captureTrackingIdentity(ctx, ex, o.TmuxSession); identity != "" {
+		if err := m.DB.Update("sessions", sess.ID, map[string]any{"tracking_identity": identity}); err != nil {
+			return nil, err
+		}
 	}
 	// pull its state straight away so the card is truthful the moment it appears
 	m.Poll(ctx)

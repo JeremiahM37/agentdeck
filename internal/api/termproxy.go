@@ -90,8 +90,8 @@ func (s *Server) resolveAttachment(kind, rawID string) (terminal.Attachment, *st
 		if err != nil {
 			return terminal.Attachment{}, nil, fmt.Errorf("no such session")
 		}
-		if row.Status == sessions.StatusDead {
-			return terminal.Attachment{}, nil, fmt.Errorf("this session has ended")
+		if row.Status == sessions.StatusDead || row.EndedAt != nil {
+			return terminal.Attachment{}, nil, fmt.Errorf("this session is ended or untracked; restore tracking first")
 		}
 		target, err := s.DB.Target(row.TargetID)
 		if err != nil {

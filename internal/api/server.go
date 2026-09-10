@@ -129,6 +129,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("DELETE /api/sessions/{id}/worktree", s.removeSessionWorktree)
 	mux.HandleFunc("PATCH /api/sessions/{id}", s.patchSession)
 	mux.HandleFunc("DELETE /api/sessions/{id}", s.deleteSession)
+	mux.HandleFunc("POST /api/sessions/{id}/restore", s.restoreSession)
 	mux.HandleFunc("POST /api/sessions/{id}/send", s.sendToSession)
 	mux.HandleFunc("POST /api/sessions/{id}/attachments", s.uploadSessionAttachment)
 	mux.HandleFunc("POST /api/sessions/{id}/terminal", s.attachSession)

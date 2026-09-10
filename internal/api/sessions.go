@@ -24,7 +24,8 @@ import (
 // sessionView is a session plus the two things a card always needs: how long it
 // has been quiet, and whether a handoff is currently being written.
 type sessionView struct {
-	Workspace *worktree.Interactive `json:"workspace,omitempty"`
+	CanRestore bool                  `json:"can_restore"`
+	Workspace  *worktree.Interactive `json:"workspace,omitempty"`
 	*store.Session
 	IdleSeconds     float64 `json:"idle_seconds"`
 	UptimeSeconds   float64 `json:"uptime_seconds"`
@@ -35,6 +36,7 @@ type sessionView struct {
 func (s *Server) sessionView(row *store.Session) *sessionView {
 	v := &sessionView{
 		Session:         row,
+		CanRestore:      row.EndedAt != nil && row.Origin == "discovered" && row.Status != sessions.StatusDead && row.TrackingIdentity != "",
 		IdleSeconds:     sessions.IdleFor(row).Seconds(),
 		UptimeSeconds:   store.Now() - row.CreatedAt,
 		HandoffInFlight: s.Sessions.InFlight(row.ID),
@@ -355,6 +357,10 @@ func (s *Server) sendToSession(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	if row.EndedAt != nil {
+		httpError(w, 409, "this session is untracked; restore tracking first")
+		return
+	}
 	var in sendIn
 	if err := decodeBody(r, &in); err != nil {
 		httpError(w, 422, "%s", err.Error())
@@ -364,8 +370,8 @@ func (s *Server) sendToSession(w http.ResponseWriter, r *http.Request) {
 		httpError(w, 422, "message is too long (maximum 32000 bytes)")
 		return
 	}
-	if row.Status == sessions.StatusDead {
-		httpError(w, 409, "this session has ended")
+	if row.Status == sessions.StatusDead || row.EndedAt != nil {
+		httpError(w, 409, "this session is ended or untracked; restore tracking first")
 		return
 	}
 	switch {
@@ -391,8 +397,8 @@ func (s *Server) attachSession(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if row.Status == sessions.StatusDead {
-		httpError(w, 409, "this session has ended")
+	if row.Status == sessions.StatusDead || row.EndedAt != nil {
+		httpError(w, 409, "this session is ended or untracked; restore tracking first")
 		return
 	}
 	target, err := s.DB.Target(row.TargetID)
@@ -433,6 +439,14 @@ func (s *Server) deleteSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	kill := r.URL.Query().Get("kill") == "true"
+	if row.EndedAt != nil {
+		if kill {
+			httpError(w, 409, "this record is no longer tracked; restore tracking or explicitly adopt the running session first")
+			return
+		}
+		writeJSON(w, 200, map[string]any{"id": row.ID, "killed": false})
+		return
+	}
 	owned := row.Origin != "discovered"
 	var err error
 	switch {
@@ -905,4 +919,17 @@ func contains(list []string, want string) bool {
 		}
 	}
 	return false
+}
+
+func (s *Server) restoreSession(w http.ResponseWriter, r *http.Request) {
+	row, ok := s.sessionParam(w, r)
+	if !ok {
+		return
+	}
+	restored, err := s.Sessions.Restore(r.Context(), row.ID)
+	if err != nil {
+		httpError(w, 409, "%s", err.Error())
+		return
+	}
+	writeJSON(w, 200, s.sessionView(restored))
 }

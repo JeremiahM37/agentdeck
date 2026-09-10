@@ -724,3 +724,19 @@ func TestAHandoffCanLeaveTheOldSessionRunning(t *testing.T) {
 			"there is no way to compare two agents on the same work")
 	}
 }
+
+func TestLegacyReleasedRecordRequiresExplicitDiscovery(t *testing.T) {
+	h := newHarness(t)
+	sess := h.post("/api/sessions/adopt", obj{"target_id": h.firstTargetID(), "tmux_session": "legacy-claude", "workdir": "/mock/demo-app"}, 201)
+	path := fmt.Sprintf("/api/sessions/%d", sess.id())
+	// The mock target does not provide a tmux identity, like records predating it.
+	h.request2("DELETE", path, nil, 200)
+	if h.get(path)["can_restore"] != false {
+		t.Fatal("legacy record offered automatic recovery")
+	}
+	got := h.request2("POST", path+"/restore", obj{}, 409)
+	if !strings.Contains(got.str("detail"), "explicitly") {
+		t.Fatal(got)
+	}
+	h.request2("DELETE", path+"?kill=true", nil, 409)
+}

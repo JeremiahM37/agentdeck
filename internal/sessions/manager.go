@@ -33,6 +33,7 @@ type Manager struct {
 	// before giving up and saying so.
 	HandoffTimeout time.Duration
 
+	lifecycleMu sync.Mutex
 	workspaceMu sync.RWMutex
 	sendMu      sync.Mutex
 	mu          sync.Mutex
@@ -478,9 +479,14 @@ func (m *Manager) Kill(ctx context.Context, id int64) error {
 // to be non-destructive too, or "add it to the board" quietly becomes "hand its
 // life over to the board".
 func (m *Manager) Release(id int64) error {
+	m.lifecycleMu.Lock()
+	defer m.lifecycleMu.Unlock()
 	sess, err := m.DB.Session(id)
 	if err != nil {
 		return err
+	}
+	if sess.EndedAt != nil {
+		return nil
 	}
 	now := store.Now()
 	if err := m.DB.Update("sessions", sess.ID, map[string]any{
