@@ -10,6 +10,7 @@ from test_terminal_workspace import real_terminal
 from test_interactive_worktree import setup
 from test_terminal_dashboard import Dashboard
 from conftest import _binary
+from test_ui import _tab
 
 
 def group(t, hook='echo ADDED_REPO_READY'):
@@ -57,7 +58,7 @@ def test_browser_extension_reopens_keeps_terminal_and_retries(page, real_termina
     terminal=frame(page,row['id'])
     expect(terminal.locator('#connection')).to_have_text('Connected',timeout=15000)
     terminal.locator('body').evaluate('(el)=>window.extensionIdentity="retained"')
-    page.locator('.tab[data-tab="sessions"]').click()
+    _tab(page, 'sessions')
     dialog = open_extension(page,row)
     expect(dialog.get_by_label('Project',exact=True)).to_have_value(str(extra['id']))
     expect(dialog.locator('option')).to_have_count(1)
@@ -82,7 +83,7 @@ def test_browser_extension_reopens_keeps_terminal_and_retries(page, real_termina
     assert len(same_terminal(t,row)['workspace']['repositories']) == 3
     page.screenshot(path=f'/tmp/agentdeck-extension-{width}.png')
     page.keyboard.press('Escape'); expect(dialog).to_have_count(0)
-    page.locator('.tab[data-tab="terminals"]').click()
+    _tab(page, 'terminals')
     expect(terminal.locator('#connection')).to_have_text('Connected',timeout=15000)
     assert terminal.locator('body').evaluate('(el)=>window.extensionIdentity')=='retained'
     assert errors == []
