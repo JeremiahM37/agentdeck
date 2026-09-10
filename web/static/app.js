@@ -3,6 +3,7 @@ import { CommandPalette } from "/command-palette.js";
 import { openArchiveHistory } from "/archive-history.js";
 import { openNativeHistory } from "/native-history.js";
 import { openNativeSearch } from "/native-search.js";
+import { openLaunchProfiles } from "/launch-profiles.js";
 import { openReview } from "/review.js";
 import { TerminalTabs } from "/terminal-tabs.js";
 import { actionMenu } from "/ui-menu.js";
@@ -479,6 +480,7 @@ function sessionCard(s) {
       <span class="chip">${esc(s.agent)}${s.model ? " · " + esc(s.model) : ""}</span>
       <span class="chip tgt">${esc(s.target_name || "")}</span>
       <span class="chip">up ${fmtDuration(s.uptime_seconds)}</span>
+      ${s.launch_profile ? `<span class="chip" title="Captured launch profile">${esc(s.launch_profile)}</span>` : ""}
       ${s.origin === "discovered" ? '<span class="chip info" title="started outside agentdeck and adopted">adopted</span>' : ""}
       ${s.wraps ? `<span class="chip info" title="handoffs written from this session">⇥ ${s.wraps}</span>` : ""}
       ${s.handoff_in_flight ? '<span class="chip warn">writing handoff…</span>' : ""}
@@ -819,6 +821,10 @@ function renderNewSession(sheet) {
     <label class="f">Name</label>
     <input class="f" id="ns-name" placeholder="what you're working on">
     <label class="f" for="ns-group">Group (optional)</label><input class="f" id="ns-group" placeholder="Work/Client">
+    <label class="f" for="ns-profile">Launch profile</label>
+    <select class="f" id="ns-profile"><option value="">Agent and project defaults</option></select>
+    <button class="b" id="ns-manage-profiles" type="button">Manage launch profiles</button>
+    <div class="subhint" id="ns-profile-hint" role="status"></div>
     <label class="f">Agent</label>
     <select class="f" id="ns-agent"></select>
     <div class="subhint" id="ns-agent-hint"></div>
@@ -851,12 +857,42 @@ function renderNewSession(sheet) {
     </div>`;
   $(".x", sheet).onclick = closeSheet;
   const agentBox = $("#ns-agent");
+  const profileBox = $("#ns-profile", sheet);
+  let profiles = [], agentSpecs = [], profileRequest = 0;
+  const chosenProfile = () => profiles.find(p => String(p.id) === profileBox.value);
+  function syncProfile() {
+    if (!sheet.isConnected) return;
+    const profile = chosenProfile();
+    agentBox.disabled = !!profile;
+    if (profile && agentSpecs.length) agentBox.value = profile.agent;
+    $("#ns-profile-hint", sheet).textContent = profile
+      ? `${profile.name} · ${profile.agent}${profile.model ? ' · default model: '+profile.model : ''}. Settings are captured when the session starts.` : '';
+    if (agentSpecs.length) syncAgentHint(agentSpecs);
+  }
+  async function loadProfiles(saved) {
+    const request = ++profileRequest;
+    try {
+      const result = await api('/launch-profiles');
+      if (!sheet.isConnected || request !== profileRequest) return;
+      const selected = saved ? String(saved.id) : profileBox.value;
+      profiles = result;
+      profileBox.replaceChildren(new Option('Agent and project defaults', ''));
+      for (const p of profiles) profileBox.append(new Option(`${p.name} · ${p.agent}`, String(p.id)));
+      profileBox.value = profiles.some(p => String(p.id) === selected) ? selected : '';
+      syncProfile();
+    } catch(e) { if(sheet.isConnected) $('#ns-profile-hint', sheet).textContent = 'Could not load profiles: '+e.message; }
+  }
+  profileBox.onchange = syncProfile;
+  $('#ns-manage-profiles', sheet).onclick = () => openLaunchProfiles({api,onChange:loadProfiles});
+  loadProfiles();
   // the agent set is yours: the three built-ins plus anything you defined, so
   // any CLI that starts in a terminal starts from here
   api("/agents").then((specs) => {
     agentBox.innerHTML = specs.map((a) =>
       `<option value="${esc(a.name)}">${esc(a.name)}${a.builtin ? "" : " (custom)"}</option>`).join("");
-    agentBox.value = "claude";
+    agentSpecs = specs;
+    agentBox.value = chosenProfile()?.agent || "claude";
+    syncProfile();
     syncAgentHint(specs);
     agentBox.onchange = () => syncAgentHint(specs);
   }).catch(() => {
@@ -875,6 +911,7 @@ function renderNewSession(sheet) {
       ? "this agent has no model switch"
       : list.length ? "default — or type any model name"
       : "type the model name";
+    if(chosenProfile()?.model) box.placeholder = chosenProfile().model + " — or override";
     box.disabled = list === undefined;
   }
   function syncAgentHint(specs) {
@@ -960,6 +997,7 @@ function renderNewSession(sheet) {
     try {
       const projectID = projBox.value ? +projBox.value : null;
       await api("/sessions", { method: "POST", body: {
+        profile_id: profileBox.value ? Number(profileBox.value) : 0,
         project_id: projectID,
         scratch: projectID === null,
         worktree: $("#ns-worktree").checked ? {base:$("#ns-worktree-base").value.trim(),branch:$("#ns-worktree-branch").value.trim()} : null,
@@ -2306,6 +2344,7 @@ const commandPalette = new CommandPalette({
     const sheet = kind => { state.sheet = {kind}; renderSheet(); };
     const settings = section => { state.settingsSection = section; switchTab('targets'); };
     return [
+      command('launch-profiles', 'Manage launch profiles', () => openLaunchProfiles({api}), 'Reusable agent, model and environment settings', 'profiles accounts configuration'),
       command('new-session', 'New session', () => sheet('new-session'), 'Start an interactive agent', 'create launch'),
       command('new-task', 'New task', () => sheet('new'), 'Plan or dispatch work', 'create'),
       command('saved-search', 'Search saved conversations', () => openNativeSearch({api, targets:state.targets,onFork:session=>{refreshSessions();attachSession(session);}}), 'Find text across local and SSH histories', 'history messages content native'),
@@ -2331,7 +2370,7 @@ $("#fab").onclick = () => {
   renderSheet();
 };
 $("#sheet-backdrop").onclick = closeSheet;
-addEventListener("keydown", (e) => { if (e.key === "Escape" && state.sheet) closeSheet(); });
+addEventListener("keydown", (e) => { if (e.key === "Escape" && state.sheet && !document.querySelector("dialog[open]")) closeSheet(); });
 // A phone that was locked or backgrounded drops SSE silently — resync on return
 // to foreground (shares the reconnect resync path).
 document.addEventListener("visibilitychange", () => {

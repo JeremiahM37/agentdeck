@@ -15,6 +15,7 @@ launches with no arguments and no terminal still start the server.
 | g / w | Group by project or target / show items needing attention |
 | Tab / p, PgUp/PgDn | Focus and scroll the preview |
 | n / e / m | Create / rename / all actions |
+| P | Manage named launch profiles |
 | h / v / u | Read retained history / review a task diff / upload context |
 | f | Find running agents and add one to tracking by name |
 | 7 / 8 / 9 | Settings / usage / full API |
@@ -59,6 +60,8 @@ separate desktop URI installers enable opening an attachment from the web UI.
 ## Scripting and context files
 
 ```sh
+agentdeck api GET /launch-profiles
+agentdeck api POST /sessions '{"name":"Work","profile_id":7,"scratch":true}'
 agentdeck api GET /sessions
 agentdeck api POST /sessions '{"name":"Scratch","agent":"codex","scratch":true}'
 agentdeck api POST /tasks/12/takeover '{}'

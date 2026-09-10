@@ -54,6 +54,8 @@ func (m *dashboard) choose(a dashboardAction) tea.Cmd {
 		return nil
 	}
 	switch a.Operation {
+	case "launch-profiles":
+		return m.manageProfilesForm()
 	case "toggle-group":
 		m.toggleGroup()
 		return nil
@@ -102,6 +104,16 @@ func (m *dashboard) choose(a dashboardAction) tea.Cmd {
 	return m.execute(a)
 }
 func (m *dashboard) actions() []dashboardAction {
+	actions := m.rowActions()
+	profile := dashboardAction{Label: "Manage launch profiles", Operation: "launch-profiles"}
+	if len(actions) == 0 {
+		return []dashboardAction{profile}
+	}
+	// Keep attachment first and destructive actions last.
+	last := actions[len(actions)-1]
+	return append(actions[:len(actions)-1], profile, last)
+}
+func (m *dashboard) rowActions() []dashboardAction {
 	if m.selectedGroup() != nil {
 		return []dashboardAction{
 			{Label: "Expand / collapse group", Operation: "toggle-group"},
@@ -389,7 +401,8 @@ func (m *dashboard) newForm() tea.Cmd {
 	var fields []field
 	switch kind {
 	case "sessions":
-		fields = []field{{Key: "name", Label: "Session name", Required: true}, optionField("project_id", "Project", project, projects, false), optionField("target_id", "Target", target, targets, false), agent, {Key: "model", Label: "Model (blank uses default)"}, {Key: "workdir", Label: "Directory (blank uses project or scratch)"}, {Key: "prime", Label: "Initial prompt", Multiline: true}, boolField("isolated", "Isolate files in a new Git worktree", false), {Key: "worktree_base", Label: "Worktree base (blank = committed HEAD)"}, {Key: "worktree_branch", Label: "New branch (blank = unique name)"}, boolField("resume", "Resume latest conversation", false), boolField("brief", "Include project brief", true), boolField("yolo", "Skip agent permission prompts", false), {Key: "group_path", Label: "Group path (optional, e.g. Work/Client)"}}
+		agent.Label = "Agent (without a profile)"
+		fields = []field{{Key: "name", Label: "Session name", Required: true}, optionField("profile_id", "Launch profile", "", m.profileChoices("Agent and project defaults"), false), optionField("project_id", "Project", project, projects, false), optionField("target_id", "Target", target, targets, false), agent, {Key: "model", Label: "Model (blank uses default)"}, {Key: "workdir", Label: "Directory (blank uses project or scratch)"}, {Key: "prime", Label: "Initial prompt", Multiline: true}, boolField("isolated", "Isolate files in a new Git worktree", false), {Key: "worktree_base", Label: "Worktree base (blank = committed HEAD)"}, {Key: "worktree_branch", Label: "New branch (blank = unique name)"}, boolField("resume", "Resume latest conversation", false), boolField("brief", "Include project brief", true), boolField("yolo", "Skip agent permission prompts", false), {Key: "group_path", Label: "Group path (optional, e.g. Work/Client)"}}
 	case "tasks":
 		fields = []field{{Key: "title", Label: "Task title", Required: true}, optionField("project_id", "Project", project, options(m.projects, ""), true), {Key: "prompt", Label: "Task prompt", Multiline: true, Required: true}, agent, {Key: "model", Label: "Model"}, {Key: "base_branch", Label: "Base branch (blank uses project default)"}, boolField("dispatch", "Dispatch now in an isolated worktree", true)}
 	case "routines":
@@ -401,6 +414,9 @@ func (m *dashboard) newForm() tea.Cmd {
 	}
 	return m.openForm("New "+strings.TrimSuffix(kind, "s"), fields, func(body map[string]any) tea.Cmd {
 		if kind == "sessions" {
+			if body["profile_id"] != nil {
+				delete(body, "agent") // The selected profile determines its agent.
+			}
 			if body["isolated"] == true {
 				body["worktree"] = map[string]any{"base": body["worktree_base"], "branch": body["worktree_branch"]}
 			}

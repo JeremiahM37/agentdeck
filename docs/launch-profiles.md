@@ -1,11 +1,17 @@
-# Named launch profiles (interface work in progress)
+# Named launch profiles
 
 A launch profile names reusable settings for future interactive sessions: an
 agent, optional command and model overrides, and an environment object. It does
 not partition the session database or change a running process. Profile paths
 are interpreted on the session's selected target.
 
-The backend supports:
+In the web UI, choose **Manage launch profiles** from New session or command
+search. In the terminal dashboard press **P** (also in All actions). Create, edit
+and delete profiles there, then choose one in New session. The selected profile
+supplies the agent; an explicit model field overrides its default model. Failed
+saves and launches retain the form draft.
+
+The API supports:
 
 - `GET /api/launch-profiles` to list definitions.
 - `POST /api/launch-profiles` to create one.
@@ -37,6 +43,8 @@ It does not create placeholder tracking records.
 Backend evidence includes database migration/reopen, preserved unrelated
 settings, deleted-ID protection, profile/default precedence, explicit model and
 agent boundaries, captured settings after edit/delete, private session output,
-and real local history search from a profile with no tracked session. Web and
-terminal management, selection flows, and end-to-end launch proofs are still
-required before this feature is ready to deploy.
+and real local history search from a profile with no tracked session. Real tmux browser tests at 390/1440 pixels and a real PTY test cover management,
+selection, failed-save drafts, pending-save Escape handling, actual command/
+model/environment execution and continuation after profile deletion. A nested
+dialog Escape regression is covered by the browser flow. Full-suite verification
+and deployment are still required.

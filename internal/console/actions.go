@@ -172,7 +172,7 @@ func (u *UI) importProjects() error {
 	return u.request("POST", "/projects/import", body)
 }
 func (u *UI) api() error {
-	u.say("All API resources: targets, projects, sessions, tasks, routines, approvals, agents, models, templates, settings, stats, health.\nExamples: GET /agents · PUT /templates · POST /settings/test-notification · POST /admin/janitor\nUse agentdeck api --help for scripting and file input.")
+	u.say("All API resources: targets, projects, sessions, tasks, routines, approvals, agents, launch-profiles, models, templates, settings, stats, health.\nExamples: GET /agents · PUT /templates · POST /settings/test-notification · POST /admin/janitor\nUse agentdeck api --help for scripting and file input.")
 	line, e := u.ask("METHOD /api/path (blank cancels)", "")
 	if e != nil || line == "" {
 		return e

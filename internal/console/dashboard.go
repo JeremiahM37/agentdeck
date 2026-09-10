@@ -72,8 +72,8 @@ type rowsMsg struct {
 	err        error
 }
 type refsMsg struct {
-	projects, targets, agents []row
-	err                       error
+	projects, targets, agents, profiles []row
+	err                                 error
 }
 type tickMsg time.Time
 type resultMsg struct {
@@ -85,37 +85,37 @@ type resultMsg struct {
 }
 type attachedMsg struct{ err error }
 type dashboard struct {
-	focusSessionID                 string
-	client                         *Client
-	attach                         func(string, string) error
-	section                        int
-	rows, visible                  []row
-	selected, offset               int
-	width, height                  int
-	generation                     int
-	loading                        bool
-	updated                        time.Time
-	failure, notice                string
-	query                          textinput.Model
-	searching                      bool
-	review                         *codeReview
-	nativeSearch                   *nativeSearchState
-	native                         *nativeSelection
-	grouping                       int
-	groupingBySection              map[string]int
-	preferencePath                 string
-	collapsed                      map[string]bool
-	matched                        int
-	attention, ended, archived     bool
-	preview                        viewport.Model
-	previewFocus                   bool
-	detailKey, detailTitle, detail string
-	help, menu                     bool
-	menuIndex                      int
-	form                           *dashboardForm
-	pending                        *dashboardAction
-	busy                           bool
-	projects, targets, agents      []row
+	focusSessionID                      string
+	client                              *Client
+	attach                              func(string, string) error
+	section                             int
+	rows, visible                       []row
+	selected, offset                    int
+	width, height                       int
+	generation                          int
+	loading                             bool
+	updated                             time.Time
+	failure, notice                     string
+	query                               textinput.Model
+	searching                           bool
+	review                              *codeReview
+	nativeSearch                        *nativeSearchState
+	native                              *nativeSelection
+	grouping                            int
+	groupingBySection                   map[string]int
+	preferencePath                      string
+	collapsed                           map[string]bool
+	matched                             int
+	attention, ended, archived          bool
+	preview                             viewport.Model
+	previewFocus                        bool
+	detailKey, detailTitle, detail      string
+	help, menu                          bool
+	menuIndex                           int
+	form                                *dashboardForm
+	pending                             *dashboardAction
+	busy                                bool
+	projects, targets, agents, profiles []row
 }
 
 // RunDashboard uses a full-screen renderer that owns raw mode, resizing and the
@@ -147,7 +147,7 @@ func (m *dashboard) references() tea.Cmd {
 		for _, target := range []struct {
 			path string
 			dest *[]row
-		}{{"/projects", &out.projects}, {"/targets", &out.targets}, {"/agents", &out.agents}} {
+		}{{"/projects", &out.projects}, {"/targets", &out.targets}, {"/agents", &out.agents}, {"/launch-profiles", &out.profiles}} {
 			b, e := c.JSON("GET", target.path, nil)
 			if e == nil {
 				e = json.Unmarshal(b, target.dest)
@@ -240,7 +240,7 @@ func (m *dashboard) filter() {
 		if status != "" && s != status {
 			continue
 		}
-		if !fuzzy(q, name(r)+" "+str(r["project_name"])+" "+str(r["target_name"])+" "+str(r["agent"])+" "+str(r["workdir"])+" "+str(r["group_path"])+" "+workspaceBranch(r)+" "+id(r)) {
+		if !fuzzy(q, name(r)+" "+str(r["project_name"])+" "+str(r["target_name"])+" "+str(r["agent"])+" "+str(r["launch_profile"])+" "+str(r["workdir"])+" "+str(r["group_path"])+" "+workspaceBranch(r)+" "+id(r)) {
 			continue
 		}
 		m.visible = append(m.visible, r)
@@ -313,6 +313,9 @@ func (m *dashboard) updatePreview() {
 		switch sections[m.section] {
 		case "sessions":
 			content = fmt.Sprintf("%s\n%s · %s · %s\n%s\n\n%s", name(r), str(r["agent"]), str(r["status"]), str(r["target_name"]), str(r["workdir"]), str(r["pane_tail"]))
+			if label := str(r["launch_profile"]); label != "" {
+				content = "Launch profile: " + label + "\n" + content
+			}
 			if ws, ok := r["workspace"].(map[string]any); ok {
 				content = "Worktree: " + str(ws["branch"]) + " · " + str(ws["state"]) + "\nBase: " + str(ws["base"]) + "\n\n" + content
 			}
@@ -423,6 +426,7 @@ func (m *dashboard) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.projects = v.projects
 		m.targets = v.targets
 		m.agents = v.agents
+		m.profiles = v.profiles
 		if v.err != nil {
 			m.notice = "Reference lists: " + clean(v.err.Error())
 		}
@@ -644,6 +648,8 @@ func (m *dashboard) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, m.refresh()
 		case "r":
 			return m, m.refresh()
+		case "P":
+			return m, m.manageProfilesForm()
 		case "p":
 			m.detailKey = ""
 			m.previewFocus = !m.previewFocus
@@ -962,6 +968,7 @@ const dashboardHelp = ` Keyboard shortcuts
  Space/Enter   Fold selected group   [ Collapse parent   ] Expand group
  g             Group by project/target/name   w  Needs attention only
  n             New item         e        Rename   u Upload context
+ P             Launch profiles
  m             All actions      f        Find and track running agents
  h             Full history     v        Review task diff
  F             Search saved conversation text across targets

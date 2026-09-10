@@ -52,8 +52,8 @@ def test_terminal_form_creates_an_isolated_session(real_terminal):
     t=real_terminal;project,git=setup(t);d=Dashboard(t)
     try:
         d.wait('Real terminal');d.send('n');d.wait('New session');d.send('TUI worktree')
-        # Name -> project (choose project) -> target -> agent -> model -> workdir -> prompt -> isolation.
-        d.send('\t\x1b[C'+'\t'*6+'\x1b[C')
+        # Name -> profile (defaults) -> project (choose project) -> target -> agent -> model -> workdir -> prompt -> isolation.
+        d.send('\t\t\x1b[C'+'\t'*6+'\x1b[C')
         d.send('\x13');d.wait('Create session completed')
         row=next(s for s in t['api']('/sessions') if s['name']=='TUI worktree')
         assert row['workspace']['state']=='ready' and row['workdir']!=str(t['root'])
