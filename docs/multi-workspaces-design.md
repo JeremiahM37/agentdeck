@@ -167,3 +167,21 @@ cleanup depend on the parent's temporary worktree. API/Git/tmux tests cover thes
 properties and removing the isolated group after parent removal. This verifies
 workspace continuation mechanics; installed-agent conversation fork/resume identity
 and browser/PTY native-history flows still require separate proof before rollout.
+
+The first combined full suite caught a launch regression in WorkspaceAt: scanning
+whole session rows failed on unrelated legacy records with null timestamps.
+The lookup now selects only nonempty worktree_json for the target and skips empty
+directory requests. Affected real-launch/takeover/grouped tests and the full Go
+suite pass with the narrowed query; the failing combined suite is allowed to
+finish unchanged before a new exact-head run.
+
+Installed-agent proof is mixed, not complete: Codex successfully forked a synthetic
+saved conversation through global search/profile/API into a two-repository
+workspace, with distinct native identity, copied history and unchanged parent,
+without a model turn. Installed Claude failed to find its source conversation
+from the new nongit grouped root. Adding the old directory with --add-dir did not
+fix it. A fixture-only wrapper that copies the source transcript to the new
+profile project directory before native --fork-session succeeded with distinct
+identity and copied history. That wrapper is NOT product code: transcript and
+sidecar integrity, collision handling, stale seed cleanup and real API/browser
+integration still need implementation and tests before Claude grouped forks ship.

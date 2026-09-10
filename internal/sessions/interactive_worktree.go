@@ -96,20 +96,25 @@ func (m *Manager) workspaceSources(o LaunchOpts) ([]worktree.RepositorySource, e
 // WorkspaceAt resolves a grouped allocation shared by fresh forks or resumed
 // sessions. Sharing the directory never gives another session removal ownership.
 func (m *Manager) WorkspaceAt(targetID int64, directory string) (*worktree.Interactive, error) {
-	rows, err := m.DB.Sessions(true)
+	if directory == "" {
+		return nil, nil
+	}
+	rows, err := m.DB.Query(`SELECT worktree_json FROM sessions WHERE target_id=? AND worktree_json<>''`, targetID)
 	if err != nil {
 		return nil, err
 	}
-	for _, row := range rows {
-		if row.TargetID != targetID || row.WorktreeJSON == "" {
-			continue
+	defer rows.Close()
+	for rows.Next() {
+		var raw string
+		if err := rows.Scan(&raw); err != nil {
+			return nil, err
 		}
 		var workspace worktree.Interactive
-		if json.Unmarshal([]byte(row.WorktreeJSON), &workspace) == nil && len(workspace.Repositories) > 0 && path.Clean(workspace.Path) == path.Clean(directory) {
+		if json.Unmarshal([]byte(raw), &workspace) == nil && len(workspace.Repositories) > 0 && path.Clean(workspace.Path) == path.Clean(directory) {
 			return &workspace, nil
 		}
 	}
-	return nil, nil
+	return nil, rows.Err()
 }
 
 // Fork from each child's committed revision, while keeping the stable source
