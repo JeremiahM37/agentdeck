@@ -1,6 +1,6 @@
 # Multi-repository workspace implementation plan
 
-This is an internal staging design. Browser multi-repository selection is implemented; terminal creation selection is still pending. Session creation accepts
+This is an internal staging design. Browser multi-repository selection is implemented; terminal creation uses an optional repository-selection step. Session creation accepts
 `worktree.extra_repositories` entries with `project_id` and optional `base`.
 A primary project is required; all projects must use the same target, and a
 working-directory override is rejected for grouped creation. The planner, target validation and grouped creation/removal
@@ -113,3 +113,16 @@ The primary project's base and shared branch controls remain unchanged.
 `test_browser_creates_grouped_workspace` verifies390/1440 real creation with a
 base tag, exclusion of another target, no horizontal overflow, and draft retention
 after a503 followed by successful retry. Both cases pass. SWv48 is staged.
+
+
+Terminal New session has an optional Choose additional repositories step after
+the session form. It requires a primary project, isolated files and fresh context.
+The next screen offers add/edit/remove for same-target projects and an explicit
+Create session action. Per-repository base forms return to selection; Escape/back
+preserves the original session draft and repository choices. Failed API requests
+leave choices available for retry. Long titles/options are clipped to avoid
+terminal overlap; the picker displays the current choice rather than an unbounded
+row of all project names. Unit tests cover retained draft,503 retry state, removal,
+target filtering and width; a realPTY test creates a grouped session end-to-end.
+The firstPTY attempt moved off the already-selected primary project; corrected
+navigation passed without changing implementation semantics.

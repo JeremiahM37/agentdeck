@@ -15,13 +15,16 @@ type field struct {
 	Key, Label, Value   string
 	Options             []choice
 	Multiline, Required bool
+	Compact             bool
 }
 type dashboardForm struct {
-	title  string
-	fields []field
-	index  int
-	editor textarea.Model
-	submit func(map[string]any) tea.Cmd
+	title     string
+	fields    []field
+	index     int
+	editor    textarea.Model
+	submit    func(map[string]any) tea.Cmd
+	cancel    func() tea.Cmd
+	workspace *workspaceDraft
 }
 type dashboardAction struct {
 	Label, Method, Path, Operation, Warning string
@@ -230,6 +233,10 @@ func (m *dashboard) updateForm(msg tea.KeyMsg) tea.Cmd {
 	}
 	switch msg.String() {
 	case "esc":
+		if f.cancel != nil {
+			m.saveField()
+			return f.cancel()
+		}
 		m.form = nil
 		m.notice = "Cancelled"
 		return nil
@@ -307,7 +314,7 @@ func formBody(fields []field) (map[string]any, error) {
 				return nil, fmt.Errorf("Choose a project")
 			}
 			out[f.Key] = []int64{n}
-		case f.Key == "isolated" || f.Key == "resume" || f.Key == "brief" || f.Key == "yolo" || f.Key == "enabled" || f.Key == "dispatch":
+		case f.Key == "multi_repo" || f.Key == "isolated" || f.Key == "resume" || f.Key == "brief" || f.Key == "yolo" || f.Key == "enabled" || f.Key == "dispatch":
 			out[f.Key] = v == "true"
 		default:
 			out[f.Key] = v
@@ -317,7 +324,7 @@ func formBody(fields []field) (map[string]any, error) {
 }
 func (m *dashboard) formView() string {
 	f := m.form
-	lines := []string{accent.Bold(true).Render(" " + f.title), muted.Render(" Tab next · ←/→ choose · Ctrl-s submit · Esc cancel"), ""}
+	lines := []string{accent.Bold(true).Render(clip(" "+f.title, m.width-4)), muted.Render(" Tab next · ←/→ choose · Ctrl-s submit · Esc cancel"), ""}
 	start := max(0, f.index-max(1, m.height-17))
 	for i := start; i < len(f.fields) && len(lines) < max(5, m.height-12); i++ {
 		v := f.fields[i]
@@ -342,13 +349,16 @@ func (m *dashboard) formView() string {
 	if len(current.Options) > 0 {
 		var opts []string
 		for _, c := range current.Options {
+			if current.Compact && c.Value != current.Value {
+				continue
+			}
 			label := c.Label
 			if c.Value == current.Value {
 				label = "[" + label + "]"
 			}
 			opts = append(opts, label)
 		}
-		lines = append(lines, " ← "+strings.Join(opts, " · ")+" →")
+		lines = append(lines, clip(" ← "+strings.Join(opts, " · ")+" →", m.width-4))
 	} else {
 		lines = append(lines, f.editor.View())
 	}
@@ -400,7 +410,7 @@ func (m *dashboard) newForm() tea.Cmd {
 	switch kind {
 	case "sessions":
 		agent.Label = "Agent (without a profile)"
-		fields = []field{{Key: "name", Label: "Session name", Required: true}, optionField("profile_id", "Launch profile", "", m.profileChoices("Agent and project defaults"), false), optionField("project_id", "Project", project, projects, false), optionField("target_id", "Target", target, targets, false), agent, {Key: "model", Label: "Model (blank uses default)"}, {Key: "workdir", Label: "Directory (blank uses project or scratch)"}, {Key: "prime", Label: "Initial prompt", Multiline: true}, boolField("isolated", "Isolate files in a new Git worktree", false), {Key: "worktree_base", Label: "Worktree base (blank = committed HEAD)"}, {Key: "worktree_branch", Label: "New branch (blank = unique name)"}, boolField("resume", "Resume latest conversation", false), boolField("brief", "Include project brief", true), boolField("yolo", "Skip agent permission prompts", false), {Key: "group_path", Label: "Group path (optional, e.g. Work/Client)"}}
+		fields = []field{{Key: "name", Label: "Session name", Required: true}, optionField("profile_id", "Launch profile", "", m.profileChoices("Agent and project defaults"), false), optionField("project_id", "Project", project, projects, false), optionField("target_id", "Target", target, targets, false), agent, {Key: "model", Label: "Model (blank uses default)"}, {Key: "workdir", Label: "Directory (blank uses project or scratch)"}, {Key: "prime", Label: "Initial prompt", Multiline: true}, boolField("isolated", "Isolate files in a new Git worktree", false), boolField("multi_repo", "Choose additional repositories after this form", false), {Key: "worktree_base", Label: "Worktree base (blank = committed HEAD)"}, {Key: "worktree_branch", Label: "New branch (blank = unique name)"}, boolField("resume", "Resume latest conversation", false), boolField("brief", "Include project brief", true), boolField("yolo", "Skip agent permission prompts", false), {Key: "group_path", Label: "Group path (optional, e.g. Work/Client)"}}
 	case "tasks":
 		fields = []field{{Key: "title", Label: "Task title", Required: true}, optionField("project_id", "Project", project, options(m.projects, ""), true), {Key: "prompt", Label: "Task prompt", Multiline: true, Required: true}, agent, {Key: "model", Label: "Model"}, {Key: "base_branch", Label: "Base branch (blank uses project default)"}, boolField("dispatch", "Dispatch now in an isolated worktree", true)}
 	case "routines":
@@ -412,6 +422,12 @@ func (m *dashboard) newForm() tea.Cmd {
 	}
 	return m.openForm("New "+strings.TrimSuffix(kind, "s"), fields, func(body map[string]any) tea.Cmd {
 		if kind == "sessions" {
+			if body["multi_repo"] == true {
+				if body["isolated"] != true || body["project_id"] == nil || body["workdir"] != nil || body["resume"] == true {
+					m.notice = "Choose a primary project and isolated files, with no directory override or resume."
+					return nil
+				}
+			}
 			if body["profile_id"] != nil {
 				delete(body, "agent") // The selected profile determines its agent.
 			}
@@ -426,6 +442,13 @@ func (m *dashboard) newForm() tea.Cmd {
 			}
 			if body["project_id"] == nil && body["workdir"] == nil {
 				body["scratch"] = true
+			}
+		}
+		if kind == "sessions" {
+			multi := body["multi_repo"] == true
+			delete(body, "multi_repo")
+			if multi {
+				return m.workspaceRepositoryForm(body, m.form)
 			}
 		}
 		if kind == "tasks" && body["dispatch"] == true {

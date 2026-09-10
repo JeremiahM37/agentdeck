@@ -93,3 +93,22 @@ def test_browser_creates_grouped_workspace(page,real_terminal,width):
     assert len(repositories)==2 and repositories[1]['worktree']['base']=='review-base'
     assert (Path(repositories[1]['worktree']['path'])/'extra.txt').read_text()=='extra repository\n'
     assert row['workdir']==row['workspace']['path']
+
+
+def test_terminal_creates_grouped_workspace(real_terminal):
+    t=real_terminal;grouped(t);d=Dashboard(t)
+    try:
+        d.wait('Real terminal');d.send('/Real terminal\r');d.send('n');d.wait('New session')
+        d.send('Terminal grouped creation')
+        d.send('\t'*8+'\x1b[C')
+        # Additional repository workflow immediately follows isolation.
+        d.send('\t\x1b[C\x13');d.wait('Workspace repositories:')
+        d.wait('Add Second repository');d.send('\x13');d.wait('Base (blank uses committed HEAD)')
+        d.send('HEAD\x13');d.wait('Second repository @ HEAD');d.wait('Create session')
+        d.send('\x13');d.wait('Create session completed',timeout=20)
+        row=next(r for r in t['api']('/sessions') if r['name']=='Terminal grouped creation')
+        assert len(row['workspace']['repositories'])==2
+        assert row['workspace']['repositories'][1]['worktree']['base']=='HEAD'
+        assert row['workdir']==row['workspace']['path']
+        d.quit()
+    finally:d.close()
