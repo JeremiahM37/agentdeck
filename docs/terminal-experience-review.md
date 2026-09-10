@@ -312,3 +312,14 @@ now name their controls; related status/help text is associated with the relevan
 fields, and the close button has an explicit accessible name. The real Git/tmux
 phone and desktop launch-and-cleanup tests now select a project and enter a name
 through those labels, including clicking the Name label to focus the input.
+
+
+The shared details/form panel now exposes a named dialog, keeps Tab navigation
+inside its visible enabled controls, and makes the background inert while open.
+Closing restores focus to its opener (or the current navigation button if that
+opener disappeared). Native profile/history dialogs opened above it retain their
+own keyboard behavior. Rendering updates do not reset focus; a form's explicit
+initial focus is preserved. Phone/desktop tests cover forward/backward wrapping,
+nested profile editing with a retained draft, and Escape restoration; regression
+flows cover task dispatch, approvals, routine editing, handoffs and task links.
+These are browser keyboard/accessibility checks, not a manual screen-reader audit.

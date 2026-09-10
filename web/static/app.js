@@ -1,3 +1,4 @@
+import { SheetFocus } from "/sheet-focus.js";
 import { workspaceRepositories } from "/workspace-repositories.js";
 import { renderSessionGroups } from "/session-groups.js";
 import { CommandPalette } from "/command-palette.js";
@@ -12,6 +13,7 @@ import { openConversation } from "/conversation.js";
 /* agentdeck PWA — vanilla ES module, no build step. */
 const $ = (s, el = document) => el.querySelector(s);
 const $$ = (s, el = document) => [...el.querySelectorAll(s)];
+const sheetFocus = new SheetFocus($("#sheet"));
 const COLUMNS = ["backlog", "queued", "running", "review", "done", "failed"];
 // the columns where a card is history rather than work in progress
 const FINISHED_COLUMNS = ["done", "failed"];
@@ -1485,6 +1487,7 @@ function closeSheet() {
   state.sheet = null;
   if (state.taskES) { state.taskES.close(); state.taskES = null; }
   $("#sheet").hidden = true; $("#sheet-backdrop").hidden = true;
+  sheetFocus.close();
 }
 
 function evRow(e) {
@@ -1940,6 +1943,12 @@ async function takeOverTask(t) {
 }
 
 function renderSheet() {
+  if (!state.sheet) return;
+  const previous = document.activeElement;
+  renderSheetContent();
+  sheetFocus.open(previous);
+}
+function renderSheetContent() {
   if (!state.sheet) return;
   const sheet = $("#sheet");
   sheet.hidden = false; $("#sheet-backdrop").hidden = false;
