@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	agentcfg "github.com/JeremiahM37/agentdeck/internal/agents"
 	"github.com/JeremiahM37/agentdeck/internal/bus"
 	"github.com/JeremiahM37/agentdeck/internal/executor"
 	"github.com/JeremiahM37/agentdeck/internal/memory"
@@ -120,12 +121,19 @@ func (m *Manager) Launch(ctx context.Context, o LaunchOpts) (*store.Session, err
 		return nil, err
 	}
 	workdir := o.Workdir
+	var project *store.Project
 	if workdir == "" && o.ProjectID != nil {
-		proj, err := m.DB.Project(*o.ProjectID)
+		project, err = m.DB.Project(*o.ProjectID)
 		if err != nil {
 			return nil, err
 		}
-		workdir = proj.RepoPath
+		workdir = project.RepoPath
+	}
+	if project == nil && o.ProjectID != nil {
+		project, err = m.DB.Project(*o.ProjectID)
+		if err != nil {
+			return nil, err
+		}
 	}
 	if o.Worktree != nil && (o.Scratch || o.Resume || o.ResumeID != "" || o.ReservedID != 0) {
 		return nil, fmt.Errorf("an isolated worktree supports fresh context or a conversation fork; it cannot resume an existing conversation")
@@ -312,10 +320,12 @@ func (m *Manager) Launch(ctx context.Context, o LaunchOpts) (*store.Session, err
 			}
 			plan = worktree.PlanInteractive(strings.TrimSpace(root.Stdout), sess.ID, *o.Worktree)
 			if o.ProjectID != nil {
-				project, projectErr := m.DB.Project(*o.ProjectID)
-				if projectErr != nil {
+				if project == nil {
+					project, err = m.DB.Project(*o.ProjectID)
+				}
+				if err != nil {
 					m.end(sess.ID, StatusDead)
-					return nil, projectErr
+					return nil, err
 				}
 				plan.SetupCommand, plan.SetupEnv = project.SetupCmd, m.ProjectEnv(o.ProjectID)
 			}
@@ -384,6 +394,53 @@ func (m *Manager) Launch(ctx context.Context, o LaunchOpts) (*store.Session, err
 		m.end(sess.ID, StatusDead)
 		return nil, fmt.Errorf("working directory is unavailable on target: %s", workdir)
 	}
+	// Project MCP declarations must reach interactive sessions as well as tasks.
+	// Materialize only AgentDeck-owned runtime files; Codex receives additive
+	// -c overrides so its normal CODEX_HOME remains intact.
+	var toolArgs []string
+	if project != nil {
+		mcp := store.UnjObj(project.MCPJSON)
+		if len(mcp) > 0 {
+			if agent == "claude" {
+				raw, mcpErr := agentcfg.MCPPayload(mcp)
+				if mcpErr != nil {
+					m.end(sess.ID, StatusDead)
+					return nil, mcpErr
+				}
+				rel := agentcfg.InteractiveMCPRel(sess.ID)
+				dir := workdir + "/" + strings.TrimSuffix(rel, "/mcp.json")
+				// Never overwrite a foreign runtime directory. The marker is scoped
+				// to this session, and the directory is private to its owner.
+				guard := "if [ -e " + shellq.Quote(dir) + " ] && [ ! -f " + shellq.Quote(dir+"/.agentdeck-owned") + " ]; then exit 73; fi; mkdir -p " + shellq.Quote(dir) + " && chmod 700 " + shellq.Quote(dir) + " && printf '%s' agentdeck-interactive-mcp > " + shellq.Quote(dir+"/.agentdeck-owned")
+				if result, guardErr := ex.Run(ctx, guard, executor.RunOpts{Timeout: 20}); guardErr != nil || !result.OK() {
+					m.end(sess.ID, StatusDead)
+					return nil, fmt.Errorf("interactive MCP runtime is not AgentDeck-owned")
+				}
+				if mcpErr = ex.WriteFile(ctx, workdir+"/"+rel, raw); mcpErr != nil {
+					m.end(sess.ID, StatusDead)
+					return nil, mcpErr
+				}
+				if result, chmodErr := ex.Run(ctx, "chmod 600 "+shellq.Quote(workdir+"/"+rel), executor.RunOpts{Timeout: 20}); chmodErr != nil || !result.OK() {
+					m.end(sess.ID, StatusDead)
+					return nil, fmt.Errorf("could not secure interactive MCP runtime")
+				}
+				toolArgs = []string{"--mcp-config", rel}
+				if project.StrictMCP != 0 {
+					toolArgs = append(toolArgs, "--strict-mcp-config")
+				}
+			} else if agent == "codex" {
+				if project.StrictMCP != 0 {
+					m.end(sess.ID, StatusDead)
+					return nil, fmt.Errorf("strict_mcp is unsupported for Codex additive configuration")
+				}
+				toolArgs, err = agentcfg.CodexMCPArgs(mcp)
+				if err != nil {
+					m.end(sess.ID, StatusDead)
+					return nil, err
+				}
+			}
+		}
+	}
 	// answer the CLI's "do you trust this folder?" before it can ask: starting an
 	// agent here, on purpose, is the answer. Best-effort — a CLI that changes
 	// where it keeps this must not stop a session from launching.
@@ -418,7 +475,7 @@ func (m *Manager) Launch(ctx context.Context, o LaunchOpts) (*store.Session, err
 	cmd := spec.LaunchCommand(Start{
 		SetupToken: setupToken,
 		Workdir:    workdir, TmuxName: tmuxName, Model: o.Model, Resume: o.Resume, ResumeID: o.ResumeID, ForkID: forkID,
-		Prompt: argPrompt, EnvPrefix: envPrefix, Yolo: o.Yolo})
+		Prompt: argPrompt, EnvPrefix: envPrefix, Yolo: o.Yolo, ToolArgs: toolArgs})
 	r, err := ex.Run(ctx, cmd, executor.RunOpts{Timeout: 60})
 	if err != nil {
 		m.end(sess.ID, "dead")

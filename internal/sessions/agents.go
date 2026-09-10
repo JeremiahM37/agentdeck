@@ -177,12 +177,18 @@ type Start struct {
 	// is the supervision, and being asked to confirm every edit in a session you
 	// opened on purpose is just friction. An agent with no YoloArgs ignores it.
 	Yolo bool
+	// ToolArgs are provider-specific configuration flags supplied by the
+	// project. They are quoted here because they may contain MCP secrets.
+	ToolArgs []string
 }
 
 // LaunchCommand builds the tmux command that starts one interactive session.
 func (s Spec) LaunchCommand(o Start) string {
 	parts := []string{s.Command}
 	parts = append(parts, s.Args...)
+	for _, arg := range o.ToolArgs {
+		parts = append(parts, shellq.Quote(arg))
+	}
 	if o.ForkID != "" {
 		for _, arg := range s.ForkArgs {
 			parts = append(parts, shellq.Quote(strings.NewReplacer("{id}", o.ForkID, "{dir}", o.Workdir).Replace(arg)))

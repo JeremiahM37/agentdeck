@@ -441,6 +441,7 @@ func (s *Scheduler) buildLaunch(att *store.Attempt, c *runCtx, workdir, sess str
 		SettingsPath:   kw.SettingsPath,
 		MCPConfig:      kw.MCPConfig,
 		StrictMCP:      kw.StrictMCP,
+		ExtraArgs:      kw.ExtraArgs,
 	})
 }
 

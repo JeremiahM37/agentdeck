@@ -58,6 +58,24 @@ func TestLaunchCommandResumesPerAgent(t *testing.T) {
 	}
 }
 
+func TestInteractiveMCPArgsSurviveResumeAndFork(t *testing.T) {
+	spec, ok := Find(Builtins(), "codex")
+	if !ok {
+		t.Fatal("codex builtin missing")
+	}
+	args := []string{"-c", `mcp_servers.ops_tools.command="python3"`}
+	for _, start := range []Start{
+		{Workdir: "/r", TmuxName: "fresh", ToolArgs: args},
+		{Workdir: "/r", TmuxName: "resume", ResumeID: "session-1", ToolArgs: args},
+		{Workdir: "/r", TmuxName: "fork", ForkID: "session-1", ToolArgs: args},
+	} {
+		cmd := spec.LaunchCommand(start)
+		if !strings.Contains(cmd, `-c`) || !strings.Contains(cmd, `mcp_servers.ops_tools.command="python3"`) {
+			t.Errorf("MCP args missing from %s launch: %s", start.TmuxName, cmd)
+		}
+	}
+}
+
 func TestLaunchCommandQuotesHostileWorkdirs(t *testing.T) {
 	cmd := launcher().LaunchCommand("claude", "/srv/'; rm -rf /; '", "s", "", false, "")
 	if strings.Count(cmd, "rm -rf /") != 1 || !strings.Contains(cmd, `'\''`) {

@@ -42,6 +42,8 @@ type LaunchSpec struct {
 	SettingsPath   string
 	MCPConfig      string
 	StrictMCP      bool
+	// ExtraArgs are provider-specific flags, already validated by the adapter.
+	ExtraArgs []string
 }
 
 // EnvPrefix renders the shell prefix of KEY=VAL pairs injected before the agent
@@ -104,13 +106,18 @@ func (l Launcher) Command(s LaunchSpec) (string, error) {
 		return l.claudeCommand(s, prefix), nil
 	}
 
-	// codex/gemini have no equivalent of --settings/--mcp-config; the staged
-	// context bundle still reaches them through the prompt prefix
+	// Codex receives validated additive -c overrides; Gemini has no equivalent
+	// of --settings/--mcp-config. The staged context bundle still reaches both
+	// through the prompt prefix.
 	rt := RuntimeDir(s.Worktree)
 	var parts []string
 	switch s.Agent {
 	case "codex":
-		parts = []string{l.bin(l.CodexBin, "codex"), "exec", "--json"}
+		parts = []string{l.bin(l.CodexBin, "codex")}
+		for _, arg := range s.ExtraArgs {
+			parts = append(parts, shellQuote(arg))
+		}
+		parts = append(parts, "exec", "--json")
 		if s.Model != "" {
 			parts = append(parts, "-m", s.Model)
 		}

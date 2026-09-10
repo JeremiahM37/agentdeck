@@ -19,6 +19,7 @@ type launchKW struct {
 	SettingsPath string
 	MCPConfig    string
 	StrictMCP    bool
+	ExtraArgs    []string
 }
 
 // EffectiveMCPServers lists the server names this attempt can actually reach, so
@@ -111,6 +112,9 @@ func (s *Scheduler) stageRuntime(ctx context.Context, ex executor.Executor, work
 	// local one
 	mcp := store.UnjObj(c.Project.MCPJSON)
 	if len(mcp) > 0 {
+		if firstNonEmpty(c.Task.Agent, "claude") == "codex" && c.Project.StrictMCP != 0 {
+			return kw, fmt.Errorf("strict_mcp is unsupported for Codex additive configuration")
+		}
 		payload := mcp
 		if _, ok := mcp["mcpServers"]; !ok {
 			payload = map[string]any{"mcpServers": mcp}
@@ -121,6 +125,13 @@ func (s *Scheduler) stageRuntime(ctx context.Context, ex executor.Executor, work
 		}
 		kw.MCPConfig = agents.MCPRel
 		kw.StrictMCP = c.Project.StrictMCP != 0
+		if firstNonEmpty(c.Task.Agent, "claude") == "codex" {
+			var err error
+			kw.ExtraArgs, err = agents.CodexMCPArgs(mcp)
+			if err != nil {
+				return kw, err
+			}
+		}
 	}
 
 	// settings.json is written for EVERY permission mode, not just the gated one:

@@ -54,11 +54,18 @@ curl -X PATCH .../api/projects/3 -d '{
   "strict_mcp": false}'
 ```
 
-Written to `.agentdeck/mcp.json` and passed as `--mcp-config`. A bare mapping is
-wrapped in `mcpServers` for you; a full `{"mcpServers": {...}}` document is
-passed through. `strict_mcp` adds `--strict-mcp-config`, which ignores the host's
-own MCP configuration entirely — use it when you want the tool surface to be
-reproducible rather than dependent on whoever set up the box.
+For interactive Claude and Codex sessions, the project declaration is applied
+after the final worktree is selected, so fresh, resumed, and forked sessions
+see the same servers. Claude receives a session-private
+`.agentdeck/interactive/<session-id>/mcp.json` via
+`--mcp-config`; `strict_mcp` additionally supplies `--strict-mcp-config`.
+Codex receives additive `-c mcp_servers.<server>.<field>=<value>` overrides
+before `exec`, while its normal `CODEX_HOME` remains intact (including auth,
+history, instructions, and skills). A bare mapping is wrapped in `mcpServers`;
+a full `{"mcpServers": {...}}` document is normalized once. Values are encoded
+as argv/TOML rather than interpolated into logs or events. Unsupported agent
+adapters do not claim MCP support. `strict_mcp` is rejected for Codex because
+Codex's additive overrides cannot express replacement of its user config.
 
 ## Permissions
 

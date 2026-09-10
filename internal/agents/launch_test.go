@@ -71,6 +71,17 @@ func TestClaudeMCPFlags(t *testing.T) {
 	lacks(t, loose, "--strict-mcp-config")
 }
 
+func TestCodexMCPOverridesPrecedeSubcommand(t *testing.T) {
+	cmd := mustCommand(t, LaunchSpec{Agent: "codex", Worktree: "/wt", TmuxSession: "s", PermissionMode: "acceptEdits",
+		ExtraArgs: []string{"-c", `mcp_servers."my.server".command="srv"`}})
+	if strings.Index(cmd, "codex -c") < 0 || strings.Index(cmd, "exec --json") < strings.Index(cmd, "codex -c") {
+		t.Fatalf("codex MCP override: %s", cmd)
+	}
+	if strings.Contains(cmd, "CODEX_HOME") {
+		t.Fatalf("MCP flags must not replace CODEX_HOME: %s", cmd)
+	}
+}
+
 func TestCodexLaunchFlags(t *testing.T) {
 	cmd := mustCommand(t, LaunchSpec{Agent: "codex", Worktree: "/wt",
 		TmuxSession: "adk-2", PermissionMode: "acceptEdits", Model: "o4-mini"})

@@ -62,6 +62,12 @@ type Permissions struct {
 	AdditionalDirectories []string `json:"additionalDirectories,omitempty"`
 }
 
+// InteractiveMCPRel is private to one session, avoiding collisions with task
+// staging and preserving any foreign .agentdeck/mcp.json in the worktree.
+func InteractiveMCPRel(sessionID int64) string {
+	return fmt.Sprintf(".agentdeck/interactive/%d/mcp.json", sessionID)
+}
+
 func (p Permissions) isEmpty() bool {
 	return len(p.Allow) == 0 && len(p.Deny) == 0 && len(p.Ask) == 0 &&
 		p.DefaultMode == "" && len(p.AdditionalDirectories) == 0

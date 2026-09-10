@@ -48,8 +48,10 @@ after-the-fact) only appear in newer builds.
 
 The staged context bundle reaches every agent — it is prepended to the prompt, so
 it needs no CLI support. Per-project MCP servers and permission rules are written
-for Claude only (`--mcp-config`, `--settings`); codex reads its own
-`~/.codex/config.toml`. See [context-parity.md](context-parity.md).
+for Claude (`--mcp-config`, `--settings`) and MCP servers are passed additively
+to Codex with `-c` overrides; Codex keeps its normal `~/.codex` home. The same
+project MCP declaration reaches fresh, resumed, and forked interactive sessions.
+See [context-parity.md](context-parity.md).
 
 ## Binary not found
 

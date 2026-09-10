@@ -91,6 +91,21 @@ func TestCodexDispatchUsesCodexFlags(t *testing.T) {
 	}
 }
 
+func TestCodexInteractiveSessionGetsProjectMCPAdditively(t *testing.T) {
+	h := newHarness(t)
+	p := h.project("cxinteractive", obj{"default_agent": "codex",
+		"mcp": obj{"ops_tools": obj{"command": "python3", "args": []string{"-m", "ops"}}}})
+	h.session(obj{"agent": "codex", "project_id": p.id()})
+	cmd := h.launchCmd()
+	if !strings.Contains(cmd, `codex -c`) || !strings.Contains(cmd, `mcp_servers.ops_tools.args=["-m","ops"]`) ||
+		!strings.Contains(cmd, `mcp_servers.ops_tools.command="python3"`) {
+		t.Fatalf("interactive Codex launch missing additive MCP overrides: %s", cmd)
+	}
+	if strings.Contains(cmd, "CODEX_HOME") {
+		t.Fatalf("interactive launch must preserve the ambient Codex home: %s", cmd)
+	}
+}
+
 func TestCodexGetsStagedContextLikeClaude(t *testing.T) {
 	h := newHarness(t)
 	house := writeFile(t, filepath.Join(t.TempDir(), "CLAUDE.md"), "codex should read this too")
