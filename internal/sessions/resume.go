@@ -21,7 +21,11 @@ func (m *Manager) ResumeConversation(ctx context.Context, sourceID int64, cid, n
 	if source.EndedAt == nil {
 		return nil, fmt.Errorf("stop the original session before resuming; use Fork to branch a running conversation")
 	}
-	if m.ExactResumeID(source.Agent, cid) == "" {
+	config, err := m.SessionLaunchConfiguration(source)
+	if err != nil {
+		return nil, err
+	}
+	if cid == "" || len(config.Spec.ResumeIDArgs) == 0 {
 		return nil, fmt.Errorf("this agent cannot resume that exact conversation")
 	}
 	key := fmt.Sprintf("%d/%s/%s", source.TargetID, source.Agent, cid)
@@ -74,5 +78,5 @@ func (m *Manager) ResumeConversation(ctx context.Context, sourceID int64, cid, n
 	if name == "" {
 		name = source.Name + " · resumed"
 	}
-	return m.Launch(ctx, LaunchOpts{TargetID: source.TargetID, ProjectID: source.ProjectID, GroupPath: source.GroupPath, Name: name, Agent: source.Agent, Model: source.Model, Workdir: source.Workdir, ResumeID: cid})
+	return m.Launch(ctx, LaunchOpts{Configuration: config, TargetID: source.TargetID, ProjectID: source.ProjectID, GroupPath: source.GroupPath, Name: name, Agent: source.Agent, Model: source.Model, Workdir: source.Workdir, ResumeID: cid})
 }

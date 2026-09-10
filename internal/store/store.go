@@ -35,6 +35,25 @@ func Open(path string) (*DB, error) {
 			return nil, err
 		}
 	}
+	// The database includes explicitly configured credentials. Restrict it before
+	// SQLite opens it, so newly created journal files inherit private permissions.
+	if path != ":memory:" {
+		f, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0o600)
+		if err != nil {
+			return nil, err
+		}
+		err = f.Chmod(0o600)
+		f.Close()
+		if err != nil {
+			return nil, err
+		}
+		for _, suffix := range []string{"-wal", "-shm", "-journal"} {
+			if err := os.Chmod(path+suffix, 0o600); err != nil && !os.IsNotExist(err) {
+				return nil, err
+			}
+		}
+	}
+
 	dsn := path + "?_pragma=journal_mode(WAL)&_pragma=busy_timeout(10000)" +
 		"&_pragma=synchronous(NORMAL)&_pragma=foreign_keys(1)"
 	sqldb, err := sql.Open("sqlite", dsn)

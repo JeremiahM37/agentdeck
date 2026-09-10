@@ -130,7 +130,7 @@ There is no fallback to `--last`, `--continue`, or fresh history on an error.
 Selection is explicit because a workspace can contain multiple conversations.
 This does not automatically infer IDs for agents launched outside AgentDeck,
 or detect a writer on an unrelated machine. Automatic authoritative identity
-capture, archive lifecycle, profiles and broader comparison workflows remain.
+capture, profiles and broader comparison workflows remain.
 
 
 ## Archive and return later
@@ -165,3 +165,29 @@ Action menus now calculate their available space around the desktop sidebar,
 header and mobile bottom navigation. The archive browser test reproduced a
 visible-but-unclickable desktop action underneath the sidebar; the corrected
 menu remains within the usable area on desktop and phone, including after resize.
+
+
+## Configuration continuity
+
+Native history now honors the project's environment overrides, including
+`CLAUDE_CONFIG_DIR` and `CODEX_HOME`. New interactive launches retain their
+resolved agent command, fixed arguments, declared environment and permission
+mode privately in the database. Reading, forking and resuming that session use
+those settings even if the agent or project settings later change. A new session
+uses current settings: agent defaults, then project overrides, then explicit
+launch overrides. Trust commands receive the same declared environment.
+
+This records declared launch settings, not a copy of the target's ambient
+environment or the contents of its configuration and credential files. Changes
+inside those files still apply, and literal credentials explicitly set as
+environment overrides remain the saved values. Existing/adopted records without
+a snapshot use current agent and project settings; their original process
+environment cannot be reconstructed. Invalid snapshots produce an error rather
+than silently selecting another configuration.
+
+The snapshot is excluded from session JSON and event payloads. SQLite database
+and journal files are restricted to the service account. Regression tests use
+real tmux processes and native Claude/Codex transcript files: conflicting project
+and agent configuration directories, settings edits between fork and resume,
+unchanged history files, private API responses, database migration and reopen.
+Named configuration profiles and profile selection remain separate work.

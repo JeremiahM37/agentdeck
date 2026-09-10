@@ -35,7 +35,11 @@ func (s *Server) nativeConversationData(r *http.Request, row *store.Session, cid
 	if err != nil {
 		return nil, err
 	}
-	spec, _ := sessions.Find(s.agentSpecs(), row.Agent)
+	config, err := s.Sessions.SessionLaunchConfiguration(row)
+	if err != nil {
+		return nil, err
+	}
+	spec := config.Spec
 	prefix, err := sessions.EnvPrefix(spec.Env)
 	if err != nil {
 		return nil, err
@@ -63,7 +67,12 @@ func (s *Server) nativeConversations(w http.ResponseWriter, r *http.Request) {
 		httpError(w, 409, "%s", err)
 		return
 	}
-	spec, _ := sessions.Find(s.agentSpecs(), row.Agent)
+	config, err := s.Sessions.SessionLaunchConfiguration(row)
+	if err != nil {
+		httpError(w, 409, "%s", err)
+		return
+	}
+	spec := config.Spec
 	out["fork_supported"], _ = json.Marshal(len(spec.ForkArgs) > 0)
 	out["resume_supported"], _ = json.Marshal(len(spec.ResumeIDArgs) > 0 && row.EndedAt != nil && row.ArchivedAt == nil)
 	w.Header().Set("Cache-Control", "no-store")
@@ -82,7 +91,12 @@ func (s *Server) forkConversation(w http.ResponseWriter, r *http.Request) {
 		httpError(w, 422, "choose the exact saved conversation to fork")
 		return
 	}
-	spec, _ := sessions.Find(s.agentSpecs(), row.Agent)
+	config, err := s.Sessions.SessionLaunchConfiguration(row)
+	if err != nil {
+		httpError(w, 409, "%s", err)
+		return
+	}
+	spec := config.Spec
 	if len(spec.ForkArgs) == 0 {
 		httpError(w, 409, "forking is not configured for this agent")
 		return
@@ -101,7 +115,7 @@ func (s *Server) forkConversation(w http.ResponseWriter, r *http.Request) {
 		httpError(w, 422, "name exceeds 160 bytes")
 		return
 	}
-	next, err := s.Sessions.Launch(r.Context(), sessions.LaunchOpts{GroupPath: row.GroupPath, ProjectID: row.ProjectID, TargetID: row.TargetID, Name: name, Agent: row.Agent, Model: row.Model, Workdir: row.Workdir, ForkID: in.ConversationID})
+	next, err := s.Sessions.Launch(r.Context(), sessions.LaunchOpts{Configuration: config, GroupPath: row.GroupPath, ProjectID: row.ProjectID, TargetID: row.TargetID, Name: name, Agent: row.Agent, Model: row.Model, Workdir: row.Workdir, ForkID: in.ConversationID})
 	if err != nil {
 		httpError(w, 502, "%s", err)
 		return

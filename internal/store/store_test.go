@@ -2,6 +2,7 @@ package store
 
 import (
 	"database/sql"
+	"os"
 	"path/filepath"
 	"testing"
 )
@@ -331,5 +332,66 @@ func TestArchiveMetadataAndSnapshotSurviveReopen(t *testing.T) {
 	var snapshot string
 	if err := db.QueryRow("SELECT archive_text FROM sessions WHERE id=?", row.ID).Scan(&snapshot); err != nil || snapshot != "Retained output Ω" {
 		t.Fatalf("snapshot lost: %q %v", snapshot, err)
+	}
+}
+
+func TestLaunchConfigurationMigrationPrivacyAndReopen(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "configuration.db")
+	db, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	target, err := db.InsertTarget(&Target{Name: "config", Kind: "local"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	row, err := db.InsertSession(&Session{TargetID: target.ID, Name: "legacy"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec("ALTER TABLE sessions DROP COLUMN launch_config_json"); err != nil {
+		t.Fatal(err)
+	}
+	db.Close()
+	if err := os.Chmod(path, 0644); err != nil {
+		t.Fatal(err)
+	}
+	db, err = Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := db.Session(row.ID)
+	if err != nil || got.LaunchConfigJSON != "" {
+		t.Fatalf("legacy migration: %v", err)
+	}
+	config := `{"version":1,"spec":{"name":"claude","command":"original","env":{"TOKEN":"private"}}}`
+	if err := db.Update("sessions", row.ID, map[string]any{"launch_config_json": config}); err != nil {
+		t.Fatal(err)
+	}
+	for _, suffix := range []string{"", "-wal", "-shm"} {
+		info, err := os.Stat(path + suffix)
+		if os.IsNotExist(err) && suffix != "" {
+			continue
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		if info.Mode().Perm()&0077 != 0 {
+			t.Fatalf("database file not private: %s %v", suffix, info.Mode())
+		}
+	}
+	db.Close()
+	db, err = Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	got, err = db.Session(row.ID)
+	if err != nil || got.LaunchConfigJSON != config {
+		t.Fatalf("snapshot lost: %v", err)
+	}
+	rows, err := db.Sessions(true)
+	if err != nil || len(rows) != 1 || rows[0].LaunchConfigJSON != config {
+		t.Fatalf("listing lost snapshot: %v", err)
 	}
 }

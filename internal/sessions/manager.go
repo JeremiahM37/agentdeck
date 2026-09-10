@@ -60,14 +60,16 @@ func (m *Manager) publish(s *store.Session) {
 
 // LaunchOpts are the inputs of a new interactive session.
 type LaunchOpts struct {
-	GroupPath string
-	Worktree  *worktree.InteractiveOptions
-	ProjectID *int64
-	TargetID  int64
-	Name      string
-	Agent     string
-	Model     string
-	Workdir   string
+	// Configuration is internal: native continuations keep the source launch settings.
+	Configuration *LaunchConfiguration
+	GroupPath     string
+	Worktree      *worktree.InteractiveOptions
+	ProjectID     *int64
+	TargetID      int64
+	Name          string
+	Agent         string
+	Model         string
+	Workdir       string
 	// Resume asks the agent to pick up its own previous conversation
 	// (`claude --continue`), which is what you want when re-opening a project
 	// you were in yesterday.
@@ -164,11 +166,12 @@ func (m *Manager) Launch(ctx context.Context, o LaunchOpts) (*store.Session, err
 	if err != nil {
 		return nil, err
 	}
-	spec, ok := Find(m.specs(), agent)
-	if !ok {
+	config, err := m.launchConfiguration(agent, o.ProjectID, o.Configuration)
+	if err != nil {
 		m.end(sess.ID, "dead")
-		return nil, fmt.Errorf("unknown agent %q", agent)
+		return nil, err
 	}
+	spec := config.Spec
 	if o.ForkID != "" && len(spec.ForkArgs) == 0 {
 		m.end(sess.ID, "dead")
 		return nil, fmt.Errorf("agent %q does not support forking", agent)
@@ -205,7 +208,7 @@ func (m *Manager) Launch(ctx context.Context, o LaunchOpts) (*store.Session, err
 			return nil, err
 		}
 	}
-	spec = m.Launcher.resolve(spec)
+	spec.Args = append([]string(nil), spec.Args...)
 	for _, arg := range o.ExtraArgs {
 		spec.Args = append(spec.Args, shellq.Quote(arg))
 	}
@@ -230,11 +233,20 @@ func (m *Manager) Launch(ctx context.Context, o LaunchOpts) (*store.Session, err
 		m.end(sess.ID, "dead")
 		return nil, err
 	}
+	spec.Env = env
+	if o.Configuration != nil {
+		o.Yolo = config.Yolo
+	}
+	config.Spec, config.Yolo = spec, o.Yolo
+	if err := m.DB.Update("sessions", sess.ID, map[string]any{"launch_config_json": store.J(config)}); err != nil {
+		m.end(sess.ID, StatusDead)
+		return nil, err
+	}
 	// answer the CLI's "do you trust this folder?" before it can ask: starting an
 	// agent here, on purpose, is the answer. Best-effort — a CLI that changes
 	// where it keeps this must not stop a session from launching.
 	if probe := spec.TrustProbe(workdir); probe != "" {
-		if r, err := ex.Run(ctx, probe, executor.RunOpts{Timeout: 20}); err != nil || !r.OK() {
+		if r, err := ex.Run(ctx, envPrefix+"sh -c "+shellq.Quote(probe), executor.RunOpts{Timeout: 20}); err != nil || !r.OK() {
 			m.Log.Warn("could not pre-trust the working directory",
 				"agent", agent, "dir", workdir, "err", err)
 		}
