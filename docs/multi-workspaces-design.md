@@ -129,9 +129,8 @@ installed-Claude/Codex test using private synthetic histories and no model turn.
 It checks exact native identity, saved history visibility, captured launch
 profiles, and the correct shared or isolated working directory.
 
-Before rollout, finish recovery of unclaimed partial allocations, add
-repositories to existing groups, and handle the transition from older
-single-worktree sessions. Fresh isolated creation and isolated native
+Remaining workspace features include adding repositories to existing groups
+and transitioning older single-worktree sessions into groups. Fresh isolated creation and isolated native
 conversation forks run in the background from both interfaces, with recorded
 progress and retained failures. Run the full combined verify suite on
 the final source and verify deployment on both server and desktop.
@@ -216,3 +215,28 @@ creation, kills the real controller, and restarts it against the same database.
 Phone and desktop attach to the unchanged tmux session; an agent-side counter
 proves one launch. Unit integration tests also cover foreign/unmarked/missing
 terminals and unavailable targets.
+
+
+### Validate an interrupted allocation
+
+`POST /api/sessions/{id}/worktree/recover` is exposed as Recover allocation on
+failed setup records in both interfaces. It validates repository identity,
+branch, and the recorded initial commit before writing a missing ownership
+marker. It does not reset files, rerun hooks, restart setup, or launch an agent.
+Existing user changes are retained and still prevent cleanup. Grouped validation
+checks every child before claiming any missing marker; children never created
+are recorded absent, not fabricated. A changed revision, foreign owner, symlink
+replacement, active worker, or active terminal makes validation refuse.
+
+Single checkouts now retain their exact initial revision in the target-side
+setup record before `git worktree add`. Their operation lock is inherited by a
+detached checkout monitor and Git, so loss of the outer supervisor cannot make a
+running checkout appear safe to claim. The monitor observes cancellation even
+without its supervisor. Missing provenance in older interrupted allocations
+requires manual inspection; recovery never guesses a commit from today's HEAD.
+
+Tests cover killed single/grouped supervisors, cancellation, missing owner
+recovery, preserved dirty files, clean removal with branches retained, changed
+commits, foreign markers and symlink targets. The phone/desktop/PTY cancel flows
+continue through validation and guarded cleanup. Setup control errors avoid
+including private token-bearing record paths in public error messages.

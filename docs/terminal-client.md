@@ -68,6 +68,7 @@ agentdeck api POST /tasks/12/takeover '{}'
 agentdeck api PATCH /routines/3 '{"enabled":false}'
 agentdeck api POST /sessions/4/send '{"text":"Run the tests"}'
 agentdeck api POST /sessions/4/setup/cancel '{}'  # request checkout cancellation; retain files
+agentdeck api POST /sessions/4/worktree/recover '{}'  # validate interrupted allocation; keep files
 agentdeck upload session 4 ./requirements.pdf
 agentdeck files session 4
 agentdeck download session 4 reports/result.txt ./result.txt

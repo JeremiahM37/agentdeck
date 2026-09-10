@@ -1,11 +1,13 @@
 """Cancel real held checkouts through desktop, phone, and the terminal dashboard."""
 import time
+import subprocess
 from pathlib import Path
 import pytest
 from playwright.sync_api import expect
 from test_terminal_workspace import real_terminal
 from test_terminal_dashboard import Dashboard
 from test_background_setup_ui import hold_second_checkout
+from test_session_restore import request
 
 
 def prepare(t):
@@ -16,6 +18,13 @@ def prepare(t):
     row=t['api']('/sessions',{'name':'Cancel setup proof','agent':'claude','target_id':t['target_id'],
                              'project_id':primary['id'],'background':True,
                              'worktree':{'extra_repositories':[{'project_id':extra['id']}]}})
+    deadline=time.monotonic()+10
+    while time.monotonic()<deadline:
+        current=t['api'](f"/sessions/{row['id']}")
+        repos=current.get('workspace',{}).get('repositories',[])
+        if len(repos)==2 and (Path(repos[1]['worktree']['path'])/'second.txt').exists():break
+        time.sleep(.05)
+    assert len(repos)==2 and (Path(repos[1]['worktree']['path'])/'second.txt').exists()
     return release,row
 
 
@@ -29,7 +38,20 @@ def outcome(t,row):
     assert current['ended_at'] is not None
     first=Path(current['workspace']['repositories'][0]['worktree']['path'])
     assert (first/'hello.txt').exists(), 'cancellation removed the completed first checkout'
-    assert not current.get('tracking_identity'), 'cancelled setup launched an agent'
+    assert subprocess.run(['tmux','has-session','-t','='+current['tmux_session']],env=t['env'],capture_output=True).returncode!=0, 'cancelled setup launched an agent'
+    return current
+
+
+def recovery_outcome(t,row,kept):
+    current=t['api'](f"/sessions/{row['id']}")
+    assert all(r['worktree']['state']=='ready' for r in current['workspace']['repositories']),current
+    assert kept.read_text()=='user work'
+    assert request(t,'DELETE',f"/sessions/{row['id']}/worktree")[0]==409
+    kept.unlink()
+    assert request(t,'DELETE',f"/sessions/{row['id']}/worktree")[0]==200
+    for repo in current['workspace']['repositories']:
+        assert not Path(repo['worktree']['path']).exists()
+        subprocess.run(['git','-C',repo['worktree']['repo'],'rev-parse',repo['worktree']['branch']],check=True,capture_output=True)
 
 
 @pytest.mark.parametrize('width',[390,1440])
@@ -42,7 +64,12 @@ def test_browser_cancels_setup_and_retains_completed_checkout(page,real_terminal
         expect(card.locator('.spane')).to_contain_text('Isolated project: ready',timeout=15000)
         card.get_by_role('button',name='Cancel setup',exact=True).click()
         expect(card.locator('.spane')).to_contain_text('cancelled',timeout=15000)
-        outcome(t,row)
+        current=outcome(t,row)
+        kept=Path(current['workspace']['repositories'][1]['worktree']['path'])/'user-work.txt';kept.write_text('user work')
+        card.locator('summary[aria-label="More actions for Cancel setup proof"]').click()
+        card.get_by_role('button',name='Recover allocation',exact=True).click()
+        expect(page.locator('#toasts')).to_contain_text('Allocation validated',timeout=15000)
+        recovery_outcome(t,row,kept)
         expect(card.get_by_role('button',name='⌨ Attach',exact=True)).to_have_count(0)
         assert page.evaluate('document.documentElement.scrollWidth<=innerWidth')
         assert not errors
@@ -57,5 +84,10 @@ def test_terminal_cancels_selected_setup(real_terminal):
         d.send('m');d.wait('Cancel setup');d.send('\r')
         d.wait('Cancellation requested.')
         d.wait('cancelled',timeout=15)
-        outcome(t,row);d.quit()
+        current=outcome(t,row)
+        kept=Path(current['workspace']['repositories'][1]['worktree']['path'])/'user-work.txt';kept.write_text('user work')
+        d.send('m');d.wait('Recover allocation (keep files)')
+        # Remove remains last, with profiles and progress immediately above it.
+        d.send('j'*20+'kkk\r');d.wait('Recover allocation (keep files) completed')
+        recovery_outcome(t,row,kept);d.quit()
     finally:release.touch();d.close()

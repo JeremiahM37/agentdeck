@@ -504,10 +504,10 @@ func (m *dashboard) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.pending = nil
 		m.notice = v.label + " completed"
 		var reserved row
-		if json.Unmarshal(v.data, &reserved) == nil && reserved["setup_state"] == "creating" {
+		if json.Unmarshal(v.data, &reserved) == nil && reserved["setup_state"] == "creating" && (v.label == "Create session" || v.label == "Fork conversation") {
 			m.notice = "Workspace setup started. Progress appears in the session preview."
 		}
-		if reserved["setup_cancel_requested"] == true {
+		if reserved["setup_cancel_requested"] == true && (v.label == "Cancel setup" || v.label == "Retry cancellation" || v.label == "Cancel remaining checkout") {
 			m.notice = "Cancellation requested. Files already created will be retained."
 		}
 		return m, tea.Batch(m.refresh(), m.references())

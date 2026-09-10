@@ -573,6 +573,11 @@ function sessionCard(s) {
     act("Saved conversations", "", () => openNativeHistory({id:s.id,name:s.name,api,onResume:session=>{refreshSessions();attachSession(session);toast("Resumed the selected conversation.");},onFork:session=>handleNativeFork(session,false)}));
   }
   if (s.workspace) {
+    if(s.setup_state === "failed" && s.workspace.state !== "removed") act("Recover allocation","",async()=>{
+      try{await api(`/sessions/${s.id}/worktree/recover`,{method:"POST",body:{}});toast("Allocation validated; files retained. Setup did not restart.");}
+      catch(e){toast(e.message,true);}
+      finally{await refreshSessions();}
+    });
     const info=document.createElement('details');info.className='session-worktree';const heading=document.createElement('summary');heading.textContent=`${s.workspace.repositories?.length?'Workspace':'Worktree'} · ${s.workspace.branch} · ${s.workspace.state}`;const location=document.createElement('code');location.textContent=s.workspace.path;const base=document.createElement('small');base.textContent=s.workspace.repositories?.length?`${s.workspace.repositories.length} repositories`:`Base: ${s.workspace.base} · ${s.workspace.commit?.slice(0,12)||'not created'}`;info.append(heading,location,base);if(s.workspace.error){const failure=document.createElement('p');failure.textContent='Setup error: '+s.workspace.error;failure.style.whiteSpace='pre-wrap';info.append(failure);}el.insertBefore(info,row);
     if(s.workspace.repositories?.length) {
       const progress=document.createElement('pre');progress.style.whiteSpace='pre-wrap';progress.setAttribute('aria-live','polite');

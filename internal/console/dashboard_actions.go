@@ -790,6 +790,7 @@ func workspaceActions(r row, path string) []dashboardAction {
 		actions := []dashboardAction{}
 		if r["setup_state"] == "failed" {
 			actions = append(actions, dashboardAction{Label: "Cancel remaining checkout", Method: "POST", Path: path + "/setup/cancel", Body: map[string]any{}})
+			actions = append(actions, dashboardAction{Label: "Recover allocation (keep files)", Method: "POST", Path: path + "/worktree/recover", Body: map[string]any{}})
 		}
 		if repositories, ok := ws["repositories"].([]any); ok && len(repositories) > 0 {
 			actions = append(actions, dashboardAction{Label: "Workspace setup progress", Method: "GET", Path: path + "/worktree?format=text"})

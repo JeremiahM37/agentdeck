@@ -31,8 +31,16 @@ func (m *Manager) WorkspaceProgress(ctx context.Context, id int64) (*worktree.In
 }
 
 func (m *Manager) RemoveWorktree(ctx context.Context, id int64) error {
+	return m.mutateWorktree(ctx, id, "remove")
+}
+
+func (m *Manager) RecoverWorktree(ctx context.Context, id int64) error {
+	return m.mutateWorktree(ctx, id, "recover")
+}
+
+func (m *Manager) mutateWorktree(ctx context.Context, id int64, operation string) error {
 	if m.setupActive(id) {
-		return fmt.Errorf("workspace setup is still running; inspect its progress before removing the worktree")
+		return fmt.Errorf("workspace setup is still running; inspect or cancel it before changing the worktree")
 	}
 	row, ex, err := m.resolve(id)
 	if err != nil {
@@ -68,12 +76,12 @@ func (m *Manager) RemoveWorktree(ctx context.Context, id int64) error {
 	}
 	for _, other := range live {
 		if other.TargetID == row.TargetID && (path.Clean(other.Workdir) == path.Clean(plan.Path) || strings.HasPrefix(path.Clean(other.Workdir), path.Clean(plan.Path)+"/")) {
-			return fmt.Errorf("end session %d before removing its worktree", other.ID)
+			return fmt.Errorf("end session %d before changing its worktree", other.ID)
 		}
 	}
-	if err := worktree.RunInteractive(ctx, ex, "remove", &plan); err != nil {
+	if err := worktree.RunInteractive(ctx, ex, operation, &plan); err != nil {
 		if saveErr := m.DB.Update("sessions", id, map[string]any{"worktree_json": store.J(plan)}); saveErr != nil {
-			return fmt.Errorf("%w; could not save cleanup progress: %v", err, saveErr)
+			return fmt.Errorf("%w; could not save workspace progress: %v", err, saveErr)
 		}
 		if fresh, loadErr := m.DB.Session(id); loadErr == nil {
 			m.publish(fresh)

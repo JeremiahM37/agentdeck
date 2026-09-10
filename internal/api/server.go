@@ -144,6 +144,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/sessions/{id}/archive", s.archiveSession)
 	mux.HandleFunc("DELETE /api/sessions/{id}/archive", s.unarchiveSession)
 	mux.HandleFunc("GET /api/sessions/{id}/archive/history", s.archivedHistory)
+	mux.HandleFunc("POST /api/sessions/{id}/worktree/recover", s.recoverSessionWorktree)
 	mux.HandleFunc("POST /api/sessions/{id}/setup/cancel", s.cancelSessionSetup)
 	mux.HandleFunc("DELETE /api/sessions/{id}/worktree", s.removeSessionWorktree)
 	mux.HandleFunc("GET /api/sessions/{id}/worktree", s.sessionWorkspaceProgress)
