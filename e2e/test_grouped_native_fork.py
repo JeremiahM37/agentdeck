@@ -1,5 +1,6 @@
 """Web and PTY forks pass Claude an exact target-side history path."""
 import json
+import shlex
 from pathlib import Path
 import re
 import time
@@ -72,9 +73,25 @@ def test_browser_grouped_claude_fork(page, real_terminal, width):
     dialog.get_by_role('button', name='Fork conversation', exact=True).click()
     dialog.get_by_label('Fork workspace').select_option('isolated')
     assert dialog.evaluate('(el)=>el.scrollWidth<=el.clientWidth')
-    dialog.get_by_role('button', name='Create fork', exact=True).click()
-    expect(dialog).not_to_be_visible(timeout=20000)
-    check(t, parent, source, proof, original)
+    release=t['root'].parent/'release-native-fork'
+    hook=Path(parent['workspace']['repositories'][1]['worktree']['repo'])/'.git/hooks/post-checkout'
+    hook.write_text('#!/bin/sh\nwhile [ ! -f '+shlex.quote(str(release))+' ]; do sleep 0.05; done\n')
+    hook.chmod(0o700)
+    try:
+        with page.expect_response(lambda r:r.request.method=='POST' and r.url.endswith('/fork')) as response:
+            dialog.get_by_role('button', name='Create fork', exact=True).click()
+        assert response.value.status==202
+        expect(dialog).not_to_be_visible(timeout=20000)
+        card=page.locator('.scard',has_text='Conversation fork')
+        expect(card.get_by_role('button',name='Setting up',exact=True)).to_be_disabled()
+        expect(card.locator('.spane')).to_contain_text('Second repository: creating',timeout=15000)
+        assert not proof.exists()
+        page.reload()
+        expect(page.locator('.scard',has_text='Conversation fork').get_by_role('button',name='Setting up',exact=True)).to_be_disabled()
+        release.touch()
+        check(t, parent, source, proof, original)
+    finally:
+        release.touch()
     assert not errors
 
 
@@ -90,7 +107,7 @@ def test_terminal_grouped_claude_fork(real_terminal):
         dashboard.wait('MATCHING MESSAGE'); dashboard.send('f')
         dashboard.wait('Fork whole saved conversation')
         dashboard.send('\t\t\x1b[C\x13')
-        dashboard.wait('Fork started:', timeout=20)
+        dashboard.wait('Fork workspace setup started.', timeout=20)
         check(t, parent, source, proof, original)
         dashboard.quit()
     finally:

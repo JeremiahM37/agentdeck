@@ -95,6 +95,7 @@ func (s *Server) forkConversation(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var in struct {
+		Background     bool                         `json:"background"`
 		ConversationID string                       `json:"conversation_id"`
 		Name           string                       `json:"name"`
 		Worktree       *worktree.InteractiveOptions `json:"worktree"`
@@ -127,12 +128,18 @@ func (s *Server) forkConversation(w http.ResponseWriter, r *http.Request) {
 		httpError(w, 422, "name exceeds 160 bytes")
 		return
 	}
-	next, err := s.Sessions.Launch(r.Context(), sessions.LaunchOpts{Worktree: in.Worktree, Configuration: config, GroupPath: row.GroupPath, ProjectID: row.ProjectID, TargetID: row.TargetID, Name: name, Agent: row.Agent, Model: row.Model, Workdir: row.Workdir, ForkID: in.ConversationID})
+	launch := s.Sessions.Launch
+	status := http.StatusCreated
+	if in.Background && in.Worktree != nil {
+		launch = s.Sessions.LaunchBackground
+		status = http.StatusAccepted
+	}
+	next, err := launch(r.Context(), sessions.LaunchOpts{Worktree: in.Worktree, Configuration: config, GroupPath: row.GroupPath, ProjectID: row.ProjectID, TargetID: row.TargetID, Name: name, Agent: row.Agent, Model: row.Model, Workdir: row.Workdir, ForkID: in.ConversationID})
 	if err != nil {
 		httpError(w, 502, "%s", err)
 		return
 	}
-	writeJSON(w, 201, s.sessionView(next))
+	writeJSON(w, status, s.sessionView(next))
 }
 
 // resumeConversation continues one explicitly selected native history. It never

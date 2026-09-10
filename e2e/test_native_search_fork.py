@@ -1,4 +1,4 @@
-import hashlib,json,subprocess,urllib.request
+import hashlib,json,subprocess,urllib.request,time
 import pytest
 from playwright.sync_api import expect
 from test_terminal_workspace import real_terminal
@@ -41,8 +41,11 @@ def test_web_forks_global_search_and_retains_original_terminal(page,real_termina
         d.get_by_role('button',name='Create fork',exact=True).click()
         expect(d.get_by_role('button',name='Close saved conversation search')).to_be_disabled()
         page.keyboard.press('Escape');expect(d).to_be_visible()
-    created=response.value.json();assert response.value.status==201,created
-    expect(d).to_have_count(0);child=frame(page,created['id']);expect(child.owner).to_be_visible(timeout=15000);expect(child.locator('#connection')).to_have_text('Connected',timeout=15000)
+    created=response.value.json();assert response.value.status==(202 if isolated else 201),created
+    expect(d).to_have_count(0)
+    if isolated:
+        page.locator('.scard',has_text='Global fork proof').get_by_role('button',name='⌨ Attach',exact=True).click(timeout=20000)
+    child=frame(page,created['id']);expect(child.owner).to_be_visible(timeout=15000);expect(child.locator('#connection')).to_have_text('Connected',timeout=15000)
     expect(child.locator('#agent-terminal .xterm-screen')).to_contain_text('GLOBAL FORK READY',timeout=15000)
     assert page.locator('#terminal-workspace iframe').count()==2
     assert one.locator('body').evaluate('()=>window.originalForkTerminal') is True
@@ -59,11 +62,18 @@ def test_terminal_forks_search_result_without_placeholder_session(real_terminal)
         d.send('needle\t\t\x1b[C\x1b[C\x13');d.wait('old résumé needle');d.send('\r');d.wait('MATCHING MESSAGE')
         d.send('f');d.wait('Fork whole saved conversation');d.wait('Current agent settings')
         d.send('\t\x01\x0bTerminal global fork\t\x1b[C\x13')
-        d.wait('Fork started:',timeout=20);d.wait('Terminal global fork')
+        d.wait('Fork workspace setup started.',timeout=20);d.wait('Terminal global fork')
+        deadline=time.monotonic()+10
+        while not proof.exists() and time.monotonic()<deadline:time.sleep(.05)
         observed=json.loads(proof.read_text());assert observed['cwd']!=str(cwd)
         assert json.loads(source.read_text().splitlines()[0])['payload']['id'] in observed['argv']
         assert hashlib.sha256(source.read_bytes()).hexdigest()==original
         assert len(t['api']('/sessions?include_ended=1'))==2
+        # Wait for the dashboard's refresh as well as the target-side proof:
+        # starting the agent precedes publishing the ready reservation.
+        deadline=time.monotonic()+12
+        while 'setting up' in d.text.lower() and time.monotonic()<deadline:d.pump()
+        assert 'setting up' not in d.text.lower(),d.text
         d.send('\r');d.wait('GLOBAL FORK READY');d.send('\x02d');d.wait('Detached. Session keeps running.')
         d.quit()
     finally:d.close()

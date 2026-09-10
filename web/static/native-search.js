@@ -142,7 +142,7 @@ export function openNativeSearch({api, targets = [], onFork}) {
     event.preventDefault(); if(forkPending || !forkContext) return;
     const context=forkContext;
     const body={configuration_id:$('.ns-fork-config').value,name:$('.ns-fork-name').value};
-    if($('.ns-fork-workspace').value==='isolated') body.worktree={branch:$('.ns-fork-branch').value,base:$('.ns-fork-base').value};
+    if($('.ns-fork-workspace').value==='isolated') {body.background=true;body.worktree={branch:$('.ns-fork-branch').value,base:$('.ns-fork-base').value};}
     forkPending=true; const disabled=[];
     for(const control of root.querySelectorAll('button,input,select')){disabled.push([control,control.disabled]);control.disabled=true;}
     $('.ns-fork-status').textContent='Starting fork…';

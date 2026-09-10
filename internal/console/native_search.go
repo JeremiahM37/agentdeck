@@ -504,6 +504,7 @@ func (m *dashboard) nativeSearchForkForm() tea.Cmd {
 	}, func(values map[string]any) tea.Cmd {
 		body := map[string]any{"configuration_id": values["configuration"], "name": values["name"]}
 		if values["workspace"] == "isolated" {
+			body["background"] = true
 			body["worktree"] = map[string]any{"branch": values["branch"], "base": values["base"]}
 		}
 		path := "/conversation-search/" + url.PathEscape(s.readerJob) + "/results/" + url.PathEscape(s.readerHit) + "/fork"
@@ -534,5 +535,8 @@ func (m *dashboard) receiveNativeSearchFork(v nativeSearchForkMsg) tea.Cmd {
 	m.ended = false
 	m.focusSessionID = id(session)
 	m.notice = "Fork started: " + name(session) + ". The original conversation stays intact."
+	if session["setup_state"] == "creating" {
+		m.notice = "Fork workspace setup started. Progress appears in the session preview."
+	}
 	return tea.Batch(m.cancelNativeSearch(v.owner), m.switchSection(0), m.references())
 }

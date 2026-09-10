@@ -129,11 +129,11 @@ installed-Claude/Codex test using private synthetic histories and no model turn.
 It checks exact native identity, saved history visibility, captured launch
 profiles, and the correct shared or isolated working directory.
 
-Before rollout, finish cancellation and restart recovery for setup, extend
-background creation to native conversation forks, add repositories to existing
-groups, and handle the transition from older single-worktree sessions. Fresh
-isolated creation already runs in the background from both interfaces, with
-recorded progress and retained failures. Run the full combined verify suite on
+Before rollout, finish cancellation and restart recovery for setup, add
+repositories to existing groups, and handle the transition from older
+single-worktree sessions. Fresh isolated creation and isolated native
+conversation forks run in the background from both interfaces, with recorded
+progress and retained failures. Run the full combined verify suite on
 the final source and verify deployment on both server and desktop.
 
 ### Concurrent setup and cleanup
@@ -149,3 +149,14 @@ remain responsible for surviving workers and filesystem validation.
 A real Git integration test holds a checkout hook open while removing another
 ended allocation on the same target. Reservation tests cover shared launches,
 ancestor/descendant conflicts, destination allocation, and symlink aliases.
+
+
+Isolated conversation forks from saved workspace history and global search use
+`background:true` and return HTTP202 after reservation. Shared-directory forks
+and API clients that omit the flag retain synchronous HTTP201 behavior. Native
+history/profile validation still happens before reservation; the worker retains
+the chosen conversation ID and captured launch settings. The browser returns to
+Sessions instead of attempting to attach to an unfinished terminal. Terminal
+search selects the new reservation and reports setup in its preview. A held
+second-repository checkout test covers phone and desktop reloads, the absence of
+a premature agent launch, and the exact native history path after release.

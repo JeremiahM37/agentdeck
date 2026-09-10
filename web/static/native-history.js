@@ -54,7 +54,7 @@ export function openNativeHistory({id, name, api, onFork, onResume}) {
   $('.nh-cancel').onclick=()=>{$('.nh-confirm').hidden=true;controls();};
   $('.nh-create').onclick=async()=>{
     if(pending||loading||!cid||!(action==='resume'?resumeSupported:forkSupported))return;pending=true;controls();$('.nh-status').textContent=action==='resume'?'Resuming conversation…':'Starting fork…';
-    const body={conversation_id:cid,name:$('.nh-fork-name').value};if(action==='fork'&&$('.nh-workspace').value==='isolated')body.worktree={branch:$('.nh-branch').value,base:$('.nh-base').value};
+    const body={conversation_id:cid,name:$('.nh-fork-name').value};if(action==='fork'&&$('.nh-workspace').value==='isolated'){body.background=true;body.worktree={branch:$('.nh-branch').value,base:$('.nh-base').value};}
     try{const session=await api(`/sessions/${id}/${action}`,{method:'POST',body});if(!closed){root.close();if(action==='resume')onResume?.(session);else onFork?.(session);}}
     catch(e){if(!closed)$('.nh-status').textContent=e.message;}
     finally{pending=false;controls();}

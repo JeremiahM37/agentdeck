@@ -28,6 +28,11 @@ def argv(directory):
     raise AssertionError('fork did not launch in '+str(directory))
 
 def check(t,row,cid,file,before,git,status,agent):
+    deadline=time.monotonic()+15
+    while row.get('setup_state')=='creating' and time.monotonic()<deadline:
+        time.sleep(.05)
+        row=t['api'](f"/sessions/{row['id']}")
+    assert row.get('setup_state')!='failed',row.get('setup_error')
     dest=Path(row['workdir'])
     assert row['workspace']['state']=='ready' and row['workspace']['path']==str(dest)
     assert dest!=t['root'] and (dest/'base.txt').read_text()=='committed base'
@@ -110,7 +115,7 @@ def test_console_forks_history_into_worktree(real_terminal,agent):
     try:
         d.wait(source['name']);d.send('/'+source['name']+'\r');d.send('H');d.wait('Saved conversations')
         d.send('\t\x1b[C\tConsole fork\t\x1b[C\x13')
-        d.wait('Uncommitted');d.wait('changes stay');d.send('y');d.wait('Fork conversation completed')
+        d.wait('Uncommitted');d.wait('changes stay');d.send('y');d.wait('Workspace setup started.')
         row=next(r for r in t['api']('/sessions') if r['name']=='Console fork')
         check(t,row,cid,file,before,git,status,agent)
         d.quit()

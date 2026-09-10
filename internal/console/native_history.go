@@ -95,6 +95,7 @@ func (m *dashboard) nativePicker(v nativeListMsg) tea.Cmd {
 			body := map[string]any{"conversation_id": cid, "name": values["name"]}
 			warning := "Create a new conversation from " + cid + "? Both agents share the workspace files. The original conversation is unchanged."
 			if str(values["workspace"]) == "isolated" {
+				body["background"] = true
 				body["worktree"] = map[string]any{"branch": values["branch"], "base": values["base"]}
 				warning = "Fork " + cid + " into a new Git worktree from the selected committed base? Uncommitted changes stay in the original workspace. The original conversation is unchanged."
 			}

@@ -562,7 +562,7 @@ function sessionCard(s) {
   actionRow = panel;
   act("Move to group", "", ()=>{state.sheet={kind:"session-group",session:s};renderSheet();});
   if (["claude", "codex"].includes(s.agent)) {
-    act("Saved conversations", "", () => openNativeHistory({id:s.id,name:s.name,api,onResume:session=>{refreshSessions();attachSession(session);toast("Resumed the selected conversation.");},onFork:()=>{refreshSessions();toast("Fork started. The original session keeps running.");}}));
+    act("Saved conversations", "", () => openNativeHistory({id:s.id,name:s.name,api,onResume:session=>{refreshSessions();attachSession(session);toast("Resumed the selected conversation.");},onFork:session=>handleNativeFork(session,false)}));
   }
   if (s.workspace) {
     const info=document.createElement('details');info.className='session-worktree';const heading=document.createElement('summary');heading.textContent=`${s.workspace.repositories?.length?'Workspace':'Worktree'} · ${s.workspace.branch} · ${s.workspace.state}`;const location=document.createElement('code');location.textContent=s.workspace.path;const base=document.createElement('small');base.textContent=s.workspace.repositories?.length?`${s.workspace.repositories.length} repositories`:`Base: ${s.workspace.base} · ${s.workspace.commit?.slice(0,12)||'not created'}`;info.append(heading,location,base);if(s.workspace.error){const failure=document.createElement('p');failure.textContent='Setup error: '+s.workspace.error;failure.style.whiteSpace='pre-wrap';info.append(failure);}el.insertBefore(info,row);
@@ -636,6 +636,14 @@ async function endSession(s, kill) {
     await api(`/sessions/${s.id}${kill ? "?kill=true" : ""}`, { method: "DELETE" });
     refreshSessions();
   } catch (e) { toast(e.message, true); }
+}
+
+function handleNativeFork(session, attach=true) {
+  switchTab("sessions");
+  refreshSessions();
+  if(session.setup_state === "creating") toast("Fork workspace setup started. You can follow progress in Sessions.");
+  else if(attach) attachSession(session);
+  else toast("Fork started. The original session keeps running.");
 }
 
 async function attachSession(s) {
@@ -814,7 +822,7 @@ function renderSessions() {
       <label class="session-grouping session-scope">Show <select class="f" id="sess-scope"><option value="active">Active sessions</option><option value="all">Include ended and untracked</option><option value="archived">Archived sessions</option></select></label>
       <div id="sesslist"></div>
     </div>`;
-  $("#sess-saved-search").onclick = () => openNativeSearch({api,targets:state.targets,onFork:session=>{refreshSessions();attachSession(session);}});
+  $("#sess-saved-search").onclick = () => openNativeSearch({api,targets:state.targets,onFork:handleNativeFork});
   $("#sess-new").onclick = () => { state.sheet = { kind: "new-session" }; renderSheet(); };
   $("#sess-discover").onclick = () => { state.sheet = { kind: "discover" }; renderSheet(); };
 
@@ -2392,7 +2400,7 @@ const commandPalette = new CommandPalette({
       command('launch-profiles', 'Manage launch profiles', () => openLaunchProfiles({api}), 'Reusable agent, model and environment settings', 'profiles accounts configuration'),
       command('new-session', 'New session', () => sheet('new-session'), 'Start an interactive agent', 'create launch'),
       command('new-task', 'New task', () => sheet('new'), 'Plan or dispatch work', 'create'),
-      command('saved-search', 'Search saved conversations', () => openNativeSearch({api, targets:state.targets,onFork:session=>{refreshSessions();attachSession(session);}}), 'Find text across local and SSH histories', 'history messages content native'),
+      command('saved-search', 'Search saved conversations', () => openNativeSearch({api, targets:state.targets,onFork:handleNativeFork}), 'Find text across local and SSH histories', 'history messages content native'),
       command('discover', 'Find running agents', () => sheet('discover'), 'Track existing tmux sessions', 'adopt restore untracked'),
       command('routines', 'Routines', () => sheet('routines'), 'Saved jobs and active runs', 'schedule takeover'),
       ...[['board','Task board'],['sessions','Sessions'],['terminals','Open terminals'],['deck','Deck'],['approvals','Approvals']].map(([tab,title]) => command(`nav-${tab}`,title,()=>switchTab(tab),'','navigate view','Navigate')),

@@ -10,6 +10,7 @@ import (
 
 func (s *Server) forkConversationSearchResult(w http.ResponseWriter, r *http.Request) {
 	var in struct {
+		Background    bool                         `json:"background"`
 		Configuration string                       `json:"configuration_id"`
 		Name          string                       `json:"name"`
 		Worktree      *worktree.InteractiveOptions `json:"worktree"`
@@ -67,10 +68,16 @@ func (s *Server) forkConversationSearchResult(w http.ResponseWriter, r *http.Req
 		httpError(w, status, "%s", err)
 		return
 	}
-	next, err := s.Sessions.Launch(r.Context(), sessions.LaunchOpts{Configuration: launch.configuration, TargetID: chosen.TargetID, Name: name, Agent: chosen.Agent, Model: launch.Model, Workdir: match.Cwd, ForkID: match.CID, Worktree: in.Worktree})
+	start := s.Sessions.Launch
+	status := http.StatusCreated
+	if in.Background && in.Worktree != nil {
+		start = s.Sessions.LaunchBackground
+		status = http.StatusAccepted
+	}
+	next, err := start(r.Context(), sessions.LaunchOpts{Configuration: launch.configuration, TargetID: chosen.TargetID, Name: name, Agent: chosen.Agent, Model: launch.Model, Workdir: match.Cwd, ForkID: match.CID, Worktree: in.Worktree})
 	if err != nil {
 		httpError(w, 502, "%s", err)
 		return
 	}
-	writeJSON(w, 201, s.sessionView(next))
+	writeJSON(w, status, s.sessionView(next))
 }
