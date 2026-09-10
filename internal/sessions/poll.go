@@ -14,7 +14,7 @@ import (
 // sessions are on it. Status is derived from what the pane is actually doing —
 // see DeriveStatus — and `last_activity_at` is only moved when the pane really
 // changed, because "quiet for 40 minutes" is the number an operator acts on.
-func (m *Manager) Poll(ctx context.Context) { m.poll(ctx, nil) }
+func (m *Manager) Poll(ctx context.Context) { m.RecoverWorkspaceOperations(ctx); m.poll(ctx, nil) }
 
 // Action refreshes visit only the affected target, not every machine in the fleet.
 func (m *Manager) pollTarget(ctx context.Context, targetID int64) { m.poll(ctx, &targetID) }

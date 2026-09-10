@@ -39,6 +39,13 @@ func (m *Manager) RecoverWorktree(ctx context.Context, id int64) error {
 }
 
 func (m *Manager) mutateWorktree(ctx context.Context, id int64, operation string) error {
+	pending, pendingErr := m.DB.WorkspaceOperations(id, true)
+	if pendingErr != nil {
+		return pendingErr
+	}
+	if len(pending) > 0 {
+		return fmt.Errorf("a repository addition is still active; inspect or cancel it before changing the workspace")
+	}
 	if m.setupActive(id) {
 		return fmt.Errorf("workspace setup is still running; inspect or cancel it before changing the worktree")
 	}

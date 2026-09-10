@@ -160,6 +160,18 @@ CREATE TABLE IF NOT EXISTS routines(
   created_at REAL NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_routines_due ON routines(enabled, next_run_at);
+CREATE TABLE IF NOT EXISTS workspace_operations(
+ id INTEGER PRIMARY KEY,
+ session_id INTEGER NOT NULL REFERENCES sessions(id),
+ plan_json TEXT NOT NULL,
+ state TEXT NOT NULL DEFAULT 'running',
+ error TEXT NOT NULL DEFAULT '',
+ cancel_requested INTEGER NOT NULL DEFAULT 0,
+ created_at REAL NOT NULL,
+ updated_at REAL NOT NULL
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_workspace_active ON workspace_operations(session_id)
+ WHERE state IN ('running','recovering');
 `
 
 // migrations are additive: they bring a database created by an older build up to

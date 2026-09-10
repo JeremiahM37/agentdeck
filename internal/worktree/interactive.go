@@ -15,20 +15,21 @@ import (
 // Interactive records an allocation before any remote Git mutation. A failed
 // launch keeps this record so the directory is still discoverable and removable.
 type Interactive struct {
-	ControlToken string                `json:"control_token,omitempty"`
-	SetupCommand string                `json:"setup_command,omitempty"`
-	SetupEnv     map[string]string     `json:"setup_env,omitempty"`
-	SetupState   string                `json:"setup_state,omitempty"`
-	SetupOutput  string                `json:"setup_output,omitempty"`
-	Repo         string                `json:"repo"`
-	Path         string                `json:"path"`
-	Branch       string                `json:"branch"`
-	Base         string                `json:"base"`
-	Commit       string                `json:"commit"`
-	Token        string                `json:"token,omitempty"`
-	State        string                `json:"state"`
-	Error        string                `json:"error,omitempty"`
-	Repositories []WorkspaceRepository `json:"repositories,omitempty"`
+	OperationActive bool                  `json:"operation_active,omitempty"`
+	ControlToken    string                `json:"control_token,omitempty"`
+	SetupCommand    string                `json:"setup_command,omitempty"`
+	SetupEnv        map[string]string     `json:"setup_env,omitempty"`
+	SetupState      string                `json:"setup_state,omitempty"`
+	SetupOutput     string                `json:"setup_output,omitempty"`
+	Repo            string                `json:"repo"`
+	Path            string                `json:"path"`
+	Branch          string                `json:"branch"`
+	Base            string                `json:"base"`
+	Commit          string                `json:"commit"`
+	Token           string                `json:"token,omitempty"`
+	State           string                `json:"state"`
+	Error           string                `json:"error,omitempty"`
+	Repositories    []WorkspaceRepository `json:"repositories,omitempty"`
 }
 type InteractiveOptions struct {
 	Base              string                `json:"base"`

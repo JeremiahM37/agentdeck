@@ -33,15 +33,17 @@ type Manager struct {
 	// before giving up and saying so.
 	HandoffTimeout time.Duration
 
-	lifecycleMu    sync.Mutex
-	workspaceMu    sync.Mutex
-	workspaceUses  map[*workspaceUse]bool
-	sendMu         sync.Mutex
-	mu             sync.Mutex
-	transitions    map[string]bool
-	activeSetups   map[int64]bool
-	setupLaunching map[int64]bool
-	handoffs       map[int64]bool // sessions with a wrap in flight
+	lifecycleMu               sync.Mutex
+	workspaceMu               sync.Mutex
+	workspaceUses             map[*workspaceUse]bool
+	sendMu                    sync.Mutex
+	mu                        sync.Mutex
+	transitions               map[string]bool
+	activeSetups              map[int64]bool
+	workspaceOperations       map[int64]bool
+	workspaceCancelDeliveries map[int64]bool
+	setupLaunching            map[int64]bool
+	handoffs                  map[int64]bool // sessions with a wrap in flight
 }
 
 // New builds a session manager.

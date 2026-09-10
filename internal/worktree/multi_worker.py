@@ -178,6 +178,14 @@ try:
         lock_stat = os.fstat(lock.fileno())
         if saved.get('operation_lock') != [lock_stat.st_dev, lock_stat.st_ino]:
             raise ValueError('Workspace operation lock was replaced')
+        active=False
+        try:fcntl.flock(lock.fileno(),fcntl.LOCK_EX|fcntl.LOCK_NB)
+        except BlockingIOError:active=True
+        else:fcntl.flock(lock.fileno(),fcntl.LOCK_UN)
+        if not active:
+            try:busy()
+            except ValueError:active=True
+        saved['operation_active']=active
         print(json.dumps({'workspace': saved}))
         sys.exit(0)
     if action == 'create':
