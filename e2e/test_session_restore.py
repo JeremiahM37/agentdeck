@@ -64,7 +64,15 @@ def test_web_can_track_again_from_untracked_records(page,real_terminal,width):
     page.locator('summary[aria-label="More actions for Real terminal"]').click()
     page.get_by_role('button',name='Stop tracking',exact=True).click()
     expect(page.locator('.scard')).to_have_count(0)
+    pending=[]
+    page.route('**/api/sessions?all=true',lambda route:pending.append(route))
     page.locator('#sess-ended').check()
+    page.locator('#sess-search').fill('Real terminal')
+    assert pending
+    pending[0].continue_()
+    page.unroute('**/api/sessions?all=true')
+    expect(page.locator('#sess-search')).to_be_focused()
+    expect(page.locator('#sess-search')).to_have_value('Real terminal')
     card=page.locator('.scard',has_text='Real terminal')
     expect(card).to_contain_text('untracked');expect(card).to_contain_text('Work/Backend')
     expect(card.get_by_role('button',name='⌨ Attach',exact=True)).to_have_count(0)

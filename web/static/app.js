@@ -742,7 +742,11 @@ function renderHandoff(sheet) {
 function renderSessions() {
   const main = $("#view");
   if (main.querySelector('#sesslist') && (main.querySelector('.action-menu[open]') ||
-      main.contains(document.activeElement) && document.activeElement.matches('input:not(#sess-ended),select'))) return;
+      main.contains(document.activeElement) && document.activeElement.matches('input:not(#sess-ended),select'))) {
+    // Keep the focused controls, but apply arriving results to their current query.
+    if (!main.querySelector('.action-menu[open]')) renderSessionList();
+    return;
+  }
   const live = state.sessions.filter((s) => s.status !== "dead");
   main.innerHTML = `
     <div class="list wide">
