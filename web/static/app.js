@@ -1367,6 +1367,65 @@ function projectCard(p) {
     } catch(e) { setupStatus.textContent = e.message; }
     finally { saveSetup.disabled = false; }
   };
+
+  const mcpSection = document.createElement("section");
+  mcpSection.className = "project-mcp";
+  mcpSection.innerHTML = `<h4>Project MCP servers</h4>
+    <p class="sub">Applied to new, resumed, and forked sessions. Running agent processes do not hot-reload. Codex uses additive settings; strict replacement is Claude-only.</p>
+    <div class="project-mcp-list"></div>
+    <div class="btnrow"><button class="b project-mcp-add">Add server</button><button class="b ok project-mcp-save">Save MCP settings</button></div>
+    <div class="sub project-mcp-status" role="status"></div>`;
+  el.appendChild(mcpSection);
+  const mcpList = $(".project-mcp-list", mcpSection), mcpStatus = $(".project-mcp-status", mcpSection);
+  const sourceMCP = p.mcp && p.mcp.mcpServers ? p.mcp.mcpServers : (p.mcp || {});
+  const draft = JSON.parse(JSON.stringify(sourceMCP));
+  const sensitive = /token|secret|password|authorization|api[-_]?key/i;
+  const redactMCP = (value, key = "") => {
+    if (sensitive.test(key)) return "[secret retained]";
+    if (Array.isArray(value)) return value.map((v) => redactMCP(v, key));
+    if (value && typeof value === "object") return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, redactMCP(v, k)]));
+    return value;
+  };
+  const drawMCP = () => {
+    mcpList.innerHTML = "";
+    for (const [name, cfg] of Object.entries(draft)) {
+      const row = document.createElement("div"); row.className = "mcp-row";
+      row.innerHTML = `<input class="f mcp-name" aria-label="MCP server name" value="${esc(name)}">
+        <select class="f mcp-type" aria-label="MCP transport"><option value="stdio">stdio</option><option value="http">HTTP</option></select>
+        <input class="f mcp-command" aria-label="MCP command or URL">
+        <textarea class="f mcp-extra" rows="2" aria-label="MCP arguments, headers, or environment"></textarea>
+        <button class="b no mcp-remove" type="button">Remove</button>`;
+      const type = cfg.url ? "http" : "stdio"; $(".mcp-type", row).value = type;
+      const command = $(".mcp-command", row); command.value = cfg.url || cfg.command || "";
+      const extra = $(".mcp-extra", row); extra.placeholder = type === "http" ? '{"headers":{}}' : '{"args":[],"env":{}}';
+      const extraObj = {}; if (cfg.args) extraObj.args = cfg.args; if (cfg.env) extraObj.env = cfg.env; if (cfg.headers) extraObj.headers = cfg.headers;
+      extra.value = JSON.stringify(redactMCP(extraObj), null, 2);
+      const remove = $(".mcp-remove", row); remove.onclick = () => { delete draft[name]; drawMCP(); };
+      row.onchange = () => { mcpStatus.textContent = "Unsaved MCP changes"; };
+      mcpList.appendChild(row);
+    }
+  };
+  $(".project-mcp-add", mcpSection).onclick = () => { let n = "server"; let i = 1; while (draft[n]) n = `server-${i++}`; draft[n] = {command:""}; drawMCP(); mcpList.lastElementChild?.querySelector(".mcp-name")?.focus(); };
+  $(".project-mcp-save", mcpSection).onclick = async () => {
+    const next = {}; let invalid = "";
+    for (const row of $$(".mcp-row", mcpSection)) {
+      const name = $(".mcp-name", row).value.trim(), type = $(".mcp-type", row).value, command = $(".mcp-command", row).value.trim();
+      if (!name || !/^[A-Za-z0-9_-]+$/.test(name) || next[name]) { invalid = "Names must be unique and use letters, digits, _ or -."; break; }
+      if (!command) { invalid = `${name}: command or URL is required.`; break; }
+      let extra = {}; try { extra = JSON.parse($(".mcp-extra", row).value || "{}"); } catch { invalid = `${name}: extra settings must be valid JSON.`; break; }
+      const original = sourceMCP[name] || {};
+      const retain = (key, value) => value === "[secret retained]" ? original[key] : value;
+      if (extra.headers) extra.headers = retain("headers", extra.headers);
+      if (extra.env) extra.env = retain("env", extra.env);
+      next[name] = type === "http" ? {url: command, ...(extra.headers ? {headers: extra.headers} : {})} : {command, ...(extra.args ? {args: extra.args} : {}), ...(extra.env ? {env: extra.env} : {})};
+    }
+    if (invalid) { mcpStatus.textContent = invalid; return; }
+    const btn = $(".project-mcp-save", mcpSection); btn.disabled = true; mcpStatus.textContent = "Saving…";
+    try { await api(`/projects/${p.id}`, {method:"PATCH", body:{mcp: next}}); p.mcp = next; Object.keys(draft).forEach(k => delete draft[k]); Object.assign(draft, next); mcpStatus.textContent = "Saved. New and resumed/forked sessions will use this configuration."; }
+    catch (e) { mcpStatus.textContent = e.message; }
+    finally { btn.disabled = false; }
+  };
+  drawMCP();
   const sel = $(".cap-sel", el);
   const info = $(".cap-info", el);
   sel.value = p.capability_profile || "restricted";
