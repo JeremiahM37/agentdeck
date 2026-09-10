@@ -17,16 +17,23 @@ type reviewFile struct {
 	Working bool   `json:"working"`
 	Staged  bool   `json:"staged"`
 }
+type reviewRepository struct {
+	ID   int    `json:"id"`
+	Name string `json:"name"`
+}
 type reviewData struct {
-	Branch    string       `json:"branch"`
-	Scope     string       `json:"scope"`
-	Path      string       `json:"path"`
-	Patch     string       `json:"patch"`
-	Files     []reviewFile `json:"files"`
-	Truncated bool         `json:"truncated"`
+	Repositories       []reviewRepository `json:"repositories"`
+	SelectedRepository int                `json:"selected_repository"`
+	Branch             string             `json:"branch"`
+	Scope              string             `json:"scope"`
+	Path               string             `json:"path"`
+	Patch              string             `json:"patch"`
+	Files              []reviewFile       `json:"files"`
+	Truncated          bool               `json:"truncated"`
 }
 type codeReview struct {
 	base, scope, failure string
+	repository           int
 	data                 reviewData
 	generation           int
 	loading              bool
@@ -67,7 +74,7 @@ func (m *dashboard) loadReview(path string) tea.Cmd {
 	r.failure = ""
 	generation := r.generation
 	c := m.client
-	endpoint := r.base + "?scope=" + r.scope + "&path=" + url.QueryEscape(path)
+	endpoint := r.base + "?scope=" + r.scope + "&path=" + url.QueryEscape(path) + fmt.Sprintf("&repository=%d", r.repository)
 	return func() tea.Msg {
 		b, e := c.JSON("GET", endpoint, nil)
 		var data reviewData
@@ -90,6 +97,7 @@ func (m *dashboard) receiveReview(v reviewMsg) {
 		return
 	}
 	r.data = v.data
+	r.repository = v.data.SelectedRepository
 	patch := clean(v.data.Patch)
 	if v.data.Path == "" {
 		patch = "No changes in this view. Press s to switch between working tree and staged changes."
@@ -129,6 +137,18 @@ func (m *dashboard) updateReview(k tea.KeyMsg) tea.Cmd {
 	case "esc":
 		m.review = nil
 		return nil
+	case "tab":
+		if r.loading || len(r.data.Repositories) < 2 {
+			return nil
+		}
+		index := 0
+		for i, repo := range r.data.Repositories {
+			if repo.ID == r.repository {
+				index = i
+			}
+		}
+		r.repository = r.data.Repositories[(index+1)%len(r.data.Repositories)].ID
+		return m.loadReview("")
 	case "s":
 		if r.scope == "working" {
 			r.scope = "staged"
@@ -184,6 +204,11 @@ func (m *dashboard) reviewView() string {
 		}
 	}
 	title := "Review changes · " + r.scope + " · " + clean(r.data.Branch)
+	for _, repo := range r.data.Repositories {
+		if repo.ID == r.repository {
+			title = "Review · " + clean(repo.Name) + " · " + r.scope + " · " + clean(r.data.Branch)
+		}
+	}
 	status := fmt.Sprintf("%d / %d files", index, len(files))
 	if r.loading {
 		status = "Loading changes…"
@@ -196,6 +221,9 @@ func (m *dashboard) reviewView() string {
 	footer := "←/→ file · s staged/working · r refresh · Esc back · q quit"
 	if m.width < 65 {
 		footer = "←/→ file · s scope · Esc back · q quit"
+	}
+	if len(r.data.Repositories) > 1 {
+		footer = "Tab repo · " + footer
 	}
 	return accent.Bold(true).Render(clip(title)) + "\n" + clip(status) + "\n" + clip(clean(r.data.Path)) + "\n\n" + r.viewport.View() + "\n\n" + clip(footer)
 }

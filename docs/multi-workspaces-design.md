@@ -83,7 +83,9 @@ Additional repositories do not silently merge their launch settings.
 zero-based index. Grouped responses include `repositories` and
 `selected_repository`; an omitted selection defaults to the primary repository.
 The server resolves paths from the saved allocation, never from a client path.
-Browser and TUI repository selectors still need wiring before rollout.
+Browser diff review now offers a repository dropdown; terminal review cycles
+repositories with Tab and labels the selected repository. Creation selectors
+still need wiring before rollout.
 
 A real API/Git/tmux lifecycle test creates both repositories, reviews a change in
 the second without mixing the first, rejects out-of-range selections, protects an
@@ -91,3 +93,13 @@ active session, removes ended worktrees, rejects duplicate/mixed-target projects
 without inserting sessions, and recovers a failed second checkout after its
 untracked artifact is explicitly removed. Public child ownership tokens are
 redacted. This is staging evidence, not deployed multi-repository functionality.
+
+
+Repository review UI proof: `e2e/test_multi_workspace.py` launches a real grouped
+session through the API, edits both worktrees and switches between their distinct
+diffs in desktop1440/phone390 browsers and a real terminal PTY. Browser checks
+also preserve the live terminal connection and reject horizontal overflow/JS
+errors. Terminal unit coverage rejects a stale previous-repository response.
+The first browser run exposed an unstable implicit accessible label containing
+option text; the select now has an explicit Repository label. All three final
+end-to-end cases pass. SWv47 is staged; deployed remainsv46.

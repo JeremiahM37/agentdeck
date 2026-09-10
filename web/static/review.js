@@ -4,12 +4,12 @@ export function openReview({kind, id, name, api}) {
   const dialog = document.createElement('dialog');
   dialog.className = 'code-review'; dialog.setAttribute('aria-label', 'Review changes');
   dialog.innerHTML = `<header><div><h2>Review changes</h2><p class="review-name"></p></div><button class="review-close" aria-label="Close review">×</button></header>
-    <div class="review-toolbar"><label>Changes <select class="review-scope"><option value="working">Working tree</option><option value="staged">Staged</option></select></label><span class="review-branch"></span><button class="review-refresh">Refresh</button><button class="review-wrap" aria-pressed="true">Wrap lines</button></div>
+    <div class="review-toolbar"><label class="review-repository-label" hidden>Repository <select class="review-repository" aria-label="Repository"></select></label><label>Changes <select class="review-scope"><option value="working">Working tree</option><option value="staged">Staged</option></select></label><span class="review-branch"></span><button class="review-refresh">Refresh</button><button class="review-wrap" aria-pressed="true">Wrap lines</button></div>
     <p class="review-status" role="status"></p><div class="review-layout"><aside><input class="review-filter" type="search" placeholder="Find a changed file" aria-label="Find a changed file"><div class="review-files" aria-label="Changed files"></div></aside><section class="review-detail"><div class="review-path"></div><div class="review-patch" tabindex="0" aria-label="File diff"></div></section></div>
     <footer>Read-only snapshot · Refresh to see the agent’s latest edits</footer>`;
   const $ = s => dialog.querySelector(s);
   $('.review-name').textContent = name || `${kind} ${id}`;
-  let data = null, scope = 'working', selected = '', generation = 0, closed = false;
+  let data = null, scope = 'working', selected = '', repository = '0', generation = 0, closed = false;
   let wrap = localStorage.getItem('adk-review-wrap') !== '0';
   function paintWrap() {
     dialog.classList.toggle('review-wrapped', wrap);
@@ -53,9 +53,14 @@ export function openReview({kind, id, name, api}) {
     $('.review-status').textContent = 'Loading changes…';
     $('.review-patch').setAttribute('aria-busy','true');
     try {
-      const next = await api(`/term/${kind}/${id}/changes?scope=${requestScope}&path=${encodeURIComponent(path)}`);
+      const next = await api(`/term/${kind}/${id}/changes?scope=${requestScope}&path=${encodeURIComponent(path)}&repository=${encodeURIComponent(repository)}`);
       if (closed || revision !== generation) return;
       data = next; selected = next.path; drawFiles(); drawPatch();
+      const repositories = next.repositories || [];
+      $('.review-repository-label').hidden = repositories.length < 2;
+      $('.review-repository').replaceChildren(...repositories.map(repo => new Option(repo.name, String(repo.id))));
+      repository = String(next.selected_repository ?? 0);
+      $('.review-repository').value = repository;
       const working = data.files.filter(f=>f.working).length, staged = data.files.filter(f=>f.staged).length;
       $('.review-scope').options[0].textContent = `Working tree (${working})`;
       $('.review-scope').options[1].textContent = `Staged (${staged})`;
@@ -69,6 +74,7 @@ export function openReview({kind, id, name, api}) {
       $('.review-status').textContent = error.message;
     } finally { if (revision === generation) $('.review-patch').removeAttribute('aria-busy'); }
   }
+  $('.review-repository').onchange = e => { repository = e.target.value; selected = ''; $('.review-filter').value = ''; load(); };
   $('.review-scope').onchange = e => { scope = e.target.value; load(); };
   $('.review-filter').oninput = drawFiles;
   $('.review-refresh').onclick = () => load(selected);

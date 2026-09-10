@@ -44,3 +44,27 @@ func TestReviewReflowsWidePatchAfterTerminalResize(t *testing.T) {
 		t.Fatal("lost current file")
 	}
 }
+
+func TestReviewRepositorySwitchDiscardsPriorPatch(t *testing.T) {
+	m := sampleDashboard()
+	m.openReview()
+	r := m.review
+	repositories := []reviewRepository{{ID: 0, Name: "Primary"}, {ID: 1, Name: "Second"}}
+	m.receiveReview(reviewMsg{owner: r, generation: r.generation, data: reviewData{Repositories: repositories, Path: "file", Patch: "primary"}})
+	previous := r.generation
+	if m.updateReview(tea.KeyMsg{Type: tea.KeyTab}) == nil || r.repository != 1 {
+		t.Fatal("Tab did not request second repository")
+	}
+	m.receiveReview(reviewMsg{owner: r, generation: previous, data: reviewData{Patch: "late primary"}})
+	if !r.loading || r.repository != 1 {
+		t.Fatal("late response changed selected repository")
+	}
+	m.receiveReview(reviewMsg{owner: r, generation: r.generation, data: reviewData{Repositories: repositories, SelectedRepository: 1, Path: "file", Patch: "second"}})
+	if !strings.Contains(m.View(), "Second") || !strings.Contains(r.viewport.View(), "second") {
+		t.Fatal("selected repository not labeled")
+	}
+	m.updateReview(tea.KeyMsg{Type: tea.KeyTab})
+	if r.repository != 0 {
+		t.Fatal("repository cycling did not return to primary")
+	}
+}
