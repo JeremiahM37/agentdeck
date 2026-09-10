@@ -304,3 +304,11 @@ tab; opening a fresh tab with no retained frames falls back to Sessions. Invalid
 saved views and malformed links fall back to the board. Desktop and phone E2E
 coverage checks return visits, explicit links, new-tab fallback and bad input.
 This change is separate from the staged workspace release.
+
+
+A follow-up creation-form inspection at both viewport sizes found unassociated
+labels in AgentDeck. Project, Name, Agent, Model, Start from and First message
+now name their controls; related status/help text is associated with the relevant
+fields, and the close button has an explicit accessible name. The real Git/tmux
+phone and desktop launch-and-cleanup tests now select a project and enter a name
+through those labels, including clicking the Name label to focus the input.

@@ -869,27 +869,27 @@ function renderSessionList() {
 function renderNewSession(sheet) {
   sheet.innerHTML = `
     <div class="sheet-grip"><i></i></div>
-    <div class="sheet-head"><h2>New session</h2><button class="x">✕</button></div>
+    <div class="sheet-head"><h2>New session</h2><button class="x" aria-label="Close new session">✕</button></div>
     <div class="sub" style="color:var(--ink-dim);font-size:12.5px">
       An interactive agent you attach to and work with — not a dispatched task.
     </div>
-    <label class="f">Project</label>
-    <select class="f" id="ns-project">
+    <label class="f" for="ns-project">Project</label>
+    <select class="f" id="ns-project" aria-describedby="ns-proj-hint">
       <option value="">▢ Blank room — no project yet</option>
       ${state.projects.map((p) =>
       `<option value="${p.id}">${esc(p.name)} — ${esc(p.target_name)}</option>`).join("")}</select>
     <div class="subhint" id="ns-proj-hint"></div>
-    <label class="f">Name</label>
+    <label class="f" for="ns-name">Name</label>
     <input class="f" id="ns-name" placeholder="what you're working on">
     <label class="f" for="ns-group">Group (optional)</label><input class="f" id="ns-group" placeholder="Work/Client">
     <label class="f" for="ns-profile">Launch profile</label>
-    <select class="f" id="ns-profile"><option value="">Agent and project defaults</option></select>
+    <select class="f" id="ns-profile" aria-describedby="ns-profile-hint"><option value="">Agent and project defaults</option></select>
     <button class="b" id="ns-manage-profiles" type="button">Manage launch profiles</button>
     <div class="subhint" id="ns-profile-hint" role="status"></div>
-    <label class="f">Agent</label>
-    <select class="f" id="ns-agent"></select>
+    <label class="f" for="ns-agent">Agent</label>
+    <select class="f" id="ns-agent" aria-describedby="ns-agent-hint"></select>
     <div class="subhint" id="ns-agent-hint"></div>
-    <label class="f">Model</label>
+    <label class="f" for="ns-model">Model</label>
     <input class="f" id="ns-model" list="adk-models" placeholder="default" autocomplete="off">
     <datalist id="adk-models"></datalist>
     <label class="f check"><input type="checkbox" id="ns-worktree"> Isolate in a new Git worktree</label>
@@ -899,8 +899,8 @@ function renderNewSession(sheet) {
       <label class="f" for="ns-worktree-branch">New branch name</label><input class="f" id="ns-worktree-branch" placeholder="Automatic unique branch">
       <div id="ns-repositories"></div>
     </div>
-    <label class="f">Start from</label>
-    <select class="f" id="ns-start">
+    <label class="f" for="ns-start">Start from</label>
+    <select class="f" id="ns-start" aria-describedby="ns-hint ns-memory-status">
       <option value="fresh">Fresh context</option>
       <option value="brief">Fresh, primed with what this project knows</option>
       <option value="resume">Resume the agent's own last conversation</option>
@@ -908,11 +908,11 @@ function renderNewSession(sheet) {
     <div class="subhint" id="ns-hint"></div>
     <div class="subhint" id="ns-memory-status" role="status"></div>
     <label class="f check" style="display:flex;align-items:center;gap:9px;cursor:pointer">
-      <input type="checkbox" id="ns-yolo" checked style="width:auto;margin:0">
+      <input type="checkbox" id="ns-yolo" aria-describedby="ns-yolo-hint" checked style="width:auto;margin:0">
       <span>Yolo — no approval prompts</span>
     </label>
     <div class="subhint" id="ns-yolo-hint"></div>
-    <label class="f">First message (optional)</label>
+    <label class="f" for="ns-prime">First message (optional)</label>
     <textarea class="f" id="ns-prime" placeholder="Typed in once the agent is up."></textarea>
     <div class="btnrow" style="margin-top:20px">
       <button class="b ok grow" id="ns-go">▶ Start session</button>
