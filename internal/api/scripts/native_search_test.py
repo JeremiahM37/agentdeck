@@ -1,4 +1,6 @@
-import json,os,sqlite3,subprocess,sys,tempfile,unittest,uuid
+import json,os,sqlite3,subprocess,sys,tempfile,time,unittest,uuid
+from unittest.mock import patch
+import native_search as search_module
 from contextlib import closing
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -131,6 +133,32 @@ class SearchTests(unittest.TestCase):
         self.assertEqual(reply['matches'][0]['cid'],cid)
         result=subprocess.run([sys.executable,str(script),'codex',' '],env=env,capture_output=True,text=True)
         self.assertEqual(result.returncode,1);self.assertIn('error',json.loads(result.stdout))
+    def test_slow_bad_header_cannot_starve_other_conversations(self):
+        good,cid=self.write(['available discussion'])
+        bad,_=self.write(['invalid']);bad.write_text('{}\n');os.utime(bad,(time.time()+60,)*2)
+        original=search_module.native_metadata
+        def metadata(path,*args,**kwargs):
+            if path==bad:time.sleep(.02)
+            return original(path,*args,**kwargs)
+        with patch.object(search_module,'native_metadata',side_effect=metadata):
+            self.assertFalse(self.index.sync(seconds=.01)['complete'])
+            state=self.index.sync(seconds=.01)
+            self.assertTrue(state['complete']);self.assertTrue(state['issues'])
+        self.assertEqual(self.matches('available')[0]['cid'],cid)
+        self.write(['recovered header'],bad.stem);self.index.sync()
+        self.assertEqual(len(self.matches('recovered')),1)
+    def test_failed_initial_scan_removes_partial_cached_matches(self):
+        path,cid=self.write(['first message','second message'])
+        original=search_module.native_record;calls=0
+        def record(*args,**kwargs):
+            nonlocal calls
+            calls+=1
+            if calls==3:raise TypeError('injected decoder failure')
+            return original(*args,**kwargs)
+        with patch.object(search_module,'native_record',side_effect=record):
+            state=self.index.sync();self.assertTrue(state['issues'])
+        self.assertEqual(self.matches('first'),[])
+        self.index.reset();self.index.sync();self.assertEqual(self.matches('first')[0]['cid'],cid)
     def test_future_cache_version_is_preserved(self):
         other=NativeSearchIndex(self.cache,self.root/'future','codex');path=other.path
         other.db.execute('PRAGMA user_version=99');other.close()

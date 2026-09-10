@@ -13,6 +13,9 @@ CREATE TABLE IF NOT EXISTS documents(
  observed INTEGER DEFAULT 0, stamp INTEGER DEFAULT 0, offset INTEGER DEFAULT 0,
  prefix_len INTEGER DEFAULT 0, prefix TEXT DEFAULT '', tail TEXT DEFAULT '',
  pending INTEGER DEFAULT 1, skipping INTEGER DEFAULT 0, oversized INTEGER DEFAULT 0, touched INTEGER DEFAULT 0);
+CREATE TABLE IF NOT EXISTS failures(
+ path TEXT PRIMARY KEY, device INTEGER, inode INTEGER, observed INTEGER, stamp INTEGER,
+ changed INTEGER, reason TEXT NOT NULL, retry_after REAL, touched INTEGER);
 CREATE TABLE IF NOT EXISTS messages(
  id INTEGER PRIMARY KEY, doc INTEGER NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
  offset INTEGER NOT NULL, end_offset INTEGER NOT NULL, role TEXT NOT NULL, text TEXT NOT NULL, UNIQUE(doc,offset));
@@ -48,6 +51,7 @@ class NativeSearchIndex:
         with self.db:
             self.db.execute('BEGIN IMMEDIATE')
             self.db.execute('DELETE FROM documents')
+            self.db.execute('DELETE FROM failures')
     def files(self):
         base=self.home/('sessions' if self.agent=='codex' else 'projects')
         found={}
@@ -65,18 +69,27 @@ class NativeSearchIndex:
         with self.db:
             self.db.execute('BEGIN IMMEDIATE')
             touched={r['path']:r['touched'] for r in self.db.execute('SELECT path,touched FROM documents')}
+            touched.update({r['path']:r['touched'] for r in self.db.execute('SELECT path,touched FROM failures')})
             files.sort(key=lambda p:touched.get(str(p),0))
+            for row in self.db.execute('SELECT path FROM failures').fetchall():
+                if row['path'] not in names:self.db.execute('DELETE FROM failures WHERE path=?',(row['path'],))
             for row in self.db.execute('SELECT id,path FROM documents').fetchall():
                 if row['path'] not in names:self.db.execute('DELETE FROM documents WHERE id=?',(row['id'],))
             for path in files:
                 if used>=byte_budget or time.monotonic()>=deadline:break
                 old=self.db.execute('SELECT * FROM documents WHERE path=?',(str(path),)).fetchone()
+                st=None
                 try:
                     st=path.stat()
+                    failure=self.db.execute('SELECT * FROM failures WHERE path=?',(str(path),)).fetchone()
+                    if failure and (failure['device'],failure['inode'],failure['observed'],failure['stamp'],failure['changed'])==(st.st_dev,st.st_ino,st.st_size,st.st_mtime_ns,st.st_ctime_ns) and failure['retry_after']>time.time():
+                        failed.add(str(path));issues.append(failure['reason']);continue
+                    self.db.execute('DELETE FROM failures WHERE path=?',(str(path),))
                     if old and not old['pending'] and st.st_size==old['observed'] and st.st_mtime_ns==old['stamp'] and st.st_ino==old['inode'] and st.st_dev==old['device']:continue
                     info=native_metadata(path,self.agent,max_bytes=LINE_LIMIT)
                     if info is None:
                         if old:self.db.execute('DELETE FROM documents WHERE id=?',(old['id'],))
+                        self.failed(path,st,'A transcript has no valid native header')
                         failed.add(str(path));issues.append('A transcript has no valid native header');continue
                     with path.open('rb') as file:
                         reset=not old
@@ -111,9 +124,11 @@ class NativeSearchIndex:
                         self.db.execute('UPDATE documents SET title=?,modified=?,observed=?,stamp=?,offset=?,prefix_len=?,prefix=?,tail=?,pending=?,skipping=?,oversized=?,touched=? WHERE id=?',
                             (info['title'],st.st_mtime,st.st_size,st.st_mtime_ns,offset,prefix_len,self.digest(file,0,prefix_len),self.digest(file,max(0,offset-256),min(256,offset)),pending,skipping,oversized,time.time_ns(),doc))
                 except (OSError,ValueError,TypeError) as error:
-                    # Do not serve stale matches from a source that cannot be checked.
-                    if old:self.db.execute('DELETE FROM documents WHERE id=?',(old['id'],))
-                    failed.add(str(path));issues.append(type(error).__name__+' reading a transcript')
+                    # Include any replacement row allocated during this attempt.
+                    self.db.execute('DELETE FROM documents WHERE path=?',(str(path),))
+                    reason=type(error).__name__+' reading a transcript'
+                    if st:self.failed(path,st,reason)
+                    failed.add(str(path));issues.append(reason)
         rows={r['path']:r for r in self.db.execute('SELECT path,pending,observed,stamp FROM documents')}
         pending=0
         for path in files:
@@ -124,6 +139,9 @@ class NativeSearchIndex:
             except OSError:pending+=1
         return dict(complete=pending==0, pending_files=pending, scanned_bytes=used, documents=len(rows),
             oversized_entries=self.db.execute('SELECT COALESCE(sum(oversized),0) FROM documents').fetchone()[0],issues=sorted(set(issues)))
+    def failed(self,path,st,reason):
+        self.db.execute('INSERT OR REPLACE INTO failures VALUES(?,?,?,?,?,?,?,?,?)',
+            (str(path),st.st_dev,st.st_ino,st.st_size,st.st_mtime_ns,st.st_ctime_ns,reason,time.time()+30,time.time_ns()))
     def search(self, query, limit=50):
         terms=query.strip().split()
         if not terms or len(query)>500:raise ValueError('Enter between 1 and 500 characters')

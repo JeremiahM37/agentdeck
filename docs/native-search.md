@@ -37,14 +37,16 @@ expose it without changing source histories.
 
 Records up to 10 MiB are decoded, including captions alongside large image data.
 Larger individual entries are counted and skipped without hiding later messages.
-Malformed or unreadable headers are reported as issues. Results currently provide
+Malformed or unreadable headers are reported as issues. Failure checkpoints
+prevent one slow bad file from starving other conversations; changed files retry
+immediately, and transient failures are eligible for retry after 30 seconds. Results currently provide
 one matching message per conversation, with a snippet, role and byte boundaries.
 Whitespace-separated query terms must occur in the same message. FTS operators
 are quoted as literal terms. A result cap tells callers when to narrow the query.
 
 ## Evidence
 
-Sixteen index tests cover old text beyond the reader's recent window, long text,
+Eighteen index tests cover old text beyond the reader's recent window, long text,
 large image captions, oversized records, progressive indexing, append/partial
 writes, rewrites/deletion, concurrent writers, profile/path boundaries, private
 channels, malformed content, file permissions, explicit rebuilds and future-cache preservation.
