@@ -1,8 +1,8 @@
 # Native conversation search: implementation in progress
 
-The target-local index is implemented and tested. It is not yet connected to an
-HTTP endpoint, the command palette, or the terminal dashboard. The deployed app
-still uses its existing workspace history picker.
+The target-local index, exact-match reader and background HTTP API are implemented
+on the development branch. The command palette and terminal dashboard integration
+remain unfinished. The deployed app still uses its existing workspace history picker.
 
 `internal/api/scripts/native_records.py` supplies the shared visible-message
 parser used by the history reader and search index. Search includes user,
@@ -16,15 +16,14 @@ supplies the cache root and resolved native configuration directory. Separate
 agent/configuration directories get separate hashed cache files. The directory
 is mode 0700 and database mode 0600. No full transcript needs to be copied to the
 AgentDeck server. The caller must choose an appropriate target cache location;
-the module currently has no production caller.
+the development API supplies the target executor and captured environment.
 
 The JSON worker is executable as `python3 native_search.py AGENT -- QUERY`.
 It honors CODEX_HOME or CLAUDE_CONFIG_DIR and writes its private cache under
 AGENTDECK_NATIVE_SEARCH_CACHE, otherwise XDG_CACHE_HOME/agentdeck or
 ~/.cache/agentdeck. Each invocation advances a bounded indexing pass and returns
 progress plus current matches. Repeat while progress is incomplete; pass --reset
-only on the first invocation of an explicit rebuild. The Go service still needs
-to embed and invoke this worker through its target executor.
+only on the first invocation of an explicit rebuild. The Go service embeds and invokes this worker through its target executor.
 
 Indexing runs in bounded increments, resumes from complete JSONL boundaries,
 handles an incomplete trailing write, and rotates progress between conversations.
@@ -55,6 +54,34 @@ It closes its read transaction on success and failure so subsequent indexing can
 proceed. Context pagination and source context beyond the indexed portion remain
 integration work.
 
+## Background API (development branch)
+
+- `POST /api/conversation-search`: `{query, target_id?, agent?, reset?}` starts
+  an explicit search. Agent is Claude or Codex; omitted filters cover all known
+  native profiles. The response includes a job ID, progress and ready results.
+- `GET /api/conversation-search/{id}`: poll progress and results. `done` means
+  every worker finished; `complete` additionally requires every scope to finish
+  indexing successfully. Per-scope issues and oversized-entry counts still apply.
+- `DELETE /api/conversation-search/{id}`: cancel outstanding indexing. Ready
+  results remain readable; starting another search resumes persisted checkpoints.
+- `GET /api/conversation-search/{id}/results/{result}`: revalidate and read the
+  exact matching message with context. No client-supplied file path is accepted.
+
+Scopes include captured settings from ended/archived sessions, project overrides,
+and current agent defaults on targets with no tracked sessions. Identical declared
+settings are deduplicated before execution; canonical native profile identity
+also deduplicates results from path aliases. Unsupported/unreachable targets have
+individual errors, so available results remain usable. Configuration/environment
+values and cache fingerprints stay private. Reads keep the search's captured
+profile settings; editing a target connection requires a fresh search.
+
+There are at most four active jobs and four simultaneous target commands across
+searching and reading. Jobs have a two-minute deadline; each indexing command has
+a fifteen-second timeout and advances the worker's bounded pass. Up to sixteen
+jobs are retained for fifteen minutes, with old completed jobs evicted when full.
+Ready result IDs remain stable across progress polls. Each scope's scanned-byte
+count describes its latest indexing pass, not the entire history size.
+
 ## Evidence
 
 Twenty-four index and reader tests cover old text beyond the reader's recent window, long text,
@@ -74,17 +101,18 @@ The embedded search and read workers also passed on the actual SSH target with
 a private synthetic profile: Unicode matching, warm-cache reuse, rebuild, exact
 source reading and stale-match rejection. The fixture cleaned its own files; no
 user history was indexed or edited.
+The background API has four integration tests covering archived profiles, project
+aliases, configuration changes, untracked workspaces, partial failures, cancellation
+and the active-job limit; these passed with the Go race detector. A temporary Go
+server also passed an actual API-to-SSH search/read round trip on main-pc with
+Unicode text, zero-byte warm indexing and stale-source rejection.
 
 ## Remaining integration
 
-- Run the index through the target executor using the session's captured agent
-  configuration; deduplicate target/profile scopes across tracked sessions.
-- Expose progress, partial-source issues and cancellation without blocking the
-  ordinary session/action search. Bound concurrency and handle unreachable targets.
 - Add result browsing to web and terminal; show target, workspace and agent, and
   open the exact matching message with surrounding context.
 - Support native histories outside an existing session's recorded workspace
   through validated provider metadata, rather than accepting arbitrary file paths.
-- Expose the full-rebuild/cache-reset operation for unusual rewrites.
+- Expose the API's full-rebuild/cache-reset operation in both interfaces.
 - Test actual local/SSH flows, large histories, failures and desktop/mobile UX;
   run final-head verification before deployment.

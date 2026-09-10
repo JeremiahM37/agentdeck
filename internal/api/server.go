@@ -45,6 +45,10 @@ type Server struct {
 	Cfg       *config.Config
 	Log       *slog.Logger
 
+	searchMu    sync.Mutex
+	searchJobs  map[string]*conversationSearchJob
+	searchSlots chan struct{}
+
 	uploadMu    sync.Mutex
 	uploadCount int
 
@@ -112,6 +116,11 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/hook/approval/{id}/decision", s.hookApprovalDecision)
 	mux.HandleFunc("POST /api/hook/tasks", s.hookFileTask)
 	mux.HandleFunc("POST /api/hook/notes", s.hookAddNote)
+
+	mux.HandleFunc("POST /api/conversation-search", s.startConversationSearch)
+	mux.HandleFunc("GET /api/conversation-search/{search}", s.getConversationSearch)
+	mux.HandleFunc("DELETE /api/conversation-search/{search}", s.cancelConversationSearch)
+	mux.HandleFunc("GET /api/conversation-search/{search}/results/{result}", s.readConversationSearchResult)
 
 	// ---- sessions: the interactive half of the board ----
 	mux.HandleFunc("GET /api/agents", s.listAgents)
