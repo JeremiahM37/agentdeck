@@ -129,6 +129,20 @@ func (m *Manager) Launch(ctx context.Context, o LaunchOpts) (*store.Session, err
 	if err != nil {
 		return nil, err
 	}
+	sharedWorkspace, err := m.WorkspaceAt(o.TargetID, workdir)
+	if err != nil {
+		return nil, err
+	}
+	if sharedWorkspace != nil {
+		if sharedWorkspace.State == "removed" {
+			return nil, fmt.Errorf("workspace repositories were removed; restore them before continuing")
+		}
+		for _, repo := range sharedWorkspace.Repositories {
+			if repo.Worktree == nil || repo.Worktree.State != "ready" {
+				return nil, fmt.Errorf("workspace repository setup is incomplete; inspect the allocation before continuing")
+			}
+		}
+	}
 	agent := o.Agent
 	if agent == "" {
 		agent = "claude"
@@ -176,6 +190,15 @@ func (m *Manager) Launch(ctx context.Context, o LaunchOpts) (*store.Session, err
 	if err != nil {
 		return nil, err
 	}
+	if sharedWorkspace != nil {
+		for _, repo := range sharedWorkspace.Repositories {
+			result, probeErr := ex.Run(ctx, "test -d "+shellq.Quote(repo.Worktree.Path), executor.RunOpts{Timeout: 10})
+			if probeErr != nil || !result.OK() {
+				m.end(sess.ID, StatusDead)
+				return nil, fmt.Errorf("workspace repository %q is unavailable on target", repo.Name)
+			}
+		}
+	}
 	config, err := m.launchConfiguration(agent, o.ProjectID, o.Configuration)
 	if err != nil {
 		m.end(sess.ID, "dead")
@@ -196,14 +219,25 @@ func (m *Manager) Launch(ctx context.Context, o LaunchOpts) (*store.Session, err
 			m.end(sess.ID, StatusDead)
 			return nil, fmt.Errorf("interactive worktrees require a local or SSH target")
 		}
-		root, err := ex.Run(ctx, "git -C "+shellq.Quote(workdir)+" rev-parse --show-toplevel", executor.RunOpts{Timeout: 30})
-		if err != nil || !root.OK() {
-			m.end(sess.ID, StatusDead)
-			return nil, fmt.Errorf("worktree source must be an existing Git working directory")
+		var plan *worktree.Interactive
+		if sharedWorkspace != nil {
+			workspaceSources, err = workspaceForkSources(ctx, ex, sharedWorkspace, o.Worktree.Base)
+			if err != nil {
+				m.end(sess.ID, StatusDead)
+				return nil, err
+			}
+		} else {
+			root, probeErr := ex.Run(ctx, "git -C "+shellq.Quote(workdir)+" rev-parse --show-toplevel", executor.RunOpts{Timeout: 30})
+			if probeErr != nil || !root.OK() {
+				m.end(sess.ID, StatusDead)
+				return nil, fmt.Errorf("worktree source must be an existing Git working directory")
+			}
+			plan = worktree.PlanInteractive(strings.TrimSpace(root.Stdout), sess.ID, *o.Worktree)
+			if len(workspaceSources) > 0 {
+				workspaceSources[0].Repo = strings.TrimSpace(root.Stdout)
+			}
 		}
-		plan := worktree.PlanInteractive(strings.TrimSpace(root.Stdout), sess.ID, *o.Worktree)
 		if len(workspaceSources) > 0 {
-			workspaceSources[0].Repo = strings.TrimSpace(root.Stdout)
 			plan, err = worktree.PlanMultiWorkspace(workspaceSources, sess.ID, *o.Worktree)
 			if err == nil {
 				err = worktree.RunInteractive(ctx, ex, "check-create", plan)

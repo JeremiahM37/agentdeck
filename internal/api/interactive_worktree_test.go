@@ -144,6 +144,45 @@ func TestMultiRepositorySessionLifecycle(t *testing.T) {
 	reviewURL := fmt.Sprintf("/api/term/session/%d/changes", int64(row.num("id")))
 	var changes obj
 	h.decode("GET", reviewURL+"?repository=1&path=file", nil, 200, &changes)
+	var shared obj
+	sharedInput := obj{"name": "shared grouped continuation", "target_id": target.ID, "workdir": dir, "agent": "group-test", "yolo": false}
+	h.decode("POST", "/api/sessions", sharedInput, 201, &shared)
+	if shared["workspace"] != nil {
+		t.Fatal("shared session inherited removal ownership")
+	}
+	sharedTerm := fmt.Sprintf("/api/term/session/%d", int64(shared.num("id")))
+	var sharedReview obj
+	h.decode("GET", sharedTerm+"/changes?repository=1&path=file", nil, 200, &sharedReview)
+	if !strings.Contains(sharedReview.str("patch"), "second repository change") {
+		t.Fatal("shared session lost repository review")
+	}
+	h.decode("GET", sharedTerm+"/files", nil, 200, &listing)
+	if err := os.WriteFile(filepath.Join(secondPath, "committed-child"), []byte("child branch commit"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	for _, args := range [][]string{{"add", "committed-child"}, {"-c", "user.name=Test", "-c", "user.email=test@example.invalid", "commit", "-qm", "child commit"}} {
+		if output, err := exec.Command("git", append([]string{"-C", secondPath}, args...)...).CombinedOutput(); err != nil {
+			t.Fatalf("git: %s", output)
+		}
+	}
+	var isolated obj
+	h.decode("POST", "/api/sessions", obj{"name": "isolated grouped continuation", "target_id": target.ID, "workdir": dir, "agent": "group-test", "worktree": obj{}, "yolo": false}, 201, &isolated)
+	isolatedWS := isolated["workspace"].(map[string]any)
+	isolatedChildren := isolatedWS["repositories"].([]any)
+	isolatedSecond := isolatedChildren[1].(map[string]any)["worktree"].(map[string]any)
+	isolatedPath := isolatedSecond["path"].(string)
+	if data, _ := os.ReadFile(filepath.Join(isolatedPath, "committed-child")); string(data) != "child branch commit" {
+		t.Fatal("fork missed child committed revision")
+	}
+	if data, _ := os.ReadFile(filepath.Join(isolatedPath, "file")); string(data) != "base" {
+		t.Fatal("fork copied uncommitted parent changes")
+	}
+	if isolatedSecond["repo"] != projects[1].RepoPath {
+		t.Fatal("fork cleanup depends on temporary parent directory")
+	}
+	if strings.Contains(fmt.Sprint(listing), ".agentdeck-") {
+		t.Fatal("shared session exposed bookkeeping")
+	}
 	if changes.num("selected_repository") != 1 || !strings.Contains(changes.str("patch"), "second repository change") {
 		t.Fatal("review did not use selected repository")
 	}
@@ -158,10 +197,17 @@ func TestMultiRepositorySessionLifecycle(t *testing.T) {
 	}
 	h.decode("DELETE", base+"/worktree", nil, 409, nil)
 	h.decode("DELETE", base, nil, 200, nil)
+	h.decode("DELETE", base+"/worktree", nil, 409, nil)
+	h.decode("DELETE", fmt.Sprintf("/api/sessions/%d", int64(shared.num("id"))), nil, 200, nil)
 	h.decode("DELETE", base+"/worktree", nil, 200, &row)
 	if row["workspace"].(map[string]any)["state"] != "removed" {
 		t.Fatal("removal not persisted")
 	}
+	isolatedBase := fmt.Sprintf("/api/sessions/%d", int64(isolated.num("id")))
+	h.decode("DELETE", isolatedBase, nil, 200, nil)
+	h.decode("DELETE", isolatedBase+"/worktree", nil, 200, nil)
+	// Cleanup retains a receipt directory; it is not a usable agent workspace.
+	h.decode("POST", "/api/sessions", sharedInput, 409, nil)
 	// Selection errors occur before a session is inserted, including an explicitly
 	// mismatched target and selecting the primary repository twice.
 	var before, after []obj

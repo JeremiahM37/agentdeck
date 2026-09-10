@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/JeremiahM37/agentdeck/internal/executor"
+	"github.com/JeremiahM37/agentdeck/internal/shellq"
 	"github.com/JeremiahM37/agentdeck/internal/store"
 	"github.com/JeremiahM37/agentdeck/internal/worktree"
 	"path"
@@ -87,6 +89,43 @@ func (m *Manager) workspaceSources(o LaunchOpts) ([]worktree.RepositorySource, e
 		id := project.ID
 		sources = append(sources, worktree.RepositorySource{Name: project.Name, Repo: project.RepoPath, Base: selected.Base, ProjectID: &id})
 		seen[id] = true
+	}
+	return sources, nil
+}
+
+// WorkspaceAt resolves a grouped allocation shared by fresh forks or resumed
+// sessions. Sharing the directory never gives another session removal ownership.
+func (m *Manager) WorkspaceAt(targetID int64, directory string) (*worktree.Interactive, error) {
+	rows, err := m.DB.Sessions(true)
+	if err != nil {
+		return nil, err
+	}
+	for _, row := range rows {
+		if row.TargetID != targetID || row.WorktreeJSON == "" {
+			continue
+		}
+		var workspace worktree.Interactive
+		if json.Unmarshal([]byte(row.WorktreeJSON), &workspace) == nil && len(workspace.Repositories) > 0 && path.Clean(workspace.Path) == path.Clean(directory) {
+			return &workspace, nil
+		}
+	}
+	return nil, nil
+}
+
+// Fork from each child's committed revision, while keeping the stable source
+// repository for future cleanup even after the parent allocation is removed.
+func workspaceForkSources(ctx context.Context, ex executor.Executor, workspace *worktree.Interactive, primaryBase string) ([]worktree.RepositorySource, error) {
+	sources := []worktree.RepositorySource{}
+	for i, repo := range workspace.Repositories {
+		base := "HEAD"
+		if i == 0 && strings.TrimSpace(primaryBase) != "" {
+			base = strings.TrimSpace(primaryBase)
+		}
+		result, err := ex.Run(ctx, "git --no-optional-locks -C "+shellq.Quote(repo.Worktree.Path)+" rev-parse --verify --end-of-options "+shellq.Quote(base+"^{commit}"), executor.RunOpts{Timeout: 30})
+		if err != nil || !result.OK() {
+			return nil, fmt.Errorf("could not resolve committed fork base for repository %q", repo.Name)
+		}
+		sources = append(sources, worktree.RepositorySource{Name: repo.Name, ProjectID: repo.ProjectID, Repo: repo.Worktree.Repo, Base: strings.TrimSpace(result.Stdout)})
 	}
 	return sources, nil
 }

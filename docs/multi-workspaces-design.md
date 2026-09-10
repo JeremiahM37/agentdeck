@@ -153,3 +153,17 @@ It identifies owned grouped roots from durable session records, including when a
 continuation shares the root without owning it. Ordinary workspace file behavior
 is unchanged. This is UI/API filtering, not isolation from a user or agent that
 can run arbitrary shell commands in the workspace.
+
+Grouped continuation now resolves the allocation by target/root through its owning
+record. Shared sessions retain repository review and filtered file access without
+inheriting removal ownership. Launch refuses removed/incomplete allocations and
+checks child directories; the retained receipt directory alone is not a usable
+workspace. An active shared session prevents owner cleanup.
+
+Creating an isolated workspace from a grouped root resolves each child's committed
+HEAD (or the explicit primary base), then allocates from the stable source repos.
+This preserves committed child work, excludes uncommitted edits, and avoids making
+cleanup depend on the parent's temporary worktree. API/Git/tmux tests cover these
+properties and removing the isolated group after parent removal. This verifies
+workspace continuation mechanics; installed-agent conversation fork/resume identity
+and browser/PTY native-history flows still require separate proof before rollout.

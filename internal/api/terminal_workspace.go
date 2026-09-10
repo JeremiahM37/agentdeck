@@ -13,7 +13,6 @@ import (
 	"github.com/JeremiahM37/agentdeck/internal/executor"
 	"github.com/JeremiahM37/agentdeck/internal/shellq"
 	"github.com/JeremiahM37/agentdeck/internal/terminal"
-	"github.com/JeremiahM37/agentdeck/internal/worktree"
 	"github.com/JeremiahM37/agentdeck/web"
 )
 
@@ -188,20 +187,13 @@ func (s *Server) terminalFileResult(w http.ResponseWriter, r *http.Request, acti
 	mode := ""
 	// Continuations may share an owned root without owning the allocation.
 	// Resolve its role from durable records, not filenames supplied by clients.
-	records, loadErr := s.DB.Sessions(true)
+	workspace, loadErr := s.Sessions.WorkspaceAt(target.ID, dir)
 	if loadErr != nil {
 		respondErr(w, loadErr)
 		return nil, false
 	}
-	for _, row := range records {
-		if row.TargetID != target.ID || row.WorktreeJSON == "" {
-			continue
-		}
-		var workspace worktree.Interactive
-		if json.Unmarshal([]byte(row.WorktreeJSON), &workspace) == nil && len(workspace.Repositories) > 0 && path.Clean(workspace.Path) == path.Clean(dir) {
-			mode = "grouped"
-			break
-		}
+	if workspace != nil {
+		mode = "grouped"
 	}
 	cmd := "python3 -c " + shellq.Quote(terminalFileScript) + " " + shellq.Quote(dir) + " " + shellq.Quote(r.URL.Query().Get("path")) + " " + shellq.Quote(action) + " " + shellq.Quote(mode)
 	result, err := ex.Run(r.Context(), cmd, executor.RunOpts{Timeout: 60})
