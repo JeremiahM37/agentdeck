@@ -100,6 +100,10 @@ type LaunchOpts struct {
 	ReservedID int64
 	// ExtraArgs carries already-validated runtime configuration from a task.
 	ExtraArgs []string
+	// SkipProjectMCP is set for takeover launches, whose ExtraArgs carry the
+	// attempt's captured MCP policy. It also covers empty/Codex snapshots where
+	// provider-specific flags cannot identify that an explicit snapshot exists.
+	SkipProjectMCP bool
 	// Env is layered over the agent's and under nothing: it is how a session is
 	// pointed at a local model (ANTHROPIC_BASE_URL, OPENAI_BASE_URL, …).
 	Env map[string]string
@@ -420,7 +424,7 @@ func (m *Manager) Launch(ctx context.Context, o LaunchOpts) (*store.Session, err
 	var toolArgs []string
 	if project != nil {
 		mcp := store.UnjObj(project.MCPJSON)
-		if agent == "claude" && (len(mcp) > 0 || project.StrictMCP != 0) {
+		if agent == "claude" && !o.SkipProjectMCP && (len(mcp) > 0 || project.StrictMCP != 0) {
 			raw, mcpErr := agentcfg.MCPPayload(mcp)
 			if mcpErr != nil {
 				m.end(sess.ID, StatusDead)
@@ -452,7 +456,7 @@ func (m *Manager) Launch(ctx context.Context, o LaunchOpts) (*store.Session, err
 			if project.StrictMCP != 0 {
 				toolArgs = append(toolArgs, "--strict-mcp-config")
 			}
-		} else if agent == "codex" {
+		} else if agent == "codex" && !o.SkipProjectMCP {
 			if project.StrictMCP != 0 {
 				m.end(sess.ID, StatusDead)
 				return nil, fmt.Errorf("strict_mcp is unsupported for Codex additive configuration")
