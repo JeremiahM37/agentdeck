@@ -128,5 +128,6 @@ func (m *Manager) PrepareTakeover(ctx context.Context, ex executor.Executor, tas
 	}
 	return LaunchOpts{ProjectID: &project.ID, TargetID: project.TargetID, Name: task.Title, Agent: task.Agent,
 		Model: firstNonEmpty(att.Model, task.Model), Workdir: att.WorktreePath, ResumeID: resumeID, Prime: prime,
-		Env: env, ExtraArgs: extraArgs, Yolo: task.Agent != "claude" && task.PermissionMode == "bypassPermissions"}, nil
+		Env: env, ExtraArgs: extraArgs, SkipProjectMCP: true,
+		Yolo: task.Agent != "claude" && task.PermissionMode == "bypassPermissions"}, nil
 }
