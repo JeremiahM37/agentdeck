@@ -114,7 +114,7 @@ def test_project_skills_browser_catalog_search_retry_and_provider_race(page, ser
     project = page.request.post(f"{server}/api/projects", data={
         "name": "Skills browser fixture", "target_id": target["id"], "repo_path": "/mock/skills-ui",
         "default_agent": "claude"}).json()
-    state = {"attachments": [], "attempts": 0}
+    state = {"attachments": [], "attempts": 0, "sources": []}
     project_id = project["id"]
 
     def route_skill(route):
@@ -139,10 +139,14 @@ def test_project_skills_browser_catalog_search_retry_and_provider_race(page, ser
         if request.method == "DELETE" and parsed.path.startswith(f"/api/projects/{project_id}/skills/"):
             state["attachments"] = []
             return route.fulfill(status=200, content_type="application/json", body=json.dumps({"removed": True, "preserved": []}))
+        if request.method == "PATCH" and parsed.path == f"/api/projects/{project_id}":
+            state["sources"] = request.post_data_json.get("skill_sources", [])
+            return route.fulfill(status=200, content_type="application/json", body=json.dumps({"skill_sources_json": json.dumps(state["sources"])}))
         return route.continue_()
 
     page.route("**/api/skills**", route_skill)
     page.route(f"**/api/projects/{project_id}/skills**", route_skill)
+    page.route(f"**/api/projects/{project_id}", route_skill)
     try:
         page.goto(server); _tab(page, "targets")
         page.locator('[data-settings="projects"]').click()
@@ -165,6 +169,14 @@ def test_project_skills_browser_catalog_search_retry_and_provider_race(page, ser
         attach.click(); expect(card.locator(".skills-status")).to_have_text("Skill attached.", timeout=10000)
         card.locator(".attached-skill .skill-detach").click()
         expect(card.locator(".skills-status")).to_have_text("Skill detached.", timeout=10000)
+        card.locator(".skills-sources summary").click()
+        card.locator(".skills-source-input").fill("/fixture/custom-skills")
+        card.locator(".skills-source-save").click()
+        expect(card.locator(".skills-source-status")).to_have_text("Directories saved. Reload the provider to discover them.")
+        card.locator(".skills-source-clear").click()
+        expect(card.locator(".skills-source-status")).to_contain_text("Unsaved directory changes")
+        card.locator(".skills-source-save").click()
+        assert state["sources"] == []
         assert page.evaluate("document.body.scrollWidth <= window.innerWidth")
         page.screenshot(path=f"/tmp/agentdeck-skills-{page.viewport_size['width']}.png", full_page=True)
     finally:
