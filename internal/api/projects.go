@@ -12,6 +12,7 @@ import (
 	"github.com/JeremiahM37/agentdeck/internal/executor"
 	"github.com/JeremiahM37/agentdeck/internal/scheduler"
 	"github.com/JeremiahM37/agentdeck/internal/shellq"
+	"github.com/JeremiahM37/agentdeck/internal/skills"
 	"github.com/JeremiahM37/agentdeck/internal/store"
 )
 
@@ -46,7 +47,8 @@ type projectIn struct {
 	// DefaultPermissionMode '' means "use the task default" (acceptEdits). Set
 	// 'default' to make every dispatch on this project stop for approval — the
 	// right setting when a project's blast radius is infrastructure, not a diff.
-	DefaultPermissionMode *string `json:"default_permission_mode"`
+	DefaultPermissionMode *string  `json:"default_permission_mode"`
+	SkillSources          []string `json:"skill_sources"`
 }
 
 func (s *Server) listProjects(w http.ResponseWriter, r *http.Request) {
@@ -107,6 +109,7 @@ func (s *Server) createProject(w http.ResponseWriter, r *http.Request) {
 		GateMatcher:       in.GateMatcher,
 		DefaultAgent:      strOr(in.DefaultAgent, "claude"),
 		CapabilityProfile: strOr(in.CapabilityProfile, "restricted"),
+		SkillSourcesJSON:  store.J(orEmpty(in.SkillSources)),
 	}
 	if in.DefaultPermissionMode != nil {
 		p.DefaultPermissionMode = *in.DefaultPermissionMode
@@ -139,6 +142,7 @@ type projectPatch struct {
 	DefaultAgent          *string         `json:"default_agent"`
 	CapabilityProfile     *string         `json:"capability_profile"`
 	DefaultPermissionMode *string         `json:"default_permission_mode"`
+	SkillSources          *[]string       `json:"skill_sources"`
 }
 
 func (s *Server) patchProject(w http.ResponseWriter, r *http.Request) {
@@ -190,6 +194,9 @@ func (s *Server) patchProject(w http.ResponseWriter, r *http.Request) {
 	setStr(fields, "setup_cmd", p.SetupCmd)
 	setStr(fields, "capability_profile", p.CapabilityProfile)
 	setStr(fields, "default_permission_mode", p.DefaultPermissionMode)
+	if p.SkillSources != nil {
+		fields["skill_sources_json"] = store.J(orEmpty(*p.SkillSources))
+	}
 	setBool(fields, "keep_worktrees", p.KeepWorktrees)
 	setBool(fields, "review_gate", p.ReviewGate)
 	setBool(fields, "strict_mcp", p.StrictMCP)
@@ -318,6 +325,53 @@ func (s *Server) deleteProject(w http.ResponseWriter, r *http.Request) {
 	if s.DB.Exists("task_takeovers", "status!='ready' AND task_id IN (SELECT id FROM tasks WHERE project_id=?)", id) {
 		httpError(w, 409, "A task takeover is in progress; finish it before deleting the project")
 		return
+	}
+	// Skill ownership is target-local. Clean every recorded symlink before the
+	// project row can disappear; otherwise an offline target would leave links
+	// with no recovery record. Foreign or changed files block deletion and stay
+	// untouched.
+	if project, projectErr := s.DB.Project(id); projectErr == nil {
+		if rows, rowsErr := s.DB.ProjectSkills(id, ""); rowsErr != nil {
+			respondErr(w, rowsErr)
+			return
+		} else if len(rows) > 0 {
+			target, targetErr := s.DB.Target(project.TargetID)
+			if targetErr != nil {
+				respondErr(w, targetErr)
+				return
+			}
+			ex, exErr := s.Reg.For(target)
+			if exErr != nil {
+				respondErr(w, exErr)
+				return
+			}
+			defer ex.Close()
+			for _, skill := range rows {
+				mats, matErr := s.DB.Materializations(skill.ID)
+				if matErr != nil {
+					respondErr(w, matErr)
+					return
+				}
+				if len(mats) == 0 {
+					httpError(w, 409, "skill %q has no ownership record; project retained", skill.SkillID)
+					return
+				}
+				for _, mat := range mats {
+					if err := skills.RemoveMaterialization(r.Context(), ex, project, skill, mat); err != nil {
+						httpError(w, 409, "skill %q materialization could not be cleaned; project retained: %v", skill.SkillID, err)
+						return
+					}
+					if err := s.DB.DeleteMaterialization(mat.ID); err != nil {
+						respondErr(w, err)
+						return
+					}
+				}
+				if err := s.DB.DeleteProjectSkill(skill.ID); err != nil {
+					respondErr(w, err)
+					return
+				}
+			}
+		}
 	}
 	// A project with history is refused unless the caller says explicitly that
 	// the history goes too. Deleting eighty-one stale projects should not be a

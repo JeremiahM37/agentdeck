@@ -54,6 +54,7 @@ type Project struct {
 	DefaultAgent          string  `json:"default_agent"`
 	CapabilityProfile     string  `json:"capability_profile"`
 	DefaultPermissionMode string  `json:"default_permission_mode"`
+	SkillSourcesJSON      string  `json:"skill_sources_json"`
 	CreatedAt             float64 `json:"created_at"`
 
 	// joined for the projects list — the UI names a project's target inline

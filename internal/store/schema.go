@@ -29,6 +29,7 @@ CREATE TABLE IF NOT EXISTS projects(
   default_agent TEXT DEFAULT 'claude',         -- agent used by tasks that don't pick one
   capability_profile TEXT DEFAULT 'restricted',
   default_permission_mode TEXT DEFAULT '',
+  skill_sources_json TEXT DEFAULT '[]',
   created_at REAL
 );
 CREATE TABLE IF NOT EXISTS tasks(
@@ -58,6 +59,37 @@ CREATE TABLE IF NOT EXISTS attempts(
   mcp_snapshot INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS idx_attempts_task ON attempts(task_id);
+CREATE TABLE IF NOT EXISTS project_skills(
+  id INTEGER PRIMARY KEY,
+  project_id INTEGER NOT NULL REFERENCES projects(id),
+  target_id INTEGER NOT NULL REFERENCES targets(id),
+  agent TEXT NOT NULL,
+  skill_id TEXT NOT NULL,
+  source_id TEXT NOT NULL,
+  source_path TEXT NOT NULL,
+  entry_name TEXT NOT NULL,
+  target_rel TEXT NOT NULL,
+  source_digest TEXT NOT NULL DEFAULT '',
+  exclude_marker TEXT NOT NULL DEFAULT '',
+  created_at REAL NOT NULL,
+  UNIQUE(project_id, target_id, agent, skill_id)
+);
+CREATE INDEX IF NOT EXISTS idx_project_skills_project ON project_skills(project_id, agent);
+CREATE TABLE IF NOT EXISTS skill_materializations(
+  id INTEGER PRIMARY KEY,
+  -- Deliberately no FK cascade: an ownership record must survive a project
+  -- edit/delete until its target-local symlink has been cleaned.
+  attachment_id INTEGER NOT NULL,
+  target_id INTEGER NOT NULL REFERENCES targets(id),
+  worktree_path TEXT NOT NULL,
+  target_path TEXT NOT NULL,
+  source_path TEXT NOT NULL,
+  target_rel TEXT NOT NULL,
+  state TEXT NOT NULL DEFAULT 'pending',
+  created_at REAL NOT NULL,
+  UNIQUE(attachment_id, worktree_path)
+);
+CREATE INDEX IF NOT EXISTS idx_skill_materializations_path ON skill_materializations(worktree_path);
 -- Operator messages survive restarts and are assigned to exactly one turn.
 CREATE TABLE IF NOT EXISTS task_messages(
   id INTEGER PRIMARY KEY,
@@ -206,6 +238,8 @@ var migrations = []string{
 	"ALTER TABLE projects ADD COLUMN default_agent TEXT DEFAULT 'claude'",
 	"ALTER TABLE projects ADD COLUMN capability_profile TEXT DEFAULT 'restricted'",
 	"ALTER TABLE projects ADD COLUMN default_permission_mode TEXT DEFAULT ''",
+	"ALTER TABLE projects ADD COLUMN skill_sources_json TEXT DEFAULT '[]'",
+	"ALTER TABLE skill_materializations ADD COLUMN state TEXT NOT NULL DEFAULT 'pending'",
 	"ALTER TABLE tasks ADD COLUMN parent_task_id INTEGER",
 	"ALTER TABLE tasks ADD COLUMN created_by TEXT DEFAULT 'user'",
 	"ALTER TABLE tasks ADD COLUMN created_by_attempt INTEGER",

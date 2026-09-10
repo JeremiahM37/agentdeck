@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"github.com/JeremiahM37/agentdeck/internal/executor"
 	"github.com/JeremiahM37/agentdeck/internal/shellq"
+	"github.com/JeremiahM37/agentdeck/internal/skills"
 	"github.com/JeremiahM37/agentdeck/internal/store"
 	"github.com/JeremiahM37/agentdeck/internal/worktree"
 	"path"
@@ -84,6 +85,16 @@ func (m *Manager) mutateWorktree(ctx context.Context, id int64, operation string
 	for _, other := range live {
 		if other.TargetID == row.TargetID && (path.Clean(other.Workdir) == path.Clean(plan.Path) || strings.HasPrefix(path.Clean(other.Workdir), path.Clean(plan.Path)+"/")) {
 			return fmt.Errorf("end session %d before changing its worktree", other.ID)
+		}
+	}
+	if operation == "remove" && row.ProjectID != nil {
+		if project, projectErr := m.DB.Project(*row.ProjectID); projectErr == nil {
+			// Remove only symlinks recorded as AgentDeck-owned. Foreign files and
+			// changed links remain, so the normal worktree cleanliness guard can
+			// explain why cleanup is blocked.
+			if cleanErr := skills.Clean(ctx, ex, m.DB, project, plan.Path); cleanErr != nil {
+				return cleanErr
+			}
 		}
 	}
 	if err := worktree.RunInteractive(ctx, ex, operation, &plan); err != nil {
