@@ -219,7 +219,7 @@ func TestNativeSkillStaysInRepositoryAndLinksIntoChild(t *testing.T) {
 			if err := exec.Command("git", "init", "-q", repo).Run(); err != nil {
 				t.Fatal(err)
 			}
-			if err := exec.Command("git", "-C", repo, "add", ".").Run(); err != nil {
+			if err := exec.Command("git", "-C", repo, "add", "-f", map[string]string{"claude": ".claude/skills/native", "codex": ".agents/skills/native"}[agent]).Run(); err != nil {
 				t.Fatal(err)
 			}
 			if out, err := exec.Command("git", "-C", repo, "-c", "user.name=AgentDeck native", "-c", "user.email=agentdeck@example.invalid", "commit", "-qm", "native skill").CombinedOutput(); err != nil {
@@ -278,8 +278,14 @@ func TestNativeSkillStaysInRepositoryAndLinksIntoChild(t *testing.T) {
 			if info, err := os.Stat(childLink); err != nil || !info.IsDir() {
 				t.Fatalf("child native destination missing: info=%v err=%v", info, err)
 			}
+			if err := os.WriteFile(filepath.Join(childLink, "SKILL.md"), []byte("name: native\nuser edit\n"), 0644); err != nil {
+				t.Fatal(err)
+			}
+			if err := Reassert(context.Background(), ex, db, p, agent, child); err != nil {
+				t.Fatal(err)
+			}
 			childBody, err := os.ReadFile(filepath.Join(childLink, "SKILL.md"))
-			if err != nil || string(childBody) != "name: native\n" {
+			if err != nil || string(childBody) != "name: native\nuser edit\n" {
 				t.Fatalf("child native content changed: %q err=%v", childBody, err)
 			}
 			if err := Clean(context.Background(), ex, db, p, child); err != nil {
@@ -321,6 +327,74 @@ func TestMaterializeRejectsSymlinkedSkillParent(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(outside, "skills")); !os.IsNotExist(err) {
 		t.Fatalf("outside path was modified: %v", err)
+	}
+}
+
+func TestNativeSkillForeignUntrackedDestinationIsPreserved(t *testing.T) {
+	root := t.TempDir()
+	repo := filepath.Join(root, "repo")
+	foreignRepo := filepath.Join(root, "foreign")
+	native := filepath.Join(repo, ".agents", "skills", "native")
+	foreign := filepath.Join(foreignRepo, ".agents", "skills", "native")
+	for _, dir := range []string{native, foreign} {
+		if err := os.MkdirAll(dir, 0755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, "SKILL.md"), []byte("foreign content\n"), 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, dir := range []string{repo, foreignRepo} {
+		if err := exec.Command("git", "init", "-q", dir).Run(); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := exec.Command("git", "-C", repo, "add", ".").Run(); err != nil {
+		t.Fatal(err)
+	}
+	if out, err := exec.Command("git", "-C", repo, "-c", "user.name=AgentDeck native", "-c", "user.email=agentdeck@example.invalid", "commit", "-qm", "native").CombinedOutput(); err != nil {
+		t.Fatalf("native commit: %v %s", err, out)
+	}
+	db, err := store.Open(filepath.Join(root, "state.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	target, err := db.InsertTarget(&store.Target{Name: "foreign-native-target", Kind: "local"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	p, err := db.InsertProject(&store.Project{Name: "foreign-native-project", TargetID: target.ID, RepoPath: repo, DefaultAgent: "codex"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	xs, err := Discover(context.Background(), executor.NewLocal(), p, "codex")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var skill Skill
+	for _, candidate := range xs {
+		if candidate.SourcePath == native {
+			skill = candidate
+		}
+	}
+	if skill.ID == "" {
+		t.Fatalf("native skill not discovered: %+v", xs)
+	}
+	attachment, err := db.InsertProjectSkill(&store.ProjectSkill{ProjectID: p.ID, TargetID: target.ID, Agent: "codex", SkillID: skill.ID, SourceID: skill.Source, SourcePath: native, EntryName: "native", TargetRel: ".agents/skills/native"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = Reassert(context.Background(), executor.NewLocal(), db, p, "codex", foreignRepo)
+	if err == nil || !strings.Contains(err.Error(), "destination already exists") {
+		t.Fatalf("foreign native destination result: %v", err)
+	}
+	mats, err := db.Materializations(attachment.ID)
+	if err != nil || len(mats) != 1 || mats[0].State != "pending" {
+		t.Fatalf("foreign destination state: mats=%+v err=%v", mats, err)
+	}
+	if body, err := os.ReadFile(filepath.Join(foreign, "SKILL.md")); err != nil || string(body) != "foreign content\n" {
+		t.Fatalf("foreign native content changed: %q err=%v", body, err)
 	}
 }
 
