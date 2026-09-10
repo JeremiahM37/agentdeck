@@ -816,7 +816,10 @@ func (s *Scheduler) Janitor(ctx context.Context, days float64) (map[string]any, 
 		if err != nil {
 			continue
 		}
-		_ = skills.Clean(ctx, ex, s.DB, c.Project, att.WorktreePath)
+		if cleanErr := skills.Clean(ctx, ex, s.DB, c.Project, att.WorktreePath); cleanErr != nil {
+			s.Log.Warn("janitor: skill cleanup failed; retaining worktree and ownership evidence", "attempt", att.ID, "err", cleanErr)
+			continue
+		}
 		if err := worktree.Remove(ctx, ex, c.Project.RepoPath, att.WorktreePath); err != nil {
 			s.Log.Warn("janitor: worktree removal failed", "attempt", att.ID, "err", err)
 			continue

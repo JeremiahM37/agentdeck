@@ -124,6 +124,164 @@ func TestConfiguredSourceDiscovery(t *testing.T) {
 	}
 }
 
+func TestReassertPendingForeignSameTargetLinkNeverBecomesOwned(t *testing.T) {
+	root := t.TempDir()
+	repo := filepath.Join(root, "repo")
+	source := filepath.Join(root, "source", "review")
+	if err := os.MkdirAll(source, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(source, "SKILL.md"), []byte("name: review\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(repo, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := exec.Command("git", "init", "-q", repo).Run(); err != nil {
+		t.Fatal(err)
+	}
+	dst := filepath.Join(repo, ".agents", "skills", "review")
+	if err := os.MkdirAll(filepath.Dir(dst), 0755); err != nil {
+		t.Fatal(err)
+	}
+	// This is a user's link to the same source. Its target alone must never be
+	// treated as proof that AgentDeck created it.
+	if err := os.Symlink(source, dst); err != nil {
+		t.Fatal(err)
+	}
+	db, err := store.Open(filepath.Join(root, "state.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	target, err := db.InsertTarget(&store.Target{Name: "pending-target", Kind: "local"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	p, err := db.InsertProject(&store.Project{Name: "pending-project", TargetID: target.ID, RepoPath: repo, DefaultAgent: "codex", SkillSourcesJSON: store.J([]string{filepath.Dir(source)})})
+	if err != nil {
+		t.Fatal(err)
+	}
+	xs, err := Discover(context.Background(), executor.NewLocal(), p, "codex")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var skill Skill
+	for _, candidate := range xs {
+		if candidate.SourcePath == source {
+			skill = candidate
+			break
+		}
+	}
+	if skill.ID == "" {
+		t.Fatalf("configured source was not discovered: %+v", xs)
+	}
+	attachment, err := db.InsertProjectSkill(&store.ProjectSkill{ProjectID: p.ID, TargetID: target.ID, Agent: "codex", SkillID: skill.ID, SourceID: skill.Source, SourcePath: skill.SourcePath, EntryName: skill.EntryName, TargetRel: ".agents/skills/review"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ex := executor.NewLocal()
+	firstErr := Reassert(context.Background(), ex, db, p, "codex", repo)
+	if firstErr == nil || !strings.Contains(firstErr.Error(), "destination already exists") {
+		t.Fatalf("foreign collision result: %v", firstErr)
+	}
+	mats, err := db.Materializations(attachment.ID)
+	if err != nil || len(mats) != 1 || mats[0].State != "pending" {
+		t.Fatalf("first collision state: mats=%+v err=%v", mats, err)
+	}
+	if err := Reassert(context.Background(), ex, db, p, "codex", repo); err == nil {
+		t.Fatal("retry adopted foreign same-target link")
+	}
+	mats, err = db.Materializations(attachment.ID)
+	if err != nil || len(mats) != 1 || mats[0].State != "pending" {
+		t.Fatalf("retry collision state: mats=%+v err=%v", mats, err)
+	}
+	if err := Clean(context.Background(), ex, db, p, repo); err == nil {
+		t.Fatal("cleanup silently removed pending foreign link")
+	}
+	if _, err := os.Lstat(dst); err != nil {
+		t.Fatalf("foreign link was removed: %v", err)
+	}
+}
+
+func TestNativeSkillStaysInRepositoryAndLinksIntoChild(t *testing.T) {
+	for _, agent := range []string{"claude", "codex"} {
+		t.Run(agent, func(t *testing.T) {
+			root := t.TempDir()
+			repo := filepath.Join(root, "repo")
+			native := filepath.Join(repo, map[string]string{"claude": ".claude", "codex": ".agents"}[agent], "skills", "native")
+			if err := os.MkdirAll(native, 0755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(native, "SKILL.md"), []byte("name: native\n"), 0644); err != nil {
+				t.Fatal(err)
+			}
+			if err := exec.Command("git", "init", "-q", repo).Run(); err != nil {
+				t.Fatal(err)
+			}
+			db, err := store.Open(filepath.Join(root, "state.db"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer db.Close()
+			target, err := db.InsertTarget(&store.Target{Name: "native-" + agent, Kind: "local"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			p, err := db.InsertProject(&store.Project{Name: "native-" + agent, TargetID: target.ID, RepoPath: repo, DefaultAgent: agent})
+			if err != nil {
+				t.Fatal(err)
+			}
+			ex := executor.NewLocal()
+			xs, err := Discover(context.Background(), ex, p, agent)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var skill Skill
+			for _, candidate := range xs {
+				if candidate.SourcePath == native {
+					skill = candidate
+				}
+			}
+			if skill.ID == "" {
+				t.Fatalf("native skill not discovered: %+v", xs)
+			}
+			attachment, err := db.InsertProjectSkill(&store.ProjectSkill{ProjectID: p.ID, TargetID: target.ID, Agent: agent, SkillID: skill.ID, SourceID: skill.Source, SourcePath: skill.SourcePath, EntryName: skill.EntryName, TargetRel: filepath.ToSlash(filepath.Join(map[string]string{"claude": ".claude", "codex": ".agents"}[agent], "skills", "native"))})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := Reassert(context.Background(), ex, db, p, agent, repo); err != nil {
+				t.Fatal(err)
+			}
+			mats, err := db.Materializations(attachment.ID)
+			if err != nil || len(mats) != 1 || mats[0].State != "preexisting" {
+				t.Fatalf("native state: mats=%+v err=%v", mats, err)
+			}
+			child := filepath.Join(root, "child")
+			if err := exec.Command("git", "init", "-q", child).Run(); err != nil {
+				t.Fatal(err)
+			}
+			if err := Reassert(context.Background(), ex, db, p, agent, child); err != nil {
+				t.Fatal(err)
+			}
+			childLink := filepath.Join(child, map[string]string{"claude": ".claude", "codex": ".agents"}[agent], "skills", "native")
+			got, err := os.Readlink(childLink)
+			if err != nil || got != native {
+				t.Fatalf("child link=%q err=%v", got, err)
+			}
+			if err := Clean(context.Background(), ex, db, p, child); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := os.Lstat(childLink); !os.IsNotExist(err) {
+				t.Fatalf("child link remains: %v", err)
+			}
+			if _, err := os.Stat(native); err != nil {
+				t.Fatalf("native repository skill changed: %v", err)
+			}
+		})
+	}
+}
+
 func TestSSHSkillLifecycleUsesRealTransport(t *testing.T) {
 	_, private, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {

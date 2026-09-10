@@ -85,6 +85,7 @@ CREATE TABLE IF NOT EXISTS skill_materializations(
   target_path TEXT NOT NULL,
   source_path TEXT NOT NULL,
   target_rel TEXT NOT NULL,
+  state TEXT NOT NULL DEFAULT 'pending',
   created_at REAL NOT NULL,
   UNIQUE(attachment_id, worktree_path)
 );
@@ -238,6 +239,7 @@ var migrations = []string{
 	"ALTER TABLE projects ADD COLUMN capability_profile TEXT DEFAULT 'restricted'",
 	"ALTER TABLE projects ADD COLUMN default_permission_mode TEXT DEFAULT ''",
 	"ALTER TABLE projects ADD COLUMN skill_sources_json TEXT DEFAULT '[]'",
+	"ALTER TABLE skill_materializations ADD COLUMN state TEXT NOT NULL DEFAULT 'pending'",
 	"ALTER TABLE tasks ADD COLUMN parent_task_id INTEGER",
 	"ALTER TABLE tasks ADD COLUMN created_by TEXT DEFAULT 'user'",
 	"ALTER TABLE tasks ADD COLUMN created_by_attempt INTEGER",

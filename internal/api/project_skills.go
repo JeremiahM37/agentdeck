@@ -178,15 +178,39 @@ func (s *Server) attachProjectSkill(w http.ResponseWriter, r *http.Request) {
 		respondErr(w, err)
 		return
 	}
-	if _, _, err = skills.Materialize(r.Context(), ex, p, *selected, in.Agent, p.RepoPath, created.ID, false); err != nil {
-		if strings.Contains(err.Error(), "already exists") {
+	_, sourcePath, state, matErr := skills.MaterializeState(r.Context(), ex, p, *selected, in.Agent, p.RepoPath, created.ID, false)
+	if matErr != nil {
+		if strings.Contains(matErr.Error(), "already exists") {
+			// A deterministic destination collision means this request never
+			// established ownership. Roll back the newly-created intent so a
+			// foreign file does not trap the project in a permanently pending
+			// attachment. If the DB cleanup itself fails, retain the evidence.
+			mats, lookupErr := s.DB.Materializations(created.ID)
+			if lookupErr != nil {
+				respondErr(w, lookupErr)
+				return
+			}
+			for _, m := range mats {
+				if deleteErr := s.DB.DeleteMaterialization(m.ID); deleteErr != nil {
+					httpError(w, 500, "skill destination already exists and pending intent could not be rolled back: %v", deleteErr)
+					return
+				}
+			}
+			if deleteErr := s.DB.DeleteProjectSkill(created.ID); deleteErr != nil {
+				httpError(w, 500, "skill destination already exists and pending intent could not be rolled back: %v", deleteErr)
+				return
+			}
 			httpError(w, 409, "skill destination already exists; foreign content was preserved")
 		} else {
-			respondErr(w, err)
+			respondErr(w, matErr)
 		}
 		return
 	}
-	writeJSON(w, 201, map[string]any{"attachment": created, "target_path": filepath.Join(p.RepoPath, rel), "mode": "symlink", "owned": true})
+	if err = s.DB.UpsertMaterialization(&store.SkillMaterialization{AttachmentID: created.ID, TargetID: created.TargetID, WorktreePath: p.RepoPath, TargetPath: filepath.Join(p.RepoPath, rel), SourcePath: sourcePath, TargetRel: rel, State: state}); err != nil {
+		respondErr(w, err)
+		return
+	}
+	writeJSON(w, 201, map[string]any{"attachment": created, "target_path": filepath.Join(p.RepoPath, rel), "mode": "symlink", "owned": state == "owned"})
 }
 
 func (s *Server) detachProjectSkill(w http.ResponseWriter, r *http.Request) {
@@ -217,6 +241,7 @@ func (s *Server) detachProjectSkill(w http.ResponseWriter, r *http.Request) {
 	}
 	defer ex.Close()
 	preserved := []string{}
+	pendingCancelled := false
 	mats, matErr := s.DB.Materializations(aid)
 	if matErr != nil {
 		respondErr(w, matErr)
@@ -226,10 +251,38 @@ func (s *Server) detachProjectSkill(w http.ResponseWriter, r *http.Request) {
 		preserved = append(preserved, filepath.Join(p.RepoPath, x.TargetRel))
 	}
 	for _, m := range mats {
-		if err := skills.Remove(r.Context(), ex, p, x, m.WorktreePath); err != nil {
+		if err := skills.RemoveMaterialization(r.Context(), ex, p, x, m); err != nil {
+			if m.State == "pending" && strings.Contains(err.Error(), "ownership is not established") {
+				// Cancellation of an unproven intent may discard only its DB
+				// evidence; the foreign target path remains untouched.
+				if deleteErr := s.DB.DeleteMaterialization(m.ID); deleteErr != nil {
+					preserved = append(preserved, fmt.Sprintf("%s (database: %v)", m.TargetPath, deleteErr))
+				} else {
+					preserved = append(preserved, m.TargetPath)
+					pendingCancelled = true
+				}
+				continue
+			}
 			preserved = append(preserved, m.TargetPath)
 		} else {
-			_ = s.DB.DeleteMaterialization(m.ID)
+			if err := s.DB.DeleteMaterialization(m.ID); err != nil {
+				preserved = append(preserved, fmt.Sprintf("%s (database: %v)", m.TargetPath, err))
+			}
+		}
+	}
+	if pendingCancelled {
+		remaining, lookupErr := s.DB.Materializations(aid)
+		if lookupErr != nil {
+			respondErr(w, lookupErr)
+			return
+		}
+		if len(remaining) == 0 {
+			if deleteErr := s.DB.DeleteProjectSkill(aid); deleteErr != nil {
+				respondErr(w, deleteErr)
+				return
+			}
+			writeJSON(w, 200, map[string]any{"removed": true, "preserved": preserved})
+			return
 		}
 	}
 	if len(preserved) > 0 {

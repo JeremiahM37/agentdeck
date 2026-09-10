@@ -357,13 +357,19 @@ func (s *Server) deleteProject(w http.ResponseWriter, r *http.Request) {
 					return
 				}
 				for _, mat := range mats {
-					if err := skills.Remove(r.Context(), ex, project, skill, mat.WorktreePath); err != nil {
+					if err := skills.RemoveMaterialization(r.Context(), ex, project, skill, mat); err != nil {
 						httpError(w, 409, "skill %q materialization could not be cleaned; project retained: %v", skill.SkillID, err)
 						return
 					}
-					_ = s.DB.DeleteMaterialization(mat.ID)
+					if err := s.DB.DeleteMaterialization(mat.ID); err != nil {
+						respondErr(w, err)
+						return
+					}
 				}
-				_ = s.DB.DeleteProjectSkill(skill.ID)
+				if err := s.DB.DeleteProjectSkill(skill.ID); err != nil {
+					respondErr(w, err)
+					return
+				}
 			}
 		}
 	}

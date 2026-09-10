@@ -49,7 +49,8 @@ def safe_parent(dst,base,create=True):
 def gitpat(line):
  return '/'+line.replace('\\','\\\\').replace('*','\\*').replace('?','\\?').replace('[','\\[').replace(']','\\]')
 def edit_exclude(repo,marker,line,remove):
- p=os.popen('git -C '+__import__('shlex').quote(repo)+' rev-parse --git-path info/exclude').read().strip()
+ quoted_repo=__import__('shlex').quote(repo)
+ p=os.popen('git -c safe.directory='+quoted_repo+' -C '+quoted_repo+' rev-parse --git-path info/exclude').read().strip()
  if not p: raise OSError('Git info/exclude unavailable')
  if not os.path.isabs(p): p=os.path.join(repo,p)
  lockp=p+'.agentdeck.lock'; import fcntl,tempfile
@@ -121,6 +122,8 @@ def main(a):
   if fd is None: return {'removed':False,'missing':True}
   try: st=os.lstat(name,dir_fd=fd)
   except FileNotFoundError: os.close(fd); return {'removed':False,'missing':True}
+  if not a.get('owned'):
+   os.close(fd); return {'error':'skill ownership is not established; preserving target'}
   try: linked=os.path.realpath(os.path.join(os.path.dirname(dst),os.readlink(name,dir_fd=fd)))
   except OSError: os.close(fd); return {'error':'owned skill link changed; preserving target'}
   if not stat.S_ISLNK(st.st_mode) or linked!=src: os.close(fd); return {'error':'owned skill link changed; preserving target'}
@@ -208,7 +211,18 @@ func find(xs []Skill, id string) (Skill, error) {
 	return *hit, nil
 }
 
+// Materialize links a skill and keeps the historical two-path return contract.
+// Call MaterializeState when the caller also needs to persist whether the
+// destination was newly owned or was a native preexisting path.
 func Materialize(ctx context.Context, ex executor.Executor, p *store.Project, x Skill, agent, workdir string, attachmentID int64, owned bool) (string, string, error) {
+	dst, src, _, err := MaterializeState(ctx, ex, p, x, agent, workdir, attachmentID, owned)
+	return dst, src, err
+}
+
+// MaterializeState returns the resulting ownership state in addition to the
+// paths. A pending collision never becomes owned merely because its DB row
+// exists; only a link created by this call earns owned state.
+func MaterializeState(ctx context.Context, ex executor.Executor, p *store.Project, x Skill, agent, workdir string, attachmentID int64, owned bool) (string, string, string, error) {
 	name := x.EntryName
 	source := x.SourcePath
 	// The source remains the target-local path discovered from the project
@@ -217,27 +231,45 @@ func Materialize(ctx context.Context, ex executor.Executor, p *store.Project, x 
 	dst := filepath.Join(workdir, rel(agent, name))
 	out, err := run(ctx, ex, map[string]any{"op": "materialize", "source": source, "target": dst, "base": workdir, "owned": owned})
 	if err != nil {
-		return "", "", err
+		return "", "", "pending", err
 	}
 	marker := Marker(attachmentID, workdir)
 	line := filepath.ToSlash(rel(agent, name))
 	if pre, _ := out["preexisting"].(bool); pre {
-		return dst, source, nil
+		return dst, source, "preexisting", nil
 	}
 	if _, err = run(ctx, ex, map[string]any{"op": "exclude", "repo": workdir, "line": line, "marker": marker}); err != nil {
 		// The link is ours even if Git metadata is unavailable. Best effort
 		// rollback keeps a failed attach from leaving an untracked orphan.
 		if created, _ := out["created"].(bool); created {
-			_, _ = run(ctx, ex, map[string]any{"op": "remove", "source": source, "target": dst, "base": workdir})
+			if _, rollbackErr := run(ctx, ex, map[string]any{"op": "remove", "source": source, "target": dst, "base": workdir, "owned": true}); rollbackErr != nil {
+				return "", "", "owned", fmt.Errorf("%w (rollback failed: %v)", err, rollbackErr)
+			}
 		}
-		return "", "", err
+		return "", "", "pending", err
 	}
-	return dst, source, nil
+	return dst, source, "owned", nil
 }
 
 func Remove(ctx context.Context, ex executor.Executor, p *store.Project, x *store.ProjectSkill, workdir string) error {
+	return remove(ctx, ex, p, x, nil, workdir)
+}
+
+// RemoveMaterialization applies the persisted ownership state before touching
+// a target path. Preexisting native skills are retained on detach.
+func RemoveMaterialization(ctx context.Context, ex executor.Executor, p *store.Project, x *store.ProjectSkill, m *store.SkillMaterialization) error {
+	return remove(ctx, ex, p, x, m, m.WorktreePath)
+}
+
+func remove(ctx context.Context, ex executor.Executor, p *store.Project, x *store.ProjectSkill, m *store.SkillMaterialization, workdir string) error {
+	if m != nil && m.State == "preexisting" {
+		// The destination is native to the repository (or another preexisting
+		// target path). It is intentionally left in place.
+		return nil
+	}
 	source := x.SourcePath
-	if _, err := run(ctx, ex, map[string]any{"op": "remove", "source": source, "target": filepath.Join(workdir, x.TargetRel), "base": workdir}); err != nil {
+	owned := m == nil || m.State == "owned"
+	if _, err := run(ctx, ex, map[string]any{"op": "remove", "source": source, "target": filepath.Join(workdir, x.TargetRel), "base": workdir, "owned": owned}); err != nil {
 		return err
 	}
 	_, err := run(ctx, ex, map[string]any{"op": "unexclude", "repo": workdir, "line": filepath.ToSlash(x.TargetRel), "marker": Marker(x.ID, workdir)})
@@ -256,46 +288,57 @@ func Reassert(ctx context.Context, ex executor.Executor, db *store.DB, p *store.
 	}
 	for _, x := range rows {
 		s := Skill{ID: x.SkillID, SourcePath: x.SourcePath, EntryName: x.EntryName}
-		owned := false
-		if mats, me := db.Materializations(x.ID); me == nil {
-			for _, m := range mats {
-				if m.WorktreePath == workdir {
-					owned = true
-					break
+		state := "pending"
+		mats, matErr := db.Materializations(x.ID)
+		if matErr != nil {
+			return fmt.Errorf("skill %q materialization lookup: %w", x.SkillID, matErr)
+		}
+		for _, m := range mats {
+			if m.TargetID == x.TargetID && m.WorktreePath == workdir {
+				if m.State == "owned" {
+					state = "owned"
+				} else if m.State == "preexisting" {
+					state = "preexisting"
 				}
+				break
 			}
 		}
 		dst := filepath.Join(workdir, rel(agent, s.EntryName))
-		src := s.SourcePath
-		if err := db.UpsertMaterialization(&store.SkillMaterialization{AttachmentID: x.ID, TargetID: x.TargetID, WorktreePath: workdir, TargetPath: dst, SourcePath: src, TargetRel: x.TargetRel}); err != nil {
-			return err
+		// Record pending intent before touching the target. A row in this state
+		// is never evidence that AgentDeck owns the destination.
+		if err := db.UpsertMaterialization(&store.SkillMaterialization{AttachmentID: x.ID, TargetID: x.TargetID, WorktreePath: workdir, TargetPath: dst, SourcePath: s.SourcePath, TargetRel: x.TargetRel, State: state}); err != nil {
+			return fmt.Errorf("skill %q materialization intent: %w", x.SkillID, err)
 		}
-		var e error
-		dst, src, e = Materialize(ctx, ex, p, s, agent, workdir, x.ID, owned)
+		_, src, resultState, e := MaterializeState(ctx, ex, p, s, agent, workdir, x.ID, state == "owned")
 		if e != nil {
 			return fmt.Errorf("skill %q: %w", x.SkillID, e)
 		}
-		if err := db.UpsertMaterialization(&store.SkillMaterialization{AttachmentID: x.ID, TargetID: x.TargetID, WorktreePath: workdir, TargetPath: dst, SourcePath: src, TargetRel: x.TargetRel}); err != nil {
-			return err
+		if err := db.UpsertMaterialization(&store.SkillMaterialization{AttachmentID: x.ID, TargetID: x.TargetID, WorktreePath: workdir, TargetPath: dst, SourcePath: src, TargetRel: x.TargetRel, State: resultState}); err != nil {
+			return fmt.Errorf("skill %q materialization state: %w", x.SkillID, err)
 		}
 	}
 	return nil
 }
 
 func Clean(ctx context.Context, ex executor.Executor, db *store.DB, p *store.Project, workdir string) error {
-	rows, err := db.MaterializationsAt(workdir)
+	rows, err := db.MaterializationsAt(p.TargetID, workdir)
 	if err != nil {
 		return err
 	}
+	var errs []error
 	for _, m := range rows {
 		x, e := db.ProjectSkill(m.AttachmentID)
 		if e != nil {
+			errs = append(errs, fmt.Errorf("materialization %d attachment lookup: %w", m.ID, e))
 			continue
 		}
-		if e = Remove(ctx, ex, p, x, workdir); e != nil {
+		if e = remove(ctx, ex, p, x, m, workdir); e != nil {
+			errs = append(errs, fmt.Errorf("materialization %d cleanup: %w", m.ID, e))
 			continue
 		}
-		_ = db.DeleteMaterialization(m.ID)
+		if e = db.DeleteMaterialization(m.ID); e != nil {
+			errs = append(errs, fmt.Errorf("materialization %d delete: %w", m.ID, e))
+		}
 	}
-	return nil
+	return errors.Join(errs...)
 }

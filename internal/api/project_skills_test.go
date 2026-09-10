@@ -56,8 +56,26 @@ func TestProjectSkillAPIUsesTargetLocalGitAndPreservesCollision(t *testing.T) {
 	if got := h.status("POST", "/api/projects/"+itoa(project.id())+"/skills", obj{"agent": "codex", "skill_id": skillID}); got != 409 {
 		t.Fatalf("collision status=%d", got)
 	}
+	var afterCollision obj
+	h.decode("GET", "/api/projects/"+itoa(project.id())+"/skills?agent=codex", nil, 200, &afterCollision)
+	if got := afterCollision["attachments"].([]any); len(got) != 0 {
+		t.Fatalf("deterministic collision left desired attachment: %v", got)
+	}
 	if b, err := os.ReadFile(link); err != nil || string(b) != "foreign" {
 		t.Fatalf("foreign collision changed: %q %v", b, err)
+	}
+	// A remote failure can leave a durable pending intent. Cancelling that
+	// intent may remove only its DB evidence; the target path remains foreign.
+	pending, err := h.App.DB.InsertProjectSkill(&store.ProjectSkill{ProjectID: project.id(), TargetID: target.ID, Agent: "codex", SkillID: skillID, SourceID: "configured", SourcePath: source, EntryName: "review", TargetRel: ".agents/skills/review"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := h.App.DB.UpsertMaterialization(&store.SkillMaterialization{AttachmentID: pending.ID, TargetID: target.ID, WorktreePath: repo, TargetPath: link, SourcePath: source, TargetRel: ".agents/skills/review", State: "pending"}); err != nil {
+		t.Fatal(err)
+	}
+	h.decode("DELETE", "/api/projects/"+itoa(project.id())+"/skills/"+itoa(pending.ID), nil, 200, nil)
+	if b, err := os.ReadFile(link); err != nil || string(b) != "foreign" {
+		t.Fatalf("pending cancellation changed foreign content: %q %v", b, err)
 	}
 }
 

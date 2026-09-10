@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync/atomic"
@@ -37,8 +38,29 @@ func TestInteractiveMCPManagerLaunchLifecycle(t *testing.T) {
 				}
 				wrapper := writeLifecycleWrapper(t, root)
 				repo := filepath.Join(root, "repo")
+				// Keep the selected source outside the repository. The launch
+				// harness can then prove the destination is a symlink materialized
+				// into the exact cwd, while the native-source preservation case is
+				// covered independently in internal/skills.
+				skillDir := filepath.Join(root, "skill-source", "lifecycle")
+				if err := os.MkdirAll(skillDir, 0700); err != nil {
+					t.Fatal(err)
+				}
+				writeMode(t, filepath.Join(skillDir, "SKILL.md"), []byte("name: lifecycle\ndescription: real launch fixture\n"), 0600)
 				if err := os.MkdirAll(filepath.Join(repo, ".agentdeck"), 0700); err != nil {
 					t.Fatal(err)
+				}
+				if out, err := exec.Command("git", "init", "-q", repo).CombinedOutput(); err != nil {
+					t.Fatalf("git init: %v %s", err, out)
+				}
+				if err := os.WriteFile(filepath.Join(repo, "seed.txt"), []byte("lifecycle seed\n"), 0600); err != nil {
+					t.Fatal(err)
+				}
+				if err := exec.Command("git", "-C", repo, "add", "seed.txt").Run(); err != nil {
+					t.Fatal(err)
+				}
+				if out, err := exec.Command("git", "-C", repo, "-c", "user.name=AgentDeck lifecycle", "-c", "user.email=agentdeck@example.invalid", "commit", "-qm", "seed").CombinedOutput(); err != nil {
+					t.Fatalf("commit: %v %s", err, out)
 				}
 				foreign := []byte(`{"foreign":true,"keep":"exact"}`)
 				foreignPath := filepath.Join(repo, ".agentdeck", "mcp.json")
@@ -60,7 +82,8 @@ func TestInteractiveMCPManagerLaunchLifecycle(t *testing.T) {
 				before := snapshotFiles(t, []string{foreignPath, instructionPath, configPath,
 					filepath.Join(home, "auth.json"),
 					filepath.Join(home, "sessions", cid+".jsonl"),
-					filepath.Join(home, "projects", claudeProjectSlug(repo), cid+".jsonl")})
+					filepath.Join(home, "projects", claudeProjectSlug(repo), cid+".jsonl"),
+					filepath.Join(skillDir, "SKILL.md")})
 
 				var remoteTmuxDir string
 				if targetKind == "ssh" {
@@ -87,13 +110,16 @@ func TestInteractiveMCPManagerLaunchLifecycle(t *testing.T) {
 					t.Fatal(err)
 				}
 				if targetKind == "ssh" {
+					if result, configErr := targetExecutor.Run(context.Background(), "git config --global --add safe.directory "+shellQuoteForTest(repo), executor.RunOpts{Timeout: 20}); configErr != nil || !result.OK() {
+						t.Fatalf("configure remote git safe.directory: %v", configErr)
+					}
 					// The remote executor runs as root while the test process owns
 					// the temp tree. Remove only this test's private runtime before
 					// t.TempDir attempts its local cleanup.
 					t.Cleanup(func() {
 						ex, err := h.App.Reg.For(target)
 						if err == nil {
-							_, _ = ex.Run(context.Background(), "rm -rf -- "+shellQuoteForTest(filepath.Join(repo, ".agentdeck", "interactive"))+" "+shellQuoteForTest(filepath.Join(home, ".local")), executor.RunOpts{Timeout: 20})
+							_, _ = ex.Run(context.Background(), "rm -rf -- "+shellQuoteForTest(filepath.Join(repo, ".agentdeck", "interactive"))+" "+shellQuoteForTest(filepath.Join(home, ".local"))+"; chmod -R a+rwx -- "+shellQuoteForTest(filepath.Join(repo, ".claude"))+" "+shellQuoteForTest(filepath.Join(repo, ".agents"))+" "+shellQuoteForTest(filepath.Join(filepath.Dir(repo), ".agentdeck-worktrees"))+" 2>/dev/null || true", executor.RunOpts{Timeout: 20})
 						}
 					})
 				}
@@ -112,7 +138,7 @@ func TestInteractiveMCPManagerLaunchLifecycle(t *testing.T) {
 				}
 				extra := obj{
 					"name": agent, "command": wrapper,
-					"env":            obj{"CAPTURE_DIR": captureDir, "HOME": home, envName: home},
+					"env":            obj{"CAPTURE_DIR": captureDir, "CAPTURE_SKILL_REL": filepath.ToSlash(filepath.Join(map[string]string{"claude": ".claude", "codex": ".agents"}[agent], "skills", "lifecycle")), "HOME": home, envName: home},
 					"resume_args":    []string{"resume", "--last"},
 					"resume_id_args": resumeIDArgs(agent),
 					"fork_args":      forkArgs(agent),
@@ -121,16 +147,32 @@ func TestInteractiveMCPManagerLaunchLifecycle(t *testing.T) {
 				project, err := h.App.DB.InsertProject(&store.Project{
 					Name: "lifecycle-" + agent + "-" + targetKind, TargetID: target.ID,
 					RepoPath: repo, DefaultAgent: agent,
-					MCPJSON: store.J(obj{"ops_tools": obj{"command": "python3", "args": []string{"-m", "ops"}}}),
+					SkillSourcesJSON: store.J([]string{filepath.Dir(skillDir)}),
+					MCPJSON:          store.J(obj{"ops_tools": obj{"command": "python3", "args": []string{"-m", "ops"}}}),
 				})
 				if err != nil {
 					t.Fatal(err)
 				}
+				var available obj
+				h.decode("GET", fmt.Sprintf("/api/skills?project_id=%d&agent=%s", project.ID, agent), nil, 200, &available)
+				var skillID string
+				for _, raw := range available["skills"].([]any) {
+					candidate := raw.(map[string]any)
+					if candidate["source_path"] == skillDir {
+						skillID, _ = candidate["id"].(string)
+						break
+					}
+				}
+				if skillID == "" {
+					t.Fatalf("lifecycle skill was not discoverable: %v", available)
+				}
+				h.decode("POST", fmt.Sprintf("/api/projects/%d/skills", project.ID), obj{"agent": agent, "skill_id": skillID}, 201, nil)
 
 				fresh := h.session(obj{"project_id": project.ID, "agent": agent, "name": "fresh"})
 				waitCapture(t, captureDir, 0)
 				freshCapture := readCapture(t, filepath.Join(captureDir, "0.log"))
 				assertLifecycleEnvironment(t, freshCapture, agent, home)
+				assertSkillLaunch(t, freshCapture, repo, skillDir)
 				assertFreshArgs(t, agent, freshCapture.args)
 				assertProjectFiles(t, agent, repo, home, before, foreign, instruction, targetExecutor)
 
@@ -141,12 +183,14 @@ func TestInteractiveMCPManagerLaunchLifecycle(t *testing.T) {
 					t.Fatalf("native fixture ID missing from API listing: %v", listing)
 				}
 				fork := h.post(fmt.Sprintf("/api/sessions/%d/fork", fresh.id()),
-					obj{"conversation_id": cid, "name": "forked"}, 201)
+					obj{"conversation_id": cid, "name": "forked", "worktree": obj{"branch": "lifecycle-fork"}}, 201)
 				waitCapture(t, captureDir, 1)
 				forkCapture := readCapture(t, filepath.Join(captureDir, "1.log"))
 				assertLifecycleEnvironment(t, forkCapture, agent, home)
+				assertSkillLaunch(t, forkCapture, fork.str("workdir"), skillDir)
 				assertContinuationArgs(t, agent, forkCapture.args, cid, true)
 				killLifecycleSession(t, h, fork)
+				h.decode("DELETE", fmt.Sprintf("/api/sessions/%d/worktree", fork.id()), nil, 200, nil)
 
 				killLifecycleSession(t, h, fresh)
 				resumed := h.post(fmt.Sprintf("/api/sessions/%d/resume", fresh.id()),
@@ -157,6 +201,7 @@ func TestInteractiveMCPManagerLaunchLifecycle(t *testing.T) {
 				waitCapture(t, captureDir, 2)
 				resumeCapture := readCapture(t, filepath.Join(captureDir, "2.log"))
 				assertLifecycleEnvironment(t, resumeCapture, agent, home)
+				assertSkillLaunch(t, resumeCapture, repo, skillDir)
 				assertContinuationArgs(t, agent, resumeCapture.args, cid, false)
 				killLifecycleSession(t, h, resumed)
 
@@ -199,6 +244,8 @@ out="$CAPTURE_DIR/$n.log"
 {
   printf 'CLAUDE_CONFIG_DIR=%s\n' "${CLAUDE_CONFIG_DIR-}"
   printf 'CODEX_HOME=%s\n' "${CODEX_HOME-}"
+  printf 'PWD=%s\n' "$(pwd)"
+  printf 'SKILL_TARGET=%s\n' "$(realpath "${CAPTURE_SKILL_REL}" 2>/dev/null || true)"
   for arg in "$@"; do printf 'ARG=%s\n' "$arg"; done
 } > "$out"
 exec sleep 600
@@ -325,6 +372,16 @@ func assertLifecycleEnvironment(t *testing.T, got lifecycleCapture, agent, home 
 	}
 }
 
+func assertSkillLaunch(t *testing.T, got lifecycleCapture, workdir, source string) {
+	t.Helper()
+	if got.env["PWD"] != workdir {
+		t.Fatalf("agent launched in %q, want %q", got.env["PWD"], workdir)
+	}
+	if got.env["SKILL_TARGET"] != source {
+		t.Fatalf("selected skill unavailable at launched cwd: got %q want %q", got.env["SKILL_TARGET"], source)
+	}
+}
+
 func assertFreshArgs(t *testing.T, agent string, args []string) {
 	t.Helper()
 	if agent == "claude" {
@@ -348,11 +405,16 @@ func assertContinuationArgs(t *testing.T, agent string, args []string, cid strin
 		if len(args) < 4 || args[0] != "--mcp-config" || !strings.Contains(args[1], "/agentdeck/mcp/") {
 			t.Fatalf("Claude MCP argv: %q", args)
 		}
-		want := []string{"--resume", cid}
-		if fork {
-			want = append(want, "--fork-session")
+		start := 0
+		for start < len(args[2:]) && args[2+start] != "--resume" {
+			start++
 		}
-		assertArgsContainOrdered(t, args[2:], want)
+		if start+1 >= len(args[2:]) || (args[2+start+1] != cid && !(fork && strings.HasSuffix(args[2+start+1], "/"+cid+".jsonl"))) {
+			t.Fatalf("Claude continuation ID: %q", args)
+		}
+		if fork {
+			assertArgsContainOrdered(t, args[2+start:], []string{"--resume", args[2+start+1], "--fork-session"})
+		}
 		return
 	}
 	want := []string{"-c", `mcp_servers.ops_tools.args=["-m","ops"]`, "-c", `mcp_servers.ops_tools.command="python3"`}

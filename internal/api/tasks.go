@@ -367,8 +367,11 @@ func (s *Server) removeTask(ctx context.Context, task *store.Task) {
 		if ex, err := s.Reg.For(target); err == nil {
 			for _, a := range attempts {
 				if a.WorktreePath != "" && !s.DB.SessionWorkdir(target.ID, a.WorktreePath) {
-					// best-effort: the DB rows still get cleaned below
-					_ = skills.Clean(ctx, ex, s.DB, proj, a.WorktreePath)
+					// Do not remove the worktree when target-local skill ownership
+					// could not be cleaned; its evidence must remain recoverable.
+					if cleanErr := skills.Clean(ctx, ex, s.DB, proj, a.WorktreePath); cleanErr != nil {
+						continue
+					}
 					_ = worktree.Remove(ctx, ex, proj.RepoPath, a.WorktreePath)
 				}
 			}
@@ -562,7 +565,10 @@ func (s *Server) cleanupTask(w http.ResponseWriter, r *http.Request) {
 			httpError(w, 409, "Worktree belongs to an interactive session")
 			return
 		}
-		_ = skills.Clean(r.Context(), ex, s.DB, proj, a.WorktreePath)
+		if cleanErr := skills.Clean(r.Context(), ex, s.DB, proj, a.WorktreePath); cleanErr != nil {
+			respondErr(w, cleanErr)
+			return
+		}
 		if err := worktree.Remove(r.Context(), ex, proj.RepoPath, a.WorktreePath); err != nil {
 			respondErr(w, err)
 			return
