@@ -614,8 +614,18 @@ func TestHandoffCanMoveTheWorkToADifferentAgent(t *testing.T) {
 	h.waitUntil("a codex successor", func() bool {
 		for _, s := range h.getList("/api/sessions") {
 			if s.id() != sess.id() && s.str("name") == "inference" {
-				successor = s
-				return true
+				// Session insertion precedes tmux naming/launch. The wrap's
+				// successor link is published only after Launch returns.
+				wraps, err := h.App.DB.SessionWraps(sess.id())
+				if err != nil {
+					return false
+				}
+				for _, wrap := range wraps {
+					if wrap.NextSessionID != nil && *wrap.NextSessionID == s.id() {
+						successor = s
+						return true
+					}
+				}
 			}
 		}
 		return false
@@ -628,7 +638,7 @@ func TestHandoffCanMoveTheWorkToADifferentAgent(t *testing.T) {
 	var launched string
 	for _, c := range h.mock().CmdLog() {
 		if strings.HasPrefix(c, "tmux new-session") &&
-			strings.Contains(c, successor.str("tmux_session")) {
+			successor.str("tmux_session") != "" && strings.Contains(c, " -s "+successor.str("tmux_session")+" ") {
 			launched = c
 		}
 	}
