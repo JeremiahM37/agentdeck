@@ -10,6 +10,27 @@ from test_background_setup_ui import hold_second_checkout
 from test_session_restore import request
 
 
+def choose_action(dashboard, label, timeout=12):
+    """Select a named action from the rendered menu, independent of its index."""
+    dashboard.send('m')
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        dashboard.pump()
+        lines = dashboard.text.splitlines()
+        try:
+            start = next(i for i, line in enumerate(lines)
+                         if line.strip().startswith('Actions ·'))
+            end = next(i for i in range(start + 1, len(lines))
+                       if lines[i].strip().startswith('Enter attach ·'))
+        except StopIteration:
+            continue
+        actions = [line.strip() for line in lines[start + 1:end] if line.strip()]
+        if label in actions:
+            dashboard.send('j' * actions.index(label) + '\r')
+            return
+    raise AssertionError(f'Menu action {label!r} was not selected:\n{dashboard.text}')
+
+
 def prepare(t):
     release=hold_second_checkout(t)
     projects=t['api']('/projects')
@@ -81,13 +102,12 @@ def test_terminal_cancels_selected_setup(real_terminal):
     try:
         d.wait('Cancel setup proof');d.send('/Cancel setup proof\r')
         d.wait('Isolated project: ready',timeout=15)
-        d.send('m');d.wait('Cancel setup');d.send('\r')
+        choose_action(d, 'Cancel setup')
         d.wait('Cancellation requested.')
         d.wait('cancelled',timeout=15)
         current=outcome(t,row)
         kept=Path(current['workspace']['repositories'][1]['worktree']['path'])/'user-work.txt';kept.write_text('user work')
-        d.send('m');d.wait('Recover allocation (keep files)')
-        # Remove remains last, with profiles and progress immediately above it.
-        d.send('j'*20+'kkk\r');d.wait('Recover allocation (keep files) completed')
+        choose_action(d, 'Recover allocation (keep files)')
+        d.wait('Recover allocation (keep files) completed')
         recovery_outcome(t,row,kept);d.quit()
     finally:release.touch();d.close()
