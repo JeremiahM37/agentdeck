@@ -1,11 +1,17 @@
 """Owned interactive Git worktrees. Never reset, force-remove, or delete branches."""
-import json,os,pathlib,subprocess,sys
+import json,os,pathlib,subprocess,sys,time
 operation,raw=sys.argv[1:3]
 p=json.loads(raw)
 inherited_lock=tuple([int(sys.argv[3])]) if len(sys.argv)>3 and sys.argv[3]!='-' else ()
 git_timeout=float(sys.argv[4]) if len(sys.argv)>4 else 90
 control=None
+operation_deadline=time.monotonic()+git_timeout
+def remaining_timeout():
+ remaining=operation_deadline-time.monotonic()
+ if remaining<=0:raise ValueError('Workspace operation timed out; allocation retained for inspection')
+ return remaining
 def git(repo,*args,cancel_check=True):
+ budget=remaining_timeout() if cancel_check else git_timeout
  if control is not None and cancel_check:
   control.check()
   command=['git','-C',repo,*args]
@@ -13,13 +19,45 @@ def git(repo,*args,cancel_check=True):
    # A detached monitor retains the operation lock and cancellation observer
    # even if this launch supervisor dies while Git's checkout hook runs.
    monitor=setup_control_source+"\nimport sys\nc=SetupControl(json.loads(sys.argv[1]),create=False)\nc.check()\ng=subprocess.Popen(sys.argv[4:],stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True,pass_fds=(int(sys.argv[2]),))\no,e=c.wait(g,float(sys.argv[3]),os.getpgrp())\nsys.stdout.write(o);sys.stderr.write(e);sys.exit(g.returncode)"
-   command=['python3','-c',monitor,json.dumps(p),str(control.lease_file.fileno()),str(git_timeout),*command]
+   command=['python3','-c',monitor,json.dumps(p),str(control.lease_file.fileno()),str(budget),*command]
   child=subprocess.Popen(command,stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True,start_new_session=not inherited_lock,pass_fds=inherited_lock or ((control.lease_file.fileno(),) if control.lease_file else ()))
-  stdout,stderr=control.wait(child,git_timeout,os.getpgrp() if inherited_lock else None)
+  stdout,stderr=control.wait(child,budget,os.getpgrp() if inherited_lock else None)
   r=subprocess.CompletedProcess(child.args,child.returncode,stdout,stderr)
- else:r=subprocess.run(['git','-C',repo,*args],capture_output=True,text=True,timeout=git_timeout,pass_fds=inherited_lock)
+ else:r=subprocess.run(['git','-C',repo,*args],capture_output=True,text=True,timeout=budget,pass_fds=inherited_lock)
  if r.returncode:raise ValueError(r.stderr.strip() or r.stdout.strip() or 'Git command failed')
  return r.stdout.strip()
+def run_setup(dest):
+ if not p.get('setup_command','').strip():return
+ budget=remaining_timeout()
+ p['setup_state']='running'
+ if control and not inherited_lock:control.allocation(dict(p))
+ # The target-side monitor owns the cancellation lease while the setup shell
+ # runs, even if the HTTP/SSH supervisor disappears. Output goes to a temporary
+ # file rather than a pipe; only its final 4 KiB enters the allocation receipt.
+ monitor=setup_control_source+"""
+import sys,tempfile
+plan=json.loads(sys.argv[1]); owner=json.loads(sys.argv[2]); fd=int(sys.argv[3]); timeout=float(sys.argv[4])
+c=SetupControl(owner,create=False);c.check()
+with tempfile.TemporaryFile() as output:
+ g=subprocess.Popen(['bash','-c',plan['setup_command']],cwd=plan['path'],env={**os.environ,**plan.get('setup_env',{})},stdin=subprocess.DEVNULL,stdout=output,stderr=subprocess.STDOUT,pass_fds=(fd,))
+ try:
+  c.wait(g,timeout,os.getpgrp())
+  plan['setup_state']='complete' if g.returncode==0 else 'failed'
+ except BaseException:
+  plan['setup_state']='interrupted'
+  raise
+ finally:
+  output.seek(0,2); size=output.tell(); output.seek(max(0,size-4096));plan['setup_output']=output.read().decode('utf-8','replace')
+  if plan['token']==owner['token']:c.allocation(plan)
+ print(json.dumps({'rc':g.returncode,'plan':plan}))
+"""
+ owner=json.loads(sys.argv[5]) if inherited_lock else p
+ fd=inherited_lock[0] if inherited_lock else control.lease_file.fileno()
+ child=subprocess.Popen(['python3','-c',monitor,json.dumps(p),json.dumps(owner),str(fd),str(budget)],stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True,start_new_session=not inherited_lock,pass_fds=(fd,))
+ stdout,stderr=control.wait(child,budget,os.getpgrp() if inherited_lock else None)
+ if child.returncode:raise ValueError('Workspace setup did not finish; inspect the retained allocation')
+ result=json.loads(stdout);p.update(result['plan'])
+ if result['rc']:raise ValueError('Workspace setup command exited with status '+str(result['rc'])+'\n'+p.get('setup_output',''))
 def within(path,root):
  return os.path.commonpath([os.path.realpath(path),root])==root
 def claim_created_worktree(repo,dest,common,commit):
@@ -60,7 +98,13 @@ try:
    raise
   owner=pathlib.Path(git(dest,'rev-parse','--absolute-git-dir'))/'agentdeck-owner'
   with owner.open('x') as file:file.write(p['token'])
-  p.update(repo=repo,path=dest,commit=commit,state='ready')
+  p.update(repo=repo,path=dest,commit=commit,state='creating')
+  try:run_setup(dest)
+  except (OSError,ValueError,subprocess.TimeoutExpired) as failure:
+   p.update(state='failed',error='Workspace setup command timed out; allocation retained for inspection' if isinstance(failure,subprocess.TimeoutExpired) else str(failure))
+   if p.get('setup_state')=='running':p['setup_state']='interrupted'
+   raise
+  p['state']='ready'
  elif operation in ('recover','check-recover'):
   if os.path.islink(p['path']):raise ValueError('Allocation path was replaced by a symlink')
   if not inherited_lock:
@@ -72,6 +116,9 @@ try:
    if not isinstance(recorded.get('commit'),str) or not re.fullmatch('[0-9a-f]{40}|[0-9a-f]{64}',recorded['commit']):raise ValueError('Recorded checkout revision is unavailable')
    if p.get('commit') and p['commit']!=recorded['commit']:raise ValueError('Recorded checkout revisions do not match')
    p['commit']=recorded['commit']
+   for key in ('setup_command','setup_env','setup_state','setup_output'):
+    if key in recorded:p[key]=recorded[key]
+   if p.get('setup_state')=='running':p['setup_state']='interrupted'
   if not os.path.isdir(dest):
    if os.path.lexists(p['path']):raise ValueError('Allocation path was replaced')
    registrations=git(repo,'worktree','list','--porcelain','-z').split('\0')
@@ -91,6 +138,7 @@ try:
   else:
    if not p.get('commit') or git(dest,'rev-parse','HEAD')!=p['commit']:raise ValueError('Worktree revision changed; ownership was not recovered')
    if operation=='recover':claim_created_worktree(repo,dest,common,p['commit'])
+  if p.get('setup_command') and p.get('setup_state') not in ('complete','failed'):p['setup_state']='interrupted'
   p.update(repo=repo,path=dest,state='ready');p.pop('error',None)
  elif operation in ('remove','check-remove'):
   if not os.path.isdir(dest):
@@ -112,6 +160,6 @@ try:
  else:raise ValueError('Unknown worktree operation')
  print(json.dumps({'workspace':p}))
 except (OSError,ValueError,subprocess.TimeoutExpired) as e:
- out={'error':str(e)}
+ out={'error':'Workspace operation timed out; allocation retained for inspection' if isinstance(e,subprocess.TimeoutExpired) else str(e)}
  if p.get('state')=='failed' and p.get('error'):out['workspace']=p
  print(json.dumps(out));sys.exit(1)

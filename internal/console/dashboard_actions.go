@@ -744,6 +744,7 @@ func (m *dashboard) editCommonForm() tea.Cmd {
 		add("name", "Project name", false, true)
 		add("default_base_branch", "Base branch", false, true)
 		add("verify_cmd", "Verification command", false, false)
+		add("setup_cmd", "New worktree setup command (before agent starts)", true, false)
 	case "targets":
 		add("name", "Target name", false, true)
 		add("host", "Host / SSH alias", false, false)

@@ -337,6 +337,9 @@ func (m *dashboard) updatePreview() {
 			}
 			if ws, ok := r["workspace"].(map[string]any); ok {
 				content = "Worktree: " + str(ws["branch"]) + " · " + str(ws["state"]) + "\nBase: " + str(ws["base"]) + "\n\n" + content
+				if setup := str(ws["setup_state"]); setup != "" {
+					content = "Project setup: " + setup + "\n" + str(ws["setup_output"]) + "\n" + content
+				}
 				if failure := str(ws["error"]); failure != "" {
 					content = "Setup error: " + failure + "\n\n" + content
 				}

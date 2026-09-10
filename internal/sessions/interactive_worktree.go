@@ -118,7 +118,7 @@ func (m *Manager) workspaceSources(o LaunchOpts) ([]worktree.RepositorySource, e
 	}
 	seen := map[int64]bool{primary.ID: true}
 	primaryID := primary.ID
-	sources := []worktree.RepositorySource{{Name: primary.Name, Repo: primary.RepoPath, Base: o.Worktree.Base, ProjectID: &primaryID}}
+	sources := []worktree.RepositorySource{{Name: primary.Name, Repo: primary.RepoPath, Base: o.Worktree.Base, ProjectID: &primaryID, SetupCommand: primary.SetupCmd, SetupEnv: m.ProjectEnv(&primaryID)}}
 	for _, selected := range o.Worktree.ExtraRepositories {
 		if seen[selected.ProjectID] {
 			return nil, fmt.Errorf("a workspace project was selected more than once")
@@ -131,7 +131,7 @@ func (m *Manager) workspaceSources(o LaunchOpts) ([]worktree.RepositorySource, e
 			return nil, fmt.Errorf("all workspace projects must use the session target")
 		}
 		id := project.ID
-		sources = append(sources, worktree.RepositorySource{Name: project.Name, Repo: project.RepoPath, Base: selected.Base, ProjectID: &id})
+		sources = append(sources, worktree.RepositorySource{Name: project.Name, Repo: project.RepoPath, Base: selected.Base, ProjectID: &id, SetupCommand: project.SetupCmd, SetupEnv: m.ProjectEnv(&id)})
 		seen[id] = true
 	}
 	return sources, nil
@@ -174,7 +174,7 @@ func workspaceForkSources(ctx context.Context, ex executor.Executor, workspace *
 		if err != nil || !result.OK() {
 			return nil, fmt.Errorf("could not resolve committed fork base for repository %q", repo.Name)
 		}
-		sources = append(sources, worktree.RepositorySource{Name: repo.Name, ProjectID: repo.ProjectID, Repo: repo.Worktree.Repo, Base: strings.TrimSpace(result.Stdout)})
+		sources = append(sources, worktree.RepositorySource{Name: repo.Name, ProjectID: repo.ProjectID, Repo: repo.Worktree.Repo, Base: strings.TrimSpace(result.Stdout), SetupCommand: repo.Worktree.SetupCommand, SetupEnv: repo.Worktree.SetupEnv})
 	}
 	return sources, nil
 }

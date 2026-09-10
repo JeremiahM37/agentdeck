@@ -362,3 +362,27 @@ paths; it does not run agents, version commands, trust hooks, authentication or
 model requests. Commands with shell syntax and custom agent PATH values are
 reported as unchecked. Project and launch-profile overrides may use a different
 command or environment; the inventory is informational and never blocks launch.
+
+### Reusable workspace creation commands
+
+Projects now have a `setup_cmd`, editable in Settings → Projects and the terminal
+project editor, or through the project create/PATCH API. It runs through Bash in
+a newly allocated isolated checkout, with that repository project's environment,
+before starting the interactive agent. Grouped workspaces run each repository's
+command in its own checkout. The plan captures the command and environment before
+checkout; a fresh grouped fork inherits its recorded repository setup. Setup does
+not run when attaching, resuming or launching in an existing directory.
+
+An overall 15-minute creation deadline applies when commands are configured.
+Cancellation uses the existing target-side owner/lease protocol and retains files.
+Nonzero exit stops launch and surfaces the error. The final 4 KiB of output is
+kept with the allocation; environment values are omitted from workspace responses.
+The browser's worktree details and terminal preview show setup results.
+
+Recovery validates retained files and never reruns commands. If a grouped worker's
+supervisor dies before saving its result, recovery reports setup as interrupted,
+even if the command may have finished; filesystem recovery is not evidence that a
+setup command succeeded. Synthetic real Git/process/tmux/API/PTY/browser tests
+cover success, failure, cancellation, supervisor loss and drafts on failed saves.
+This is the creation lifecycle step; reusable launch/destroy hooks and reading
+repository-owned hook configuration remain comparative gaps.

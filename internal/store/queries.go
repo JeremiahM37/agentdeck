@@ -77,7 +77,7 @@ func (db *DB) InsertTarget(t *Target) (*Target, error) {
 const projectCols = `p.id, p.name, p.target_id, p.repo_path, p.default_base_branch,
 	p.workroot_override, p.policy_json, p.verify_cmd, p.keep_worktrees, p.review_gate,
 	p.env_json, p.context_json, p.mcp_json, p.strict_mcp, p.permissions_json,
-	p.gate_matcher, p.default_agent, p.capability_profile, p.default_permission_mode,
+	p.setup_cmd, p.gate_matcher, p.default_agent, p.capability_profile, p.default_permission_mode,
 	p.created_at`
 
 func scanProject(s interface{ Scan(...any) error }, withTarget bool) (*Project, error) {
@@ -85,7 +85,7 @@ func scanProject(s interface{ Scan(...any) error }, withTarget bool) (*Project, 
 	dest := []any{&p.ID, &p.Name, &p.TargetID, &p.RepoPath, &p.DefaultBaseBranch,
 		&p.WorkrootOverride, &p.PolicyJSON, &p.VerifyCmd, &p.KeepWorktrees,
 		&p.ReviewGate, &p.EnvJSON, &p.ContextJSON, &p.MCPJSON, &p.StrictMCP,
-		&p.PermissionsJSON, &p.GateMatcher, &p.DefaultAgent, &p.CapabilityProfile,
+		&p.PermissionsJSON, &p.SetupCmd, &p.GateMatcher, &p.DefaultAgent, &p.CapabilityProfile,
 		&p.DefaultPermissionMode, &p.CreatedAt}
 	if withTarget {
 		dest = append(dest, &p.TargetName, &p.TargetKind)
@@ -147,12 +147,12 @@ func (db *DB) InsertProject(p *Project) (*Project, error) {
 	res, err := db.Exec(`INSERT INTO projects(name, target_id, repo_path,
 		default_base_branch, workroot_override, policy_json, verify_cmd, keep_worktrees,
 		review_gate, env_json, context_json, mcp_json, strict_mcp, permissions_json,
-		gate_matcher, default_agent, capability_profile, default_permission_mode,
-		created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		setup_cmd, gate_matcher, default_agent, capability_profile, default_permission_mode,
+		created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 		p.Name, p.TargetID, p.RepoPath, nz(p.DefaultBaseBranch, "main"),
 		p.WorkrootOverride, nz(p.PolicyJSON, "{}"), p.VerifyCmd, p.KeepWorktrees,
 		p.ReviewGate, nz(p.EnvJSON, "{}"), nz(p.ContextJSON, "[]"), nz(p.MCPJSON, "{}"),
-		p.StrictMCP, nz(p.PermissionsJSON, "{}"), p.GateMatcher,
+		p.StrictMCP, nz(p.PermissionsJSON, "{}"), p.SetupCmd, p.GateMatcher,
 		nz(p.DefaultAgent, "claude"), nz(p.CapabilityProfile, "restricted"),
 		p.DefaultPermissionMode, Now())
 	if err != nil {

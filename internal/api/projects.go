@@ -22,6 +22,7 @@ var (
 )
 
 type projectIn struct {
+	SetupCmd          string  `json:"setup_cmd"`
 	Name              string  `json:"name"`
 	TargetID          int64   `json:"target_id"`
 	RepoPath          string  `json:"repo_path"`
@@ -63,6 +64,10 @@ func (s *Server) createProject(w http.ResponseWriter, r *http.Request) {
 		httpError(w, 422, "%s", err.Error())
 		return
 	}
+	if len(in.SetupCmd) > 16384 || strings.ContainsRune(in.SetupCmd, 0) {
+		httpError(w, 422, "setup_cmd must be at most 16384 bytes without NUL")
+		return
+	}
 	if in.Name == "" || in.RepoPath == "" {
 		httpError(w, 422, "name and repo_path are required")
 		return
@@ -91,7 +96,7 @@ func (s *Server) createProject(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	p := &store.Project{
-		Name: in.Name, TargetID: in.TargetID, RepoPath: in.RepoPath,
+		Name: in.Name, TargetID: in.TargetID, RepoPath: in.RepoPath, SetupCmd: in.SetupCmd,
 		DefaultBaseBranch: strOr(in.DefaultBaseBranch, "main"),
 		WorkrootOverride:  in.WorkrootOverride, VerifyCmd: in.VerifyCmd,
 		KeepWorktrees: boolInt(in.KeepWorktrees), ReviewGate: boolInt(in.ReviewGate),
@@ -115,6 +120,7 @@ func (s *Server) createProject(w http.ResponseWriter, r *http.Request) {
 }
 
 type projectPatch struct {
+	SetupCmd *string `json:"setup_cmd"`
 	// Name is patchable because import derives it from the directory, and a
 	// directory name is not always the project's name — /opt/docker is "the
 	// compose stack", not "docker".
@@ -146,6 +152,10 @@ func (s *Server) patchProject(w http.ResponseWriter, r *http.Request) {
 		httpError(w, 422, "%s", err.Error())
 		return
 	}
+	if p.SetupCmd != nil && (len(*p.SetupCmd) > 16384 || strings.ContainsRune(*p.SetupCmd, 0)) {
+		httpError(w, 422, "setup_cmd must be at most 16384 bytes without NUL")
+		return
+	}
 	if p.DefaultAgent != nil && !oneOf(*p.DefaultAgent, agentNames...) {
 		httpError(w, 422, "default_agent must be one of %v", agentNames)
 		return
@@ -171,6 +181,7 @@ func (s *Server) patchProject(w http.ResponseWriter, r *http.Request) {
 	setStr(fields, "default_base_branch", p.DefaultBaseBranch)
 	setStr(fields, "gate_matcher", p.GateMatcher)
 	setStr(fields, "default_agent", p.DefaultAgent)
+	setStr(fields, "setup_cmd", p.SetupCmd)
 	setStr(fields, "capability_profile", p.CapabilityProfile)
 	setStr(fields, "default_permission_mode", p.DefaultPermissionMode)
 	setBool(fields, "keep_worktrees", p.KeepWorktrees)

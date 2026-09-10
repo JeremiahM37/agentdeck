@@ -582,6 +582,12 @@ function sessionCard(s) {
       finally{await refreshSessions();}
     });
     const info=document.createElement('details');info.className='session-worktree';const heading=document.createElement('summary');heading.textContent=`${s.workspace.repositories?.length?'Workspace':'Worktree'} · ${s.workspace.branch} · ${s.workspace.state}`;const location=document.createElement('code');location.textContent=s.workspace.path;const base=document.createElement('small');base.textContent=s.workspace.repositories?.length?`${s.workspace.repositories.length} repositories`:`Base: ${s.workspace.base} · ${s.workspace.commit?.slice(0,12)||'not created'}`;info.append(heading,location,base);if(s.workspace.error){const failure=document.createElement('p');failure.textContent='Setup error: '+s.workspace.error;failure.style.whiteSpace='pre-wrap';info.append(failure);}el.insertBefore(info,row);
+    for (const entry of s.workspace.repositories || [{name:s.project_name || 'Repository',worktree:s.workspace}]) {
+      if (!entry.worktree.setup_command) continue;
+      const setup=document.createElement('pre');setup.className='workspace-setup-output';setup.style.whiteSpace='pre-wrap';
+      setup.textContent=`${entry.name} setup: ${entry.worktree.setup_state || 'not completed'}\n${entry.worktree.setup_output || ''}`;
+      info.append(setup);
+    }
     if(s.workspace.repositories?.length) {
       const progress=document.createElement('pre');progress.style.whiteSpace='pre-wrap';progress.setAttribute('aria-live','polite');
       const refresh=document.createElement('button');refresh.type='button';refresh.textContent='Refresh setup progress';
@@ -1021,7 +1027,7 @@ function renderNewSession(sheet) {
     if(resume.disabled && $('#ns-start').value==='resume')$('#ns-start').value='fresh';
     $("#ns-proj-hint").textContent = blank
       ? "Starts the agent in a fresh throwaway directory. Turn it into a project later."
-      : "";
+      : state.projects.find(p => String(p.id) === projBox.value)?.setup_cmd && $("#ns-worktree").checked ? "This project’s setup command runs in the new checkout before the agent starts." : "";
     const start = $("#ns-start");
     for (const opt of start.options) {
       if (opt.value === "brief") opt.disabled = blank; // nothing known about it yet
@@ -1345,7 +1351,20 @@ function projectCard(p) {
       <option value="acceptEdits">Accept edits</option>
       <option value="plan">Plan only</option>
       <option value="bypassPermissions">Bypass — sandboxed targets only</option>
-    </select>`;
+    </select>
+    <label class="f">New worktree setup command<textarea class="f project-setup" rows="3" maxlength="16384" spellcheck="false"></textarea></label>
+    <p class="sub">Runs in each new isolated checkout before its agent starts, using this project’s environment. A failure keeps the files for inspection. Existing directories and attachments do not rerun it.</p>
+    <button class="b project-setup-save">Save setup command</button><div class="sub project-setup-status" role="status"></div>`;
+  const setup = $(".project-setup", el), saveSetup = $(".project-setup-save", el), setupStatus = $(".project-setup-status", el);
+  setup.value = p.setup_cmd || '';
+  saveSetup.onclick = async () => {
+    const command = setup.value; saveSetup.disabled = true; setupStatus.textContent = 'Saving…';
+    try {
+      await api(`/projects/${p.id}`, {method:'PATCH', body:{setup_cmd:command}});
+      p.setup_cmd = command; setupStatus.textContent = 'Saved for new isolated workspaces.';
+    } catch(e) { setupStatus.textContent = e.message; }
+    finally { saveSetup.disabled = false; }
+  };
   const sel = $(".cap-sel", el);
   const info = $(".cap-info", el);
   sel.value = p.capability_profile || "restricted";

@@ -25,6 +25,8 @@ type WorkspaceRepository struct {
 // planning; paths and Git identities must still be verified on that target.
 type RepositorySource struct {
 	Name, Repo, Base string
+	SetupCommand     string
+	SetupEnv         map[string]string
 	ProjectID        *int64
 }
 
@@ -64,6 +66,7 @@ func PlanMultiWorkspace(sources []RepositorySource, id int64, options Interactiv
 		}
 		child := PlanInteractive(source.Repo, id, InteractiveOptions{Base: base, Branch: root.Branch})
 		child.Path = filepath.Join(root.Path, slug)
+		child.SetupCommand, child.SetupEnv = source.SetupCommand, source.SetupEnv
 		root.Repositories = append(root.Repositories, WorkspaceRepository{Name: name, ProjectID: source.ProjectID, Worktree: child})
 	}
 	root.Base = root.Repositories[0].Worktree.Base
@@ -93,6 +96,7 @@ func repositoryDirectoryName(name string) string {
 // applied to a decoded copy, never to the persisted ownership records.
 func (p *Interactive) RedactOwnership() {
 	p.Token = ""
+	p.SetupEnv = nil
 	for _, repo := range p.Repositories {
 		if repo.Worktree != nil {
 			repo.Worktree.RedactOwnership()

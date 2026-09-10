@@ -8,9 +8,11 @@ import subprocess
 import sys
 import stat
 import tempfile
+import time
 
 action, raw, validation, single = sys.argv[1:5]
 operation_timeout = float(sys.argv[5]) if len(sys.argv) > 5 else 105
+operation_deadline = time.monotonic() + operation_timeout
 p = json.loads(raw)
 root = pathlib.Path(p['path'])
 lock = None
@@ -111,6 +113,8 @@ def check_terminals():
 
 
 def run_child(entry, operation):
+    budget = operation_deadline - time.monotonic()
+    if budget <= 0: raise ValueError('Workspace operation timed out; allocation retained for inspection')
     if control: control.check()
     busy()
     child_plan = dict(entry['worktree'])
@@ -124,7 +128,7 @@ def run_child(entry, operation):
     try:
         child = subprocess.Popen(
             ['python3', '-c', wrapper, str(read_fd), single, operation,
-             json.dumps(child_plan), str(lock.fileno()), str(max(1, operation_timeout-15)), json.dumps(p)],
+             json.dumps(child_plan), str(lock.fileno()), str(max(.01, budget-1)), json.dumps(p)],
             stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
             start_new_session=True, pass_fds=(read_fd, lock.fileno()),
         )
@@ -134,7 +138,7 @@ def run_child(entry, operation):
         os.close(read_fd)
         os.close(write_fd)
     try:
-        stdout, stderr = control.wait(child, operation_timeout) if control else child.communicate(timeout=operation_timeout)
+        stdout, stderr = control.wait(child, budget) if control else child.communicate(timeout=budget)
     except subprocess.TimeoutExpired:
         if child.poll() is None: os.killpg(child.pid, signal.SIGKILL)
         child.communicate()

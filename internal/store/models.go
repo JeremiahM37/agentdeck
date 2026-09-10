@@ -32,6 +32,7 @@ type Target struct {
 // Project is a repository on a target, plus every policy that governs agents
 // dispatched against it.
 type Project struct {
+	SetupCmd              string  `json:"setup_cmd"`
 	ID                    int64   `json:"id"`
 	Name                  string  `json:"name"`
 	TargetID              int64   `json:"target_id"`

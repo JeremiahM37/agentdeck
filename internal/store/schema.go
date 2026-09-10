@@ -188,6 +188,7 @@ var migrations = []string{
 	"ALTER TABLE projects ADD COLUMN strict_mcp INTEGER DEFAULT 0",
 	"ALTER TABLE projects ADD COLUMN permissions_json TEXT DEFAULT '{}'",
 	"ALTER TABLE projects ADD COLUMN gate_matcher TEXT DEFAULT ''",
+	"ALTER TABLE projects ADD COLUMN setup_cmd TEXT DEFAULT ''",
 	"ALTER TABLE projects ADD COLUMN default_agent TEXT DEFAULT 'claude'",
 	"ALTER TABLE projects ADD COLUMN capability_profile TEXT DEFAULT 'restricted'",
 	"ALTER TABLE projects ADD COLUMN default_permission_mode TEXT DEFAULT ''",

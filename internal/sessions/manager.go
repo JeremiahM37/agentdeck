@@ -309,6 +309,14 @@ func (m *Manager) Launch(ctx context.Context, o LaunchOpts) (*store.Session, err
 				return nil, fmt.Errorf("worktree source must be an existing Git working directory")
 			}
 			plan = worktree.PlanInteractive(strings.TrimSpace(root.Stdout), sess.ID, *o.Worktree)
+			if o.ProjectID != nil {
+				project, projectErr := m.DB.Project(*o.ProjectID)
+				if projectErr != nil {
+					m.end(sess.ID, StatusDead)
+					return nil, projectErr
+				}
+				plan.SetupCommand, plan.SetupEnv = project.SetupCmd, m.ProjectEnv(o.ProjectID)
+			}
 			if len(workspaceSources) > 0 {
 				workspaceSources[0].Repo = strings.TrimSpace(root.Stdout)
 			}
@@ -346,6 +354,9 @@ func (m *Manager) Launch(ctx context.Context, o LaunchOpts) (*store.Session, err
 			return nil, err
 		}
 		setupTimeout := 120.0
+		if plan.HasSetupCommand() {
+			setupTimeout = 900
+		}
 		if o.SetupTimeout > 0 {
 			setupTimeout = o.SetupTimeout
 		}

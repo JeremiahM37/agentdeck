@@ -15,6 +15,10 @@ import (
 // Interactive records an allocation before any remote Git mutation. A failed
 // launch keeps this record so the directory is still discoverable and removable.
 type Interactive struct {
+	SetupCommand string                `json:"setup_command,omitempty"`
+	SetupEnv     map[string]string     `json:"setup_env,omitempty"`
+	SetupState   string                `json:"setup_state,omitempty"`
+	SetupOutput  string                `json:"setup_output,omitempty"`
 	Repo         string                `json:"repo"`
 	Path         string                `json:"path"`
 	Branch       string                `json:"branch"`
@@ -111,4 +115,17 @@ func RunInteractiveWithTimeout(ctx context.Context, ex executor.Executor, action
 	}
 	*plan = *out.Workspace
 	return nil
+}
+
+// HasSetupCommand gives package installation a longer overall setup deadline.
+func (p *Interactive) HasSetupCommand() bool {
+	if strings.TrimSpace(p.SetupCommand) != "" {
+		return true
+	}
+	for _, repo := range p.Repositories {
+		if repo.Worktree != nil && repo.Worktree.HasSetupCommand() {
+			return true
+		}
+	}
+	return false
 }
