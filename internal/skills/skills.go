@@ -73,6 +73,7 @@ def tracked_native(src,dst):
   if os.path.realpath(os.path.join(src,sc)) != os.path.realpath(os.path.join(dst,dc)): return False
   rel=os.path.relpath(src,sr)
   if rel.startswith('..'+os.sep) or rel=='..': return False
+  if os.path.normpath(os.path.relpath(dst,dr)) != os.path.normpath(rel): return False
   return subprocess.run(['git','-C',dr,'ls-files','--error-unmatch','--',os.path.join(rel,'SKILL.md')],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL).returncode == 0
  except Exception: return False
 def roots(a):
