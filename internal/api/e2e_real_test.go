@@ -511,6 +511,56 @@ func TestARealInteractiveSessionStartsAndIsPrimed(t *testing.T) {
 	}
 }
 
+// MCP credentials are target-user state, not worktree files. A real Git
+// allocation must therefore stay clean while its interactive session runs and
+// must remain removable through the normal ownership checks after the session
+// ends.
+func TestARealInteractiveMCPWorktreeStaysCleanAndRemovable(t *testing.T) {
+	r := newInteractiveRig(t)
+	home := filepath.Join(filepath.Dir(r.repo), "mcp-agent-home")
+	if err := os.Mkdir(home, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.app.DB.Update("projects", r.project, map[string]any{
+		"env_json":   `{"HOME":"` + home + `"}`,
+		"mcp_json":   `{"ops":{"command":"python3","args":["-m","ops"]}}`,
+		"strict_mcp": 1,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	sess := r.launchSession(map[string]any{"project_id": r.project, "agent": "claude", "worktree": map[string]any{}})
+	log := r.waitForLog(sess.Workdir, "argv:", 10*time.Second)
+	if err := os.Remove(filepath.Join(sess.Workdir, "session-log.txt")); err != nil {
+		t.Fatal(err)
+	}
+	status := strings.TrimSpace(mustRun(t, sess.Workdir, "git", "status", "--porcelain", "--untracked-files=all", "--ignored=matching"))
+	if status != "" {
+		t.Fatalf("MCP launch left Git worktree changes: %q", status)
+	}
+	if sourceStatus := strings.TrimSpace(mustRun(t, r.repo, "git", "status", "--porcelain", "--untracked-files=all", "--ignored=matching")); sourceStatus != "" {
+		t.Fatalf("MCP launch changed source checkout: %q", sourceStatus)
+	}
+	if !strings.Contains(log, "--mcp-config "+home+"/.local/state/agentdeck/mcp/") || !strings.Contains(log, "--strict-mcp-config") {
+		t.Fatalf("private MCP config was not passed as an absolute state path: %s", log)
+	}
+	if code, body := r.do("DELETE", fmt.Sprintf("/api/sessions/%d", sess.ID), nil); code != 200 {
+		t.Fatalf("ending session: %d %s", code, body)
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for tmuxAlive(sess.TmuxSession) && time.Now().Before(deadline) {
+		time.Sleep(50 * time.Millisecond)
+	}
+	if tmuxAlive(sess.TmuxSession) {
+		t.Fatal("owned MCP session did not end")
+	}
+	if code, body := r.do("DELETE", fmt.Sprintf("/api/sessions/%d/worktree", sess.ID), nil); code != 200 {
+		t.Fatalf("removing clean MCP worktree: %d %s", code, body)
+	}
+	if _, err := os.Stat(sess.Workdir); !os.IsNotExist(err) {
+		t.Fatalf("MCP worktree still exists after removal: %v", err)
+	}
+}
+
 // Typing at a live session has to actually reach the process.
 func TestARealSessionReceivesTypedText(t *testing.T) {
 	r := newInteractiveRig(t)

@@ -126,6 +126,11 @@ func (m *Mock) Run(ctx context.Context, cmd string, opts RunOpts) (Result, error
 	m.mu.Unlock()
 
 	switch {
+	case strings.HasPrefix(cmd, "python3 -c ") && strings.Contains(cmd, "os.O_NOFOLLOW"):
+		// MCP runtime publication is a target-side helper in real executors. The
+		// mock only needs to return the absolute private-state path that the
+		// launcher would receive; it must not pretend the Git worktree owns it.
+		return Result{0, "/tmp/agentdeck-mcp-state/agentdeck/mcp/mock/mcp.json\n", ""}, nil
 	case strings.HasPrefix(cmd, "test \"$(wc -c < ") && strings.Contains(cmd, " && mv -- "):
 		return m.publishUpload(cmd), nil
 	case strings.HasPrefix(cmd, "sudo pvesh get /cluster/nextid"):

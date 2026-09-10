@@ -1,6 +1,7 @@
 package agents
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"sort"
@@ -63,21 +64,125 @@ func CodexMCPArgs(mcp map[string]any) ([]string, error) {
 	return out, nil
 }
 
-// InteractiveMCPPrepareCommand creates a private, unique runtime leaf after
-// checking existing parents without following symlinks.
-func InteractiveMCPPrepareCommand(workdir, rel string) string {
-	dir := workdir + "/" + strings.TrimSuffix(rel, "/mcp.json")
-	parent := workdir + "/.agentdeck/interactive"
-	return "for p in " + shellQuote(workdir+"/.agentdeck") + " " + shellQuote(parent) + "; do if [ -L \"$p\" ] || { [ -e \"$p\" ] && [ ! -d \"$p\" ]; }; then exit 73; fi; done; mkdir -p " + shellQuote(parent) + " && mkdir " + shellQuote(dir) + " && chmod 700 " + shellQuote(dir)
+// interactiveMCPInstallScript creates and publishes one private runtime file on
+// the target. It deliberately uses directory descriptors for every operation
+// below the target user's state directory: the worktree can be modified by
+// setup hooks or another session, and generated credentials must never become
+// Git files. A hard link is the publication primitive because it is atomic and
+// refuses an existing destination, including a symlink, without replacing
+// foreign content.
+const interactiveMCPInstallScript = `
+import base64, os, stat, sys
+
+rel, encoded = sys.argv[2:]
+parts = rel.split('/')
+if len(parts) != 4 or parts[0] != 'agentdeck' or parts[1] != 'mcp' or parts[3] != 'mcp.json' or not parts[2] or any(p in ('', '.', '..') for p in parts):
+    raise RuntimeError('invalid interactive MCP path')
+
+state = os.environ.get('XDG_STATE_HOME', '')
+if not state:
+    home = os.environ.get('HOME', '')
+    if not home:
+        raise RuntimeError('target HOME is unavailable')
+    state = home + '/.local/state'
+if not state.startswith('/'):
+    raise RuntimeError('target XDG_STATE_HOME must be absolute')
+
+O_DIR = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+def open_or_make_path(path):
+    fd = os.open('/', O_DIR)
+    try:
+        for part in path.split('/')[1:]:
+            if not part or part in ('.', '..'):
+                raise RuntimeError('invalid state path')
+            try:
+                os.mkdir(part, 0o700, dir_fd=fd)
+            except FileExistsError:
+                pass
+            nxt = os.open(part, O_DIR, dir_fd=fd)
+            os.close(fd)
+            fd = nxt
+        return fd
+    except:
+        os.close(fd)
+        raise
+
+def open_or_make_dir(parent, name, mode):
+    try:
+        os.mkdir(name, mode, dir_fd=parent)
+    except FileExistsError:
+        pass
+    return os.open(name, O_DIR, dir_fd=parent)
+
+root = open_or_make_path(state)
+adk = None
+interactive = None
+leaf = None
+tmp = None
+try:
+    adk = open_or_make_dir(root, 'agentdeck', 0o700)
+    interactive = open_or_make_dir(adk, 'mcp', 0o700)
+    try:
+        os.mkdir(parts[2], 0o700, dir_fd=interactive)
+    except FileExistsError:
+        raise RuntimeError('interactive MCP runtime already exists')
+    # Open the exclusive leaf immediately and compare its inode with the one
+    # just created. If a concurrent writer replaced it before this point, fail;
+    # after this descriptor is held, later pathname changes cannot redirect us.
+    expected = os.stat(parts[2], dir_fd=interactive, follow_symlinks=False)
+    leaf = os.open(parts[2], O_DIR, dir_fd=interactive)
+    actual = os.fstat(leaf)
+    if (expected.st_dev, expected.st_ino) != (actual.st_dev, actual.st_ino) or not stat.S_ISDIR(actual.st_mode):
+        raise RuntimeError('interactive MCP runtime was replaced')
+    tmp = os.open('.mcp.tmp', os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600, dir_fd=leaf)
+    payload = base64.b64decode(encoded, validate=True)
+    view = memoryview(payload)
+    while view:
+        n = os.write(tmp, view)
+        view = view[n:]
+    os.fsync(tmp)
+    os.close(tmp)
+    tmp = None
+    # Do not follow a source symlink, and do not replace an existing destination.
+    os.link('.mcp.tmp', 'mcp.json', src_dir_fd=leaf, dst_dir_fd=leaf, follow_symlinks=False)
+    os.unlink('.mcp.tmp', dir_fd=leaf)
+    print(state + '/' + '/'.join(parts), flush=True)
+finally:
+    for fd in (tmp, leaf, interactive, adk, root):
+        if fd is not None:
+            try: os.close(fd)
+            except OSError: pass
+`
+
+// MCPInstallCommand performs the complete private runtime install in one
+// target-side operation. The payload is base64-encoded so neither JSON bytes
+// nor path values become shell syntax. It prints the resulting absolute path;
+// the target's normal HOME/XDG state directory supplies the root.
+func MCPInstallCommand(rel string, payload []byte) string {
+	encoded := base64.StdEncoding.EncodeToString(payload)
+	return "python3 -c " + shellQuote(interactiveMCPInstallScript) + " -- " + shellQuote(rel) + " " + shellQuote(encoded)
 }
 
-func InteractiveMCPPublishCommand(workdir, rel string) string {
-	dir := workdir + "/" + strings.TrimSuffix(rel, "/mcp.json")
-	tmp := dir + "/.mcp.tmp"
-	// A hard link is atomic and fails for every existing destination, including
-	// symlinks and directories; unlike mv -n it cannot silently publish inside a
-	// foreign symlink-to-directory tree.
-	return "chmod 600 " + shellQuote(tmp) + " && ln -T " + shellQuote(tmp) + " " + shellQuote(workdir+"/"+rel) + " && rm " + shellQuote(tmp)
+// PrivateMCPPath validates the helper's absolute-path result before it becomes
+// part of a launch command.
+func PrivateMCPPath(output string) (string, error) {
+	path := strings.TrimSpace(output)
+	if path == "" || !strings.HasPrefix(path, "/") || strings.ContainsAny(path, "\r\n") {
+		return "", fmt.Errorf("target returned an invalid private MCP path")
+	}
+	return path, nil
+}
+
+// MCPStateEnvPrefix forwards only the state-directory selectors. Agent API
+// credentials and model endpoints do not belong in the helper's environment.
+func MCPStateEnvPrefix(env map[string]string) (string, error) {
+	stateEnv := map[string]string{}
+	for _, key := range []string{"HOME", "XDG_STATE_HOME"} {
+		if value, ok := env[key]; ok {
+			stateEnv[key] = value
+		}
+	}
+	return EnvPrefix(stateEnv, false)
 }
 
 func tomlKey(s string) string {

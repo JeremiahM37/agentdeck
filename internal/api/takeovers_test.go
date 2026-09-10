@@ -50,6 +50,19 @@ func TestRealRunningRoutineTakeover(t *testing.T) {
 	if err := os.WriteFile(r.app.Cfg.ClaudeBin, []byte(takeoverAgent), 0755); err != nil {
 		t.Fatal(err)
 	}
+	// The takeover must continue with the declaration captured when the
+	// background attempt was staged, even if the project is edited meanwhile.
+	home := filepath.Join(t.TempDir(), "agent-home")
+	if err := os.Mkdir(home, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.app.DB.Update("projects", r.project, map[string]any{
+		"env_json":   `{"HOME":"` + home + `"}`,
+		"mcp_json":   `{}`,
+		"strict_mcp": 1,
+	}); err != nil {
+		t.Fatal(err)
+	}
 	// Exercise the routine itself, rather than a lookalike manually-created task.
 	code, raw := r.do("POST", "/api/routines", map[string]any{"name": "Inspect repo", "prompt": "Keep my edits", "project_ids": []int64{r.project}, "agent": "claude", "dispatch": true})
 	if code != 201 && code != 200 {
@@ -82,6 +95,11 @@ func TestRealRunningRoutineTakeover(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if err := r.app.DB.Update("projects", r.project, map[string]any{
+		"mcp_json": `{"new_tools":{"command":"new-mcp"}}`,
+	}); err != nil {
+		t.Fatal(err)
+	}
 	path := fmt.Sprintf("/api/tasks/%d/takeover", id)
 	for i := 0; i < 2; i++ {
 		code, raw = r.do("POST", path, map[string]any{})
@@ -101,6 +119,18 @@ func TestRealRunningRoutineTakeover(t *testing.T) {
 	if !strings.Contains(log, "--resume takeover-conversation-123") || strings.Contains(log, "--continue") {
 		t.Fatalf("wrong conversation: %s", log)
 	}
+	fields := strings.Fields(log)
+	for i := range fields {
+		if fields[i] == "--mcp-config" && i+1 < len(fields) {
+			raw, readErr := os.ReadFile(fields[i+1])
+			if readErr != nil || !strings.Contains(string(raw), "mcpServers") || strings.Contains(string(raw), "new_tools") {
+				t.Fatalf("takeover did not preserve staged MCP snapshot: %q (%v)", raw, readErr)
+			}
+			goto checkedMCP
+		}
+	}
+	t.Fatalf("takeover omitted MCP config: %s", log)
+checkedMCP:
 	if tmuxAlive("=" + att.TmuxSession) {
 		t.Fatal("background tmux survived")
 	}

@@ -6,7 +6,6 @@ package api_test
 // filesystem and command log), not against the config that was requested.
 
 import (
-	"encoding/json"
 	"fmt"
 	"path/filepath"
 	"strings"
@@ -130,12 +129,9 @@ func TestProjectMCPReachesTheAgent(t *testing.T) {
 
 	h.run(p.id(), "parity", "do the thing", nil)
 
-	staged := string(h.staged("/.agentdeck/mcp.json"))
-	if !strings.Contains(staged, `"mcpServers"`) || !strings.Contains(staged, `"homelab"`) {
-		t.Fatalf("staged mcp.json: %s", staged)
-	}
 	cmd := h.launchCmd()
-	if !strings.Contains(cmd, "--mcp-config .agentdeck/mcp.json") ||
+	if strings.Contains(cmd, "--mcp-config .agentdeck/mcp.json") ||
+		!strings.Contains(cmd, "--mcp-config /tmp/agentdeck-mcp-state/agentdeck/mcp/") ||
 		!strings.Contains(cmd, "--strict-mcp-config") {
 		t.Fatalf("launch: %s", cmd)
 	}
@@ -149,15 +145,9 @@ func TestMCPAcceptsAFullMCPServersDocument(t *testing.T) {
 
 	h.run(p.id(), "parity", "do the thing", nil)
 
-	var staged map[string]any
-	if err := json.Unmarshal(h.staged("/.agentdeck/mcp.json"), &staged); err != nil {
-		t.Fatal(err)
-	}
-	if len(staged) != 1 {
-		t.Fatalf("an already-wrapped document must not be double-wrapped: %v", staged)
-	}
-	if _, ok := staged["mcpServers"]; !ok {
-		t.Fatalf("staged: %v", staged)
+	if strings.Contains(h.launchCmd(), "--mcp-config .agentdeck/mcp.json") ||
+		!strings.Contains(h.launchCmd(), "/tmp/agentdeck-mcp-state/agentdeck/mcp/") {
+		t.Fatalf("MCP config must stay outside the worktree: %s", h.launchCmd())
 	}
 	if strings.Contains(h.launchCmd(), "--strict-mcp-config") {
 		t.Error("strict must stay opt-in")
@@ -169,6 +159,18 @@ func TestNoMCPConfiguredPassesNoFlag(t *testing.T) {
 	h.run(h.seededProjectID(), "parity", "do the thing", nil)
 	if strings.Contains(h.launchCmd(), "--mcp-config") {
 		t.Fatalf("launch: %s", h.launchCmd())
+	}
+}
+
+func TestStrictMCPEmptyClaudeStillUsesPrivateEmptyDocument(t *testing.T) {
+	h := newHarness(t)
+	p := h.project("strict-empty", obj{"strict_mcp": true, "mcp": obj{}})
+	h.run(p.id(), "strict empty", "do the thing", nil)
+	cmd := h.launchCmd()
+	if strings.Contains(cmd, "--mcp-config .agentdeck/mcp.json") ||
+		!strings.Contains(cmd, "--mcp-config /tmp/agentdeck-mcp-state/agentdeck/mcp/") ||
+		!strings.Contains(cmd, "--strict-mcp-config") {
+		t.Fatalf("strict empty Claude launch: %s", cmd)
 	}
 }
 

@@ -76,74 +76,143 @@ func TestCodexMCPArgsRejectsNamesTheCLICannotParse(t *testing.T) {
 	}
 }
 
-func TestInteractiveMCPPrepareRejectsSymlinkAndPublishDoesNotClobber(t *testing.T) {
+func TestInteractiveMCPInstallUsesPrivateExclusiveRuntime(t *testing.T) {
+	if _, err := exec.LookPath("python3"); err != nil {
+		t.Skip("python3 is required on agent targets")
+	}
+	payload := []byte(`{"mcpServers":{"ops":{"command":"python3"}}}`)
 	root := t.TempDir()
+	state := filepath.Join(root, "state")
 	foreign := t.TempDir()
-	os.Symlink(foreign, filepath.Join(root, ".agentdeck"))
+	os.MkdirAll(state, 0700)
+	os.Symlink(foreign, filepath.Join(state, "agentdeck"))
 	rel := InteractiveMCPRel(7, "nonce")
-	if err := exec.Command("bash", "-c", InteractiveMCPPrepareCommand(root, rel)).Run(); err == nil {
-		t.Fatal("symlinked .agentdeck parent must be rejected")
+	cmd := exec.Command("bash", "-c", MCPInstallCommand(rel, payload))
+	cmd.Env = append(os.Environ(), "XDG_STATE_HOME="+state)
+	if err := cmd.Run(); err == nil {
+		t.Fatal("symlinked state parent must be rejected")
 	}
 	root = t.TempDir()
-	if err := os.MkdirAll(filepath.Join(root, ".agentdeck", "interactive"), 0700); err != nil {
+	state = filepath.Join(root, "state")
+	if err := os.MkdirAll(filepath.Join(state, "agentdeck"), 0700); err != nil {
 		t.Fatal(err)
 	}
-	if err := exec.Command("bash", "-c", InteractiveMCPPrepareCommand(root, rel)).Run(); err != nil {
+	interactive := filepath.Join(state, "agentdeck", "mcp")
+	if err := os.Symlink(foreign, interactive); err != nil {
 		t.Fatal(err)
 	}
-	dest := filepath.Join(root, filepath.FromSlash(rel))
-	if err := os.WriteFile(dest, []byte("foreign"), 0600); err != nil {
+	cmd = exec.Command("bash", "-c", MCPInstallCommand(rel, payload))
+	cmd.Env = append(os.Environ(), "XDG_STATE_HOME="+state)
+	if err := cmd.Run(); err == nil {
+		t.Fatal("symlinked MCP parent must be rejected")
+	}
+	root = t.TempDir()
+	state = filepath.Join(root, "state")
+	if err := os.MkdirAll(filepath.Join(state, "agentdeck", "mcp"), 0700); err != nil {
 		t.Fatal(err)
 	}
-	tmp := filepath.Join(filepath.Dir(dest), ".mcp.tmp")
-	if err := os.WriteFile(tmp, []byte("agentdeck"), 0600); err != nil {
+	dir := filepath.Join(state, filepath.FromSlash(strings.TrimSuffix(rel, "/mcp.json")))
+	if err := os.Mkdir(dir, 0700); err != nil {
 		t.Fatal(err)
 	}
-	if err := exec.Command("bash", "-c", InteractiveMCPPublishCommand(root, rel)).Run(); err == nil {
-		t.Fatal("existing foreign config must make publication fail")
+	foreignDest := filepath.Join(dir, "mcp.json")
+	if err := os.WriteFile(foreignDest, []byte("foreign"), 0640); err != nil {
+		t.Fatal(err)
 	}
-	got, _ := os.ReadFile(dest)
-	if string(got) != "foreign" {
-		t.Fatalf("foreign config was clobbered: %q", got)
+	cmd = exec.Command("bash", "-c", MCPInstallCommand(rel, payload))
+	cmd.Env = append(os.Environ(), "XDG_STATE_HOME="+state)
+	if err := cmd.Run(); err == nil {
+		t.Fatal("existing runtime leaf must make installation fail")
 	}
+	got, _ := os.ReadFile(foreignDest)
+	info, _ := os.Stat(foreignDest)
+	if string(got) != "foreign" || info.Mode().Perm() != 0640 {
+		t.Fatalf("foreign config changed: body=%q mode=%o", got, info.Mode().Perm())
+	}
+	root = t.TempDir()
+	state = filepath.Join(root, "state")
+	if err := os.MkdirAll(filepath.Join(state, "agentdeck"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	cmd = exec.Command("bash", "-c", MCPInstallCommand(rel, payload))
+	cmd.Env = append(os.Environ(), "XDG_STATE_HOME="+state)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("%v: %s", err, out)
+	}
+	dest := filepath.Join(state, filepath.FromSlash(rel))
+	got, err := os.ReadFile(dest)
+	if err != nil || string(got) != string(payload) {
+		t.Fatalf("published MCP payload: %q (%v)", got, err)
+	}
+	info, err = os.Stat(dest)
+	if err != nil || info.Mode().Perm() != 0600 {
+		t.Fatalf("published MCP mode: %o (%v)", info.Mode().Perm(), err)
+	}
+	if _, err := os.Lstat(filepath.Join(filepath.Dir(dest), ".mcp.tmp")); !os.IsNotExist(err) {
+		t.Fatalf("temporary file was not removed: %v", err)
+	}
+	if info, err := os.Stat(filepath.Dir(dest)); err != nil || info.Mode().Perm() != 0700 {
+		t.Fatalf("runtime leaf mode: %o (%v)", info.Mode().Perm(), err)
+	}
+
 	outside := filepath.Join(t.TempDir(), "outside")
 	if err := os.WriteFile(outside, []byte("outside"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Remove(dest); err != nil {
+	root = t.TempDir()
+	state = filepath.Join(root, "state")
+	if err := os.MkdirAll(filepath.Join(state, "agentdeck"), 0700); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Symlink(outside, dest); err != nil {
+	if err := os.Symlink(outside, filepath.Join(state, "agentdeck", "mcp")); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(tmp, []byte("agentdeck"), 0600); err != nil {
-		t.Fatal(err)
-	}
-	if err := exec.Command("bash", "-c", InteractiveMCPPublishCommand(root, rel)).Run(); err == nil {
-		t.Fatal("symlink config must make publication fail")
+	cmd = exec.Command("bash", "-c", MCPInstallCommand(rel, payload))
+	cmd.Env = append(os.Environ(), "XDG_STATE_HOME="+state)
+	if err := cmd.Run(); err == nil {
+		t.Fatal("symlinked interactive parent must not be traversed")
 	}
 	got, _ = os.ReadFile(outside)
 	if string(got) != "outside" {
-		t.Fatalf("symlink target was clobbered: %q", got)
+		t.Fatalf("symlink target changed: %q", got)
 	}
-	foreignDir := filepath.Join(root, "foreign-dir")
-	if err := os.Mkdir(foreignDir, 0700); err != nil {
+}
+
+func TestInteractiveMCPInstallRejectsParentReplacementBeforeTraversal(t *testing.T) {
+	if _, err := exec.LookPath("python3"); err != nil {
+		t.Skip("python3 is required on agent targets")
+	}
+	root := t.TempDir()
+	state := filepath.Join(root, "state")
+	if err := os.Mkdir(state, 0700); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Remove(dest); err != nil {
+	if err := os.Mkdir(filepath.Join(state, "agentdeck"), 0700); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Symlink(foreignDir, dest); err != nil {
+	outside := t.TempDir()
+	bin := t.TempDir()
+	python := filepath.Join(bin, "python3")
+	body := "#!/bin/sh\nset -eu\nmv -- \"$ADK_STATE/agentdeck\" \"$ADK_STATE/original-agentdeck\"\nln -s -- \"$ADK_OUTSIDE\" \"$ADK_STATE/agentdeck\"\nexec \"$ADK_REAL_PYTHON\" \"$@\"\n"
+	if err := os.WriteFile(python, []byte(body), 0700); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(tmp, []byte("agentdeck"), 0600); err != nil {
+	realPython, err := exec.LookPath("python3")
+	if err != nil {
 		t.Fatal(err)
 	}
-	if err := exec.Command("bash", "-c", InteractiveMCPPublishCommand(root, rel)).Run(); err == nil {
-		t.Fatal("symlink-to-directory config must make publication fail")
+	rel := InteractiveMCPRel(8, "replacement")
+	cmd := exec.Command("bash", "-c", MCPInstallCommand(rel, []byte(`{"mcpServers":{}}`)))
+	cmd.Env = append(os.Environ(),
+		"PATH="+bin+":"+os.Getenv("PATH"), "XDG_STATE_HOME="+state,
+		"ADK_STATE="+state,
+		"ADK_OUTSIDE="+outside, "ADK_REAL_PYTHON="+realPython)
+	if out, err := cmd.CombinedOutput(); err == nil {
+		t.Fatal("parent replacement must be rejected")
+	} else if len(out) == 0 {
+		t.Fatal("replacement rejection did not report an error")
 	}
-	entries, _ := os.ReadDir(foreignDir)
-	if len(entries) != 0 {
-		t.Fatalf("foreign directory changed: %v", entries)
+	if entries, err := os.ReadDir(outside); err != nil || len(entries) != 0 {
+		t.Fatalf("foreign replacement target changed: %v", err)
 	}
 }
