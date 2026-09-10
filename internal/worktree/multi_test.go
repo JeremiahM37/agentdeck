@@ -363,6 +363,12 @@ func TestMultiWorkspaceCreationFailureAndCleanup(t *testing.T) {
 }
 
 func TestMultiWorkspaceSupervisorDeathKeepsCheckoutGuarded(t *testing.T) {
+	testMultiWorkspaceSupervisorDeath(t, false)
+}
+func TestMultiWorkspaceCancellationReachesOrphanedCheckout(t *testing.T) {
+	testMultiWorkspaceSupervisorDeath(t, true)
+}
+func testMultiWorkspaceSupervisorDeath(t *testing.T, cancel bool) {
 	for _, bin := range []string{"git", "python3", "tmux"} {
 		if _, err := exec.LookPath(bin); err != nil {
 			t.Skip(bin + " unavailable")
@@ -398,7 +404,7 @@ func TestMultiWorkspaceSupervisorDeathKeepsCheckoutGuarded(t *testing.T) {
 		t.Fatal(err)
 	}
 	raw, _ := json.Marshal(plan)
-	cmd := exec.Command("python3", "-c", multiWorkerScript, "create", string(raw), multiPreflightScript, interactiveScript)
+	cmd := exec.Command("python3", "-c", setupControlScript+"\n"+multiWorkerScript, "create", string(raw), multiPreflightScript, setupControlScript+"\n"+interactiveScript)
 	if err := cmd.Start(); err != nil {
 		t.Fatal(err)
 	}
@@ -447,6 +453,28 @@ func TestMultiWorkspaceSupervisorDeathKeepsCheckoutGuarded(t *testing.T) {
 	ex := executor.NewLocal()
 	if err := RunInteractive(context.Background(), ex, "remove", plan); err == nil {
 		t.Fatal("cleanup raced an orphaned checkout")
+	}
+	if cancel {
+		if err := RunInteractive(context.Background(), ex, "cancel", plan); err != nil {
+			t.Fatal(err)
+		}
+		deadline = time.Now().Add(5 * time.Second)
+		for {
+			err := RunInteractive(context.Background(), ex, "check-remove", plan)
+			if err != nil && strings.Contains(err.Error(), "ownership does not match") {
+				break
+			}
+			if time.Now().After(deadline) {
+				t.Fatalf("orphaned checkout ignored cancellation: %v", err)
+			}
+			time.Sleep(50 * time.Millisecond)
+		}
+		// Cancellation retains the incomplete allocation for inspection. Without
+		// a supervisor result, ownership must not be fabricated for cleanup.
+		if _, err := os.Stat(filepath.Join(plan.Repositories[0].Worktree.Path, "file")); err != nil {
+			t.Fatal(err)
+		}
+		return
 	}
 	os.WriteFile(release, []byte("release"), 0600)
 	deadline = time.Now().Add(10 * time.Second)

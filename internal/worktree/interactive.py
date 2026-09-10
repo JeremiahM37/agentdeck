@@ -4,8 +4,14 @@ operation,raw=sys.argv[1:3]
 p=json.loads(raw)
 inherited_lock=tuple([int(sys.argv[3])]) if len(sys.argv)>3 and sys.argv[3]!='-' else ()
 git_timeout=float(sys.argv[4]) if len(sys.argv)>4 else 90
-def git(repo,*args):
- r=subprocess.run(['git','-C',repo,*args],capture_output=True,text=True,timeout=git_timeout,pass_fds=inherited_lock)
+control=None
+def git(repo,*args,cancel_check=True):
+ if control is not None and cancel_check:
+  control.check()
+  child=subprocess.Popen(['git','-C',repo,*args],stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True,start_new_session=not inherited_lock)
+  stdout,stderr=control.wait(child,git_timeout,os.getpgrp() if inherited_lock else None)
+  r=subprocess.CompletedProcess(child.args,child.returncode,stdout,stderr)
+ else:r=subprocess.run(['git','-C',repo,*args],capture_output=True,text=True,timeout=git_timeout,pass_fds=inherited_lock)
  if r.returncode:raise ValueError(r.stderr.strip() or r.stdout.strip() or 'Git command failed')
  return r.stdout.strip()
 def within(path,root):
@@ -13,13 +19,17 @@ def within(path,root):
 def claim_created_worktree(repo,dest,common,commit):
  # A post-checkout hook can fail after Git has allocated a complete worktree.
  # Claim only that exact new allocation, never an existing or substituted tree.
- if git(dest,'rev-parse','--show-toplevel')!=dest:raise ValueError('Created directory is not the worktree root')
- if git(dest,'rev-parse','--path-format=absolute','--git-common-dir')!=common:raise ValueError('Created worktree belongs to another repository')
- if git(dest,'symbolic-ref','--quiet','--short','HEAD')!=p['branch']:raise ValueError('Created worktree branch does not match')
- if git(dest,'rev-parse','HEAD')!=commit:raise ValueError('Created worktree revision does not match')
- owner=pathlib.Path(git(dest,'rev-parse','--absolute-git-dir'))/'agentdeck-owner'
+ if git(dest,'rev-parse','--show-toplevel',cancel_check=False)!=dest:raise ValueError('Created directory is not the worktree root')
+ if git(dest,'rev-parse','--path-format=absolute','--git-common-dir',cancel_check=False)!=common:raise ValueError('Created worktree belongs to another repository')
+ if git(dest,'symbolic-ref','--quiet','--short','HEAD',cancel_check=False)!=p['branch']:raise ValueError('Created worktree branch does not match')
+ if git(dest,'rev-parse','HEAD',cancel_check=False)!=commit:raise ValueError('Created worktree revision does not match')
+ owner=pathlib.Path(git(dest,'rev-parse','--absolute-git-dir',cancel_check=False))/'agentdeck-owner'
  with owner.open('x') as file:file.write(p['token'])
 try:
+ if operation=='create':
+  if not inherited_lock:control=SetupControl(p)
+  elif len(sys.argv)>5:control=SetupControl(json.loads(sys.argv[5]))
+  if control:control.check()
  repo=os.path.realpath(p['repo']);dest=os.path.realpath(p['path'])
  if not os.path.isabs(p['repo']) or not os.path.isabs(p['path']):raise ValueError('Worktree paths must be absolute')
  common=git(repo,'rev-parse','--path-format=absolute','--git-common-dir')

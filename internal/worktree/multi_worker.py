@@ -15,6 +15,7 @@ p = json.loads(raw)
 root = pathlib.Path(p['path'])
 lock = None
 owned = False
+control = None
 namespace = {'__name__': 'workspace_validation'}
 exec(compile(validation, '<workspace-validation>', 'exec'), namespace)
 
@@ -110,6 +111,7 @@ def check_terminals():
 
 
 def run_child(entry, operation):
+    if control: control.check()
     busy()
     child_plan = dict(entry['worktree'])
     if operation == 'create':
@@ -122,7 +124,7 @@ def run_child(entry, operation):
     try:
         child = subprocess.Popen(
             ['python3', '-c', wrapper, str(read_fd), single, operation,
-             json.dumps(child_plan), str(lock.fileno()), str(max(1, operation_timeout-15))],
+             json.dumps(child_plan), str(lock.fileno()), str(max(1, operation_timeout-15)), json.dumps(p)],
             stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
             start_new_session=True, pass_fds=(read_fd, lock.fileno()),
         )
@@ -132,9 +134,9 @@ def run_child(entry, operation):
         os.close(read_fd)
         os.close(write_fd)
     try:
-        stdout, stderr = child.communicate(timeout=operation_timeout)
+        stdout, stderr = control.wait(child, operation_timeout) if control else child.communicate(timeout=operation_timeout)
     except subprocess.TimeoutExpired:
-        os.killpg(child.pid, signal.SIGKILL)
+        if child.poll() is None: os.killpg(child.pid, signal.SIGKILL)
         child.communicate()
         raise ValueError('Repository operation timed out; allocation retained for inspection')
     try:
@@ -167,6 +169,8 @@ try:
         print(json.dumps({'workspace': saved}))
         sys.exit(0)
     if action == 'create':
+        control = SetupControl(p)
+        control.check()
         p = namespace['preflight'](p)
         root = pathlib.Path(p['path'])
         root.parent.mkdir(parents=True, exist_ok=True)
