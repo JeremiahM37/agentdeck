@@ -80,6 +80,26 @@ path in your prompt, or paste it in the attached terminal. Upload also accepts
 `task`, `attempt`, and `project`. Files/download use `session`, `attempt`, or
 `project`. Downloads preserve an existing destination file.
 
+## Project skills
+
+Claude and Codex can discover skills on the selected target and attach them to a
+project. Configure additional target-local source directories with the project
+API; repository skills are discovered by walking up from the project's Git root:
+
+```sh
+agentdeck api PATCH /projects/7 '{"skill_sources":["/srv/agent-skills"]}'
+agentdeck skill list 7 --agent codex
+agentdeck skill attach 7 'configured:<source-hash>/lint' --agent codex
+agentdeck skill attached 7 --agent codex
+agentdeck skill detach 7 12
+```
+
+The web and terminal dashboards provide the same discovery and attach/detach
+actions. Sources are read on the target and linked into `.claude/skills` or
+`.agents/skills` in the project and any selected worktree; source files are not
+copied. Detach removes only links proven to be AgentDeck-owned. Native
+repository skills and changed or foreign destinations are preserved.
+
 `api` writes JSON to stdout and failures to stderr with a nonzero exit code.
 Bodies accept inline JSON, `@filename`, or `-` for stdin. Every web operation is
 available through the same API; specialized menus cover frequent operations,
