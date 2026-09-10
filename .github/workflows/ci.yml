@@ -23,6 +23,9 @@ jobs:
       # Real integration tests use temporary repositories and scripted agents.
       - name: Test
         run: go test ./... -count=1
+      - name: Windows client syntax and argument handling
+        shell: pwsh
+        run: ./tests/check-powershell-client.ps1
 
   e2e:
     runs-on: ubuntu-latest

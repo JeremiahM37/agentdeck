@@ -16,7 +16,7 @@ done
 [[ $(uname -s) == Linux ]] || { echo 'This installer is for Linux. Use install-agentdeck-cli.ps1 on Windows.' >&2; exit 1; }
 command -v ssh >/dev/null
 command -v scp >/dev/null
-remote_platform=$(ssh "$server" 'uname -s; uname -m')
+remote_platform=$(ssh -n "$server" 'uname -s; uname -m')
 [[ "$remote_platform" == "$(uname -s)"$'\n'"$(uname -m)" ]] || { echo 'Server/client architectures differ. Build agentdeck for your client architecture first.' >&2; exit 1; }
 stage=$(mktemp -d)
 trap 'rm -rf "$stage"' EXIT

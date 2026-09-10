@@ -37,7 +37,7 @@ def test_terminal_client_session_context_and_files(real_terminal, tmp_path):
 def test_terminal_client_routine_lifecycle(real_terminal):
     t = real_terminal
     project = json.loads(command(t, 'api', 'POST', '/projects', json.dumps({
-        'name':'CLI project','target_id':t['target_id'],'repo_path':str(t['root'])})).stdout)
+        'name':'CLI project','target_id':t['api'](f"/sessions/{t['id']}")['target_id'],'repo_path':str(t['root'])})).stdout)
     routine = json.loads(command(t, 'api', 'POST', '/routines', json.dumps({
         'name':'CLI routine','project_ids':[project['id']],'prompt':'Review code', 'dispatch':False})).stdout)
     rid = routine['id']
