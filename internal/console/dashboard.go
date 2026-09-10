@@ -348,7 +348,11 @@ func (m *dashboard) updatePreview() {
 				}
 			}
 			if failure := str(r["setup_error"]); failure != "" {
-				content = "Setup failed: " + failure + "\n\n" + content
+				label := "Setup failed: "
+				if r["setup_state"] == "creating" {
+					label = "Setup status: "
+				}
+				content = label + failure + "\n\n" + content
 			}
 			if failure := str(r["setup_progress_error"]); failure != "" {
 				content += "\nProgress unavailable: " + failure

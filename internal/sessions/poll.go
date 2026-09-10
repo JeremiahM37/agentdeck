@@ -30,9 +30,9 @@ func (m *Manager) poll(ctx context.Context, onlyTarget *int64) {
 			continue
 		}
 		if s.SetupState == "creating" {
-			// Controller ownership is local information. An unreachable SSH
-			// target must not hide an interrupted background reservation.
-			m.applyPane(s, "", true)
+			if !m.setupActive(s.ID) {
+				m.recoverSetup(ctx, s)
+			}
 			continue
 		}
 		byTarget[s.TargetID] = append(byTarget[s.TargetID], s)

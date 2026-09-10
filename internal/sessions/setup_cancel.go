@@ -38,14 +38,20 @@ func (m *Manager) beginSetupAgent(id int64) error {
 // CancelSetup records intent before contacting the target. The worker checks
 // that durable intent before starting an agent even if target delivery fails.
 func (m *Manager) CancelSetup(ctx context.Context, id int64) error {
-	row, ex, err := m.resolve(id)
+	row, err := m.DB.Session(id)
 	if err != nil {
 		return err
+	}
+	if row.SetupState == "creating" && !m.setupActive(id) {
+		m.recoverSetup(ctx, row)
 	}
 	m.mu.Lock()
 	row, err = m.DB.Session(id)
 	if err == nil && (m.setupLaunching[id] || (row.SetupState != "creating" && row.SetupState != "failed")) {
 		err = fmt.Errorf("setup is no longer cancellable; use the session's End action if an agent has started")
+	}
+	if err == nil && row.SetupState == "creating" && !m.activeSetups[id] {
+		err = fmt.Errorf("setup recovery is still checking the target; retry after terminal ownership is verified")
 	}
 	if err == nil {
 		err = m.DB.Update("sessions", id, map[string]any{"setup_cancel_requested": true})
@@ -67,6 +73,10 @@ func (m *Manager) CancelSetup(ctx context.Context, id int64) error {
 	}
 	if plan.State == "removed" {
 		return nil
+	}
+	_, ex, err := m.resolve(id)
+	if err != nil {
+		return fmt.Errorf("cancellation recorded, but target delivery failed; retry cancellation: %w", err)
 	}
 	delivery, cancel := context.WithTimeout(context.WithoutCancel(ctx), 15*time.Second)
 	defer cancel()

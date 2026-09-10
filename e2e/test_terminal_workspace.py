@@ -40,6 +40,14 @@ def real_terminal(tmp_path, request):
         wrapper = tools/'tmux'
         wrapper.write_text('#!/bin/sh\nif [ "$1" = if-shell ] && [ -e '+shlex.quote(str(root/'refuse-stop'))+' ]; then exit 0; fi\nexec '+shlex.quote(shutil.which('tmux'))+' "$@"\n')
         wrapper.chmod(0o755); env['PATH'] = str(tools)+os.pathsep+env['PATH']
+    if options.get('hold_setup_launch'):
+        tools=tmp_path/'launch-tools';tools.mkdir()
+        wrapper=tools/'tmux'
+        wrapper.write_text('#!/bin/sh\nadk_hold_setup=0\nfor arg do case "$arg" in AGENTDECK_SETUP_TOKEN=*) adk_hold_setup=1;; esac; done\n'
+                           +shlex.quote(real_tmux)+' "$@"\nadk_launch_rc=$?\n'
+                           +'if [ "$1" = new-session ] && [ "$adk_hold_setup" = 1 ] && [ "$adk_launch_rc" = 0 ]; then\n'
+                           +'touch '+shlex.quote(str(root/'launch-held'))+'\nwhile [ ! -f '+shlex.quote(str(root/'release-launch'))+' ]; do sleep .05; done\nfi\nexit "$adk_launch_rc"\n')
+        wrapper.chmod(0o755);env['PATH']=str(tools)+os.pathsep+env['PATH']
     log = (tmp_path/'server.log').open('w')
     proc = subprocess.Popen([_binary()],cwd=root,env=env,stdout=log,stderr=log)
     def api(path, data=None):

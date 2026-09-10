@@ -527,7 +527,7 @@ function sessionCard(s) {
       refreshSessions();
     } catch (e) { toast(e.message, true); }
   };
-  $(".spane", el).textContent = settingUp ? (s.setup_cancel_requested?"Cancellation requested. Waiting for checkout to stop; files will be retained.":"Setting up workspace… Attach becomes available when setup finishes.")+(s.workspace?.repositories||[]).map(repo=>`\n${repo.name}: ${repo.worktree.state}`).join('')+(s.setup_progress_error?'\nProgress unavailable: '+s.setup_progress_error:'') : s.setup_error ? 'Setup failed: '+s.setup_error : s.pane_tail || "";
+  $(".spane", el).textContent = settingUp ? (s.setup_cancel_requested?"Cancellation requested. Waiting for checkout to stop; files will be retained.":"Setting up workspace… Attach becomes available when setup finishes.")+(s.workspace?.repositories||[]).map(repo=>`\n${repo.name}: ${repo.worktree.state}`).join('')+(s.setup_error?'\n'+s.setup_error:'')+(s.setup_progress_error?'\nProgress unavailable: '+s.setup_progress_error:'') : s.setup_error ? 'Setup failed: '+s.setup_error : s.pane_tail || "";
 
   const row = $(".btnrow", el);
   const {menu, panel} = actionMenu('More ···', `More actions for ${s.name}`);

@@ -163,14 +163,15 @@ func Find(specs []Spec, name string) (Spec, bool) {
 // LaunchCommand renders the tmux invocation that starts this agent.
 // Start is everything that varies between one launch of an agent and the next.
 type Start struct {
-	Workdir   string
-	TmuxName  string
-	Model     string
-	Resume    bool
-	ResumeID  string
-	ForkID    string
-	Prompt    string
-	EnvPrefix string
+	SetupToken string
+	Workdir    string
+	TmuxName   string
+	Model      string
+	Resume     bool
+	ResumeID   string
+	ForkID     string
+	Prompt     string
+	EnvPrefix  string
 	// Yolo runs the agent without its approval prompts. On by default for
 	// interactive sessions: you are sitting in the terminal watching it, which
 	// is the supervision, and being asked to confirm every edit in a session you
@@ -204,7 +205,11 @@ func (s Spec) LaunchCommand(o Start) string {
 	}
 	inner := fmt.Sprintf("cd %s && %s%s; exec bash",
 		shellq.Quote(o.Workdir), o.EnvPrefix, strings.Join(parts, " "))
-	return fmt.Sprintf("tmux new-session -d -s %s %s",
+	setupEnv := ""
+	if o.SetupToken != "" {
+		setupEnv = " -e " + shellq.Quote("AGENTDECK_SETUP_TOKEN="+o.SetupToken)
+	}
+	return fmt.Sprintf("tmux new-session -d%s -s %s %s", setupEnv,
 		shellq.Quote(o.TmuxName), shellq.Quote(inner))
 }
 

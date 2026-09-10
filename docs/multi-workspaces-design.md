@@ -129,7 +129,7 @@ installed-Claude/Codex test using private synthetic histories and no model turn.
 It checks exact native identity, saved history visibility, captured launch
 profiles, and the correct shared or isolated working directory.
 
-Before rollout, finish cancellation and restart recovery for setup, add
+Before rollout, finish recovery of unclaimed partial allocations, add
 repositories to existing groups, and handle the transition from older
 single-worktree sessions. Fresh isolated creation and isolated native
 conversation forks run in the background from both interfaces, with recorded
@@ -193,5 +193,26 @@ cancellation wins, pre-checkout and pre-launch checks prevent further startup,
 even when the request disconnects or target delivery fails. Once agent launch
 has begun, cancellation refuses and directs the user to End. Migration tests
 check the cancellation flag survives reopen; real API and desktop/phone/PTY
-flows cover held checkouts. Controller restart reconciliation still needs to
-distinguish a completed agent launch from an orphaned checkout before rollout.
+flows cover held checkouts.
+
+### Controller restart recovery
+
+Background launches set an ownership marker using tmux's `new-session -e`, so
+creation and marking are one target operation. After restart, a reservation whose
+checkout was already recorded ready is checked against that marker. A matching
+terminal is tracked again; no new agent is launched. A reused name or missing
+marker leaves the other terminal untouched and the record available for
+inspection. Connection failures keep verification pending rather than marking a
+potentially running agent ended. Setup status explains that wait in both UIs.
+
+A checkout not recorded ready cannot yet have launched its agent. Such an
+interrupted record retains its allocation and offers cancellation/inspection;
+recovery does not blindly restart the checkout. Cancellation of an orphaned
+ready allocation first resolves whether its agent exists, preventing a promise
+to cancel an agent that has already started.
+
+The restart E2E test stalls the launch client's return immediately after tmux
+creation, kills the real controller, and restarts it against the same database.
+Phone and desktop attach to the unchanged tmux session; an agent-side counter
+proves one launch. Unit integration tests also cover foreign/unmarked/missing
+terminals and unavailable targets.

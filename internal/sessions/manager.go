@@ -397,8 +397,14 @@ func (m *Manager) Launch(ctx context.Context, o LaunchOpts) (*store.Session, err
 		m.end(sess.ID, StatusDead)
 		return nil, err
 	}
+	setupToken, err := m.setupLaunchToken(sess.ID)
+	if err != nil {
+		m.end(sess.ID, StatusDead)
+		return nil, err
+	}
 	cmd := spec.LaunchCommand(Start{
-		Workdir: workdir, TmuxName: tmuxName, Model: o.Model, Resume: o.Resume, ResumeID: o.ResumeID, ForkID: forkID,
+		SetupToken: setupToken,
+		Workdir:    workdir, TmuxName: tmuxName, Model: o.Model, Resume: o.Resume, ResumeID: o.ResumeID, ForkID: forkID,
 		Prompt: argPrompt, EnvPrefix: envPrefix, Yolo: o.Yolo})
 	r, err := ex.Run(ctx, cmd, executor.RunOpts{Timeout: 60})
 	if err != nil {
