@@ -2,6 +2,8 @@ package sessions
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -60,6 +62,14 @@ func New(db *store.DB, reg *executor.Registry, b *bus.Bus, l Launcher,
 func (m *Manager) publish(s *store.Session) {
 	m.Bus.Publish("board", "session", s)
 	m.Bus.Publish(fmt.Sprintf("session:%d", s.ID), "session", s)
+}
+
+func interactiveMCPNonce() (string, error) {
+	b := make([]byte, 16)
+	if _, err := rand.Read(b); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(b), nil
 }
 
 // ---- launching ---------------------------------------------------------------
@@ -407,20 +417,26 @@ func (m *Manager) Launch(ctx context.Context, o LaunchOpts) (*store.Session, err
 					m.end(sess.ID, StatusDead)
 					return nil, mcpErr
 				}
-				rel := agentcfg.InteractiveMCPRel(sess.ID)
-				dir := workdir + "/" + strings.TrimSuffix(rel, "/mcp.json")
-				// Never overwrite a foreign runtime directory. The marker is scoped
-				// to this session, and the directory is private to its owner.
-				guard := "if [ -e " + shellq.Quote(dir) + " ] && [ ! -f " + shellq.Quote(dir+"/.agentdeck-owned") + " ]; then exit 73; fi; mkdir -p " + shellq.Quote(dir) + " && chmod 700 " + shellq.Quote(dir) + " && printf '%s' agentdeck-interactive-mcp > " + shellq.Quote(dir+"/.agentdeck-owned")
+				nonce, nonceErr := interactiveMCPNonce()
+				if nonceErr != nil {
+					m.end(sess.ID, StatusDead)
+					return nil, nonceErr
+				}
+				rel := agentcfg.InteractiveMCPRel(sess.ID, nonce)
+				// Check every existing parent without resolving symlinks, then
+				// atomically create the unique leaf. Never follow a foreign tree.
+				guard := agentcfg.InteractiveMCPPrepareCommand(workdir, rel)
 				if result, guardErr := ex.Run(ctx, guard, executor.RunOpts{Timeout: 20}); guardErr != nil || !result.OK() {
 					m.end(sess.ID, StatusDead)
 					return nil, fmt.Errorf("interactive MCP runtime is not AgentDeck-owned")
 				}
-				if mcpErr = ex.WriteFile(ctx, workdir+"/"+rel, raw); mcpErr != nil {
+				tmp := workdir + "/" + strings.TrimSuffix(rel, "/mcp.json") + "/.mcp.tmp"
+				if mcpErr = ex.WriteFile(ctx, tmp, raw); mcpErr != nil {
 					m.end(sess.ID, StatusDead)
 					return nil, mcpErr
 				}
-				if result, chmodErr := ex.Run(ctx, "chmod 600 "+shellq.Quote(workdir+"/"+rel), executor.RunOpts{Timeout: 20}); chmodErr != nil || !result.OK() {
+				publish := agentcfg.InteractiveMCPPublishCommand(workdir, rel)
+				if result, chmodErr := ex.Run(ctx, publish, executor.RunOpts{Timeout: 20}); chmodErr != nil || !result.OK() {
 					m.end(sess.ID, StatusDead)
 					return nil, fmt.Errorf("could not secure interactive MCP runtime")
 				}

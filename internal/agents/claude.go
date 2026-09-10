@@ -64,8 +64,8 @@ type Permissions struct {
 
 // InteractiveMCPRel is private to one session, avoiding collisions with task
 // staging and preserving any foreign .agentdeck/mcp.json in the worktree.
-func InteractiveMCPRel(sessionID int64) string {
-	return fmt.Sprintf(".agentdeck/interactive/%d/mcp.json", sessionID)
+func InteractiveMCPRel(sessionID int64, nonce string) string {
+	return fmt.Sprintf(".agentdeck/interactive/%d-%s/mcp.json", sessionID, nonce)
 }
 
 func (p Permissions) isEmpty() bool {

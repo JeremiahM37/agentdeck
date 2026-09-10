@@ -63,6 +63,20 @@ func CodexMCPArgs(mcp map[string]any) ([]string, error) {
 	return out, nil
 }
 
+// InteractiveMCPPrepareCommand creates a private, unique runtime leaf after
+// checking existing parents without following symlinks.
+func InteractiveMCPPrepareCommand(workdir, rel string) string {
+	dir := workdir + "/" + strings.TrimSuffix(rel, "/mcp.json")
+	parent := workdir + "/.agentdeck/interactive"
+	return "for p in " + shellQuote(workdir+"/.agentdeck") + " " + shellQuote(parent) + "; do if [ -L \"$p\" ] || { [ -e \"$p\" ] && [ ! -d \"$p\" ]; }; then exit 73; fi; done; mkdir -p " + shellQuote(parent) + " && chmod 700 " + shellQuote(parent) + " && mkdir " + shellQuote(dir) + " && chmod 700 " + shellQuote(dir)
+}
+
+func InteractiveMCPPublishCommand(workdir, rel string) string {
+	dir := workdir + "/" + strings.TrimSuffix(rel, "/mcp.json")
+	tmp := dir + "/.mcp.tmp"
+	return "chmod 600 " + shellQuote(tmp) + " && mv -n " + shellQuote(tmp) + " " + shellQuote(workdir+"/"+rel)
+}
+
 func tomlKey(s string) string {
 	if s != "" && strings.IndexFunc(s, func(r rune) bool {
 		return !(r >= 'A' && r <= 'Z') && !(r >= 'a' && r <= 'z') && !(r >= '0' && r <= '9') && r != '_' && r != '-'

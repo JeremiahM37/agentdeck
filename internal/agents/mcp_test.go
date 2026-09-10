@@ -2,7 +2,9 @@ package agents
 
 import (
 	"encoding/json"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -71,5 +73,57 @@ func TestCodexMCPArgsRejectsMalformedServer(t *testing.T) {
 func TestCodexMCPArgsRejectsNamesTheCLICannotParse(t *testing.T) {
 	if _, err := CodexMCPArgs(map[string]any{"ops.tools": map[string]any{"command": "python3"}}); err == nil {
 		t.Fatal("dotted server names must fail explicitly")
+	}
+}
+
+func TestInteractiveMCPPrepareRejectsSymlinkAndPublishDoesNotClobber(t *testing.T) {
+	root := t.TempDir()
+	foreign := t.TempDir()
+	os.Symlink(foreign, filepath.Join(root, ".agentdeck"))
+	rel := InteractiveMCPRel(7, "nonce")
+	if err := exec.Command("bash", "-c", InteractiveMCPPrepareCommand(root, rel)).Run(); err == nil {
+		t.Fatal("symlinked .agentdeck parent must be rejected")
+	}
+	root = t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, ".agentdeck", "interactive"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := exec.Command("bash", "-c", InteractiveMCPPrepareCommand(root, rel)).Run(); err != nil {
+		t.Fatal(err)
+	}
+	dest := filepath.Join(root, filepath.FromSlash(rel))
+	if err := os.WriteFile(dest, []byte("foreign"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	tmp := filepath.Join(filepath.Dir(dest), ".mcp.tmp")
+	if err := os.WriteFile(tmp, []byte("agentdeck"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := exec.Command("bash", "-c", InteractiveMCPPublishCommand(root, rel)).Run(); err != nil {
+		t.Fatal(err)
+	}
+	got, _ := os.ReadFile(dest)
+	if string(got) != "foreign" {
+		t.Fatalf("foreign config was clobbered: %q", got)
+	}
+	outside := filepath.Join(t.TempDir(), "outside")
+	if err := os.WriteFile(outside, []byte("outside"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(dest); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, dest); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(tmp, []byte("agentdeck"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := exec.Command("bash", "-c", InteractiveMCPPublishCommand(root, rel)).Run(); err != nil {
+		t.Fatal(err)
+	}
+	got, _ = os.ReadFile(outside)
+	if string(got) != "outside" {
+		t.Fatalf("symlink target was clobbered: %q", got)
 	}
 }

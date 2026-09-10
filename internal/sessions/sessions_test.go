@@ -1,11 +1,15 @@
 package sessions
 
 import (
+	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/JeremiahM37/agentdeck/internal/executor"
+	"github.com/JeremiahM37/agentdeck/internal/shellq"
 	"github.com/JeremiahM37/agentdeck/internal/store"
 )
 
@@ -73,6 +77,57 @@ func TestInteractiveMCPArgsSurviveResumeAndFork(t *testing.T) {
 		if !strings.Contains(cmd, `-c`) || !strings.Contains(cmd, `mcp_servers.ops_tools.command="python3"`) {
 			t.Errorf("MCP args missing from %s launch: %s", start.TmuxName, cmd)
 		}
+	}
+}
+
+func TestInteractiveMCPArgsReachSyntheticProcess(t *testing.T) {
+	if _, err := exec.LookPath("tmux"); err != nil {
+		t.Skip("tmux is not installed")
+	}
+	dir := t.TempDir()
+	log := filepath.Join(dir, "argv")
+	bin := filepath.Join(dir, "agent")
+	if err := os.WriteFile(bin, []byte("#!/bin/sh\nprintf '%s\\n' \"$@\" > "+shellq.Quote(log)+"\n"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	spec := Spec{Command: bin, ResumeIDArgs: []string{"resume", "{id}"}, ForkArgs: []string{"fork", "{id}"}}
+	args := []string{"-c", `mcp_servers.ops_tools.command="python3"`}
+	for _, tc := range []struct {
+		name  string
+		start Start
+		want  []string
+	}{
+		{"fresh", Start{Workdir: dir, TmuxName: "adk-mcp-fresh", ToolArgs: args}, []string{"-c", `mcp_servers.ops_tools.command="python3"`}},
+		{"resume", Start{Workdir: dir, TmuxName: "adk-mcp-resume", ResumeID: "s1", ToolArgs: args}, []string{"-c", `mcp_servers.ops_tools.command="python3"`, "resume", "s1"}},
+		{"fork", Start{Workdir: dir, TmuxName: "adk-mcp-fork", ForkID: "s1", ToolArgs: args}, []string{"-c", `mcp_servers.ops_tools.command="python3"`, "fork", "s1"}},
+	} {
+		_ = exec.Command("tmux", "kill-session", "-t", tc.start.TmuxName).Run()
+		_ = os.Remove(log)
+		if err := exec.Command("bash", "-c", spec.LaunchCommand(tc.start)).Run(); err != nil {
+			t.Fatalf("%s launch: %v", tc.name, err)
+		}
+		var raw []byte
+		var err error
+		for deadline := time.Now().Add(time.Second); time.Now().Before(deadline); {
+			raw, err = os.ReadFile(log)
+			if err == nil {
+				break
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+		if err != nil {
+			t.Fatalf("%s argv: %v", tc.name, err)
+		}
+		got := strings.Fields(string(raw))
+		if len(got) != len(tc.want) {
+			t.Fatalf("%s argv: got %q want %q", tc.name, got, tc.want)
+		}
+		for i := range got {
+			if got[i] != tc.want[i] {
+				t.Fatalf("%s argv: got %q want %q", tc.name, got, tc.want)
+			}
+		}
+		_ = exec.Command("tmux", "kill-session", "-t", tc.start.TmuxName).Run()
 	}
 }
 
