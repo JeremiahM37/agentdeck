@@ -1,4 +1,4 @@
-import json,os,sqlite3,tempfile,unittest,uuid
+import json,os,sqlite3,subprocess,sys,tempfile,unittest,uuid
 from contextlib import closing
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -121,6 +121,16 @@ class SearchTests(unittest.TestCase):
         original=path.read_bytes();self.index.reset()
         self.assertEqual(path.read_bytes(),original);self.assertEqual(self.matches('original'),[])
         self.index.sync();self.assertEqual(self.matches('original')[0]['cid'],cid)
+    def test_json_worker_uses_selected_profile_and_cache(self):
+        path,cid=self.write(['worker phrase'])
+        script=Path(__file__).with_name('native_search.py')
+        env={**os.environ,'CODEX_HOME':str(self.home),'AGENTDECK_NATIVE_SEARCH_CACHE':str(self.cache)}
+        reply=json.loads(subprocess.check_output([sys.executable,str(script),'codex','worker phrase'],env=env))
+        self.assertTrue(reply['progress']['complete']);self.assertEqual(reply['matches'][0]['cid'],cid)
+        reply=json.loads(subprocess.check_output([sys.executable,str(script),'--reset','codex','--','worker phrase'],env=env))
+        self.assertEqual(reply['matches'][0]['cid'],cid)
+        result=subprocess.run([sys.executable,str(script),'codex',' '],env=env,capture_output=True,text=True)
+        self.assertEqual(result.returncode,1);self.assertIn('error',json.loads(result.stdout))
     def test_future_cache_version_is_preserved(self):
         other=NativeSearchIndex(self.cache,self.root/'future','codex');path=other.path
         other.db.execute('PRAGMA user_version=99');other.close()

@@ -18,6 +18,14 @@ is mode 0700 and database mode 0600. No full transcript needs to be copied to th
 AgentDeck server. The caller must choose an appropriate target cache location;
 the module currently has no production caller.
 
+The JSON worker is executable as `python3 native_search.py AGENT -- QUERY`.
+It honors CODEX_HOME or CLAUDE_CONFIG_DIR and writes its private cache under
+AGENTDECK_NATIVE_SEARCH_CACHE, otherwise XDG_CACHE_HOME/agentdeck or
+~/.cache/agentdeck. Each invocation advances a bounded indexing pass and returns
+progress plus current matches. Repeat while progress is incomplete; pass --reset
+only on the first invocation of an explicit rebuild. The Go service still needs
+to embed and invoke this worker through its target executor.
+
 Indexing runs in bounded increments, resumes from complete JSONL boundaries,
 handles an incomplete trailing write, and rotates progress between conversations.
 Warm unchanged files are not reparsed. Source deletion, replacement, truncation,
@@ -36,7 +44,7 @@ are quoted as literal terms. A result cap tells callers when to narrow the query
 
 ## Evidence
 
-Fifteen index tests cover old text beyond the reader's recent window, long text,
+Sixteen index tests cover old text beyond the reader's recent window, long text,
 large image captions, oversized records, progressive indexing, append/partial
 writes, rewrites/deletion, concurrent writers, profile/path boundaries, private
 channels, malformed content, file permissions, explicit rebuilds and future-cache preservation.

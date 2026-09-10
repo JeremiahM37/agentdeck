@@ -139,3 +139,29 @@ class NativeSearchIndex:
             JOIN documents d ON d.id=m.doc JOIN hits ON hits.id=m.id
             WHERE message_search MATCH ? ORDER BY d.modified DESC LIMIT ?""",(match,match,limit+1)).fetchall()
         return dict(matches=[dict(row) for row in rows[:limit]],more=len(rows)>limit)
+
+
+def main():
+    import argparse
+    parser=argparse.ArgumentParser(description='Index and search visible native conversation text on this target')
+    parser.add_argument('agent',choices=('claude','codex'))
+    parser.add_argument('query')
+    parser.add_argument('--reset',action='store_true',help='Rebuild this derived index; source histories are unchanged')
+    args=parser.parse_args()
+    home=os.path.expanduser(os.environ.get('CODEX_HOME','~/.codex') if args.agent=='codex' else os.environ.get('CLAUDE_CONFIG_DIR','~/.claude'))
+    cache=os.environ.get('AGENTDECK_NATIVE_SEARCH_CACHE') or str(Path(os.environ.get('XDG_CACHE_HOME',str(Path.home()/'.cache')))/'agentdeck')
+    index=None
+    try:
+        if not args.query.strip() or len(args.query)>500:raise ValueError('Enter between 1 and 500 characters')
+        index=NativeSearchIndex(cache,home,args.agent)
+        if args.reset:index.reset()
+        progress=index.sync()
+        print(json.dumps(dict(agent=args.agent,progress=progress,**index.search(args.query)),ensure_ascii=False))
+    except (OSError,ValueError,sqlite3.Error) as error:
+        print(json.dumps(dict(error=str(error))));return 1
+    finally:
+        if index:index.close()
+    return 0
+
+if __name__=='__main__':
+    raise SystemExit(main())
