@@ -1,0 +1,125 @@
+import json,os,sqlite3,tempfile,unittest,uuid
+from contextlib import closing
+from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
+from native_search import NativeSearchIndex
+
+class SearchTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp=tempfile.TemporaryDirectory();self.addCleanup(self.tmp.cleanup)
+        self.root=Path(self.tmp.name);self.home=self.root/'profile';self.cache=self.root/'cache';self.cwd=str(self.root/'workspace')
+        self.index=NativeSearchIndex(self.cache,self.home,'codex');self.addCleanup(self.index.close)
+    def write(self,texts,cid=None):
+        cid=cid or str(uuid.uuid4());path=self.home/'sessions'/(cid+'.jsonl');path.parent.mkdir(parents=True,exist_ok=True)
+        rows=[{'type':'session_meta','payload':{'id':cid,'cwd':self.cwd,'source':'cli'}}]
+        rows.extend(self.message(t) for t in texts)
+        path.write_text(''.join(json.dumps(r)+'\n' for r in rows));return path,cid
+    @staticmethod
+    def message(text,channel='final',role='assistant'):
+        return {'type':'response_item','payload':{'type':'message','role':role,'channel':channel,'content':[{'type':'output_text','text':text}]}}
+    def matches(self,query):return self.index.search(query)['matches']
+    def test_old_text_beyond_reader_window_and_long_message(self):
+        path,cid=self.write(['rare opening discussion','x'*70000+' long-message-needle']+['ordinary filler '*200]*900)
+        state=self.index.sync(seconds=10)
+        self.assertTrue(state['complete']);self.assertGreater(path.stat().st_size,2*1024*1024)
+        self.assertEqual(self.matches('rare opening')[0]['cid'],cid)
+        self.assertEqual(self.matches('long-message-needle')[0]['cid'],cid)
+        self.assertGreater(self.matches('rare')[0]['end_offset'],self.matches('rare')[0]['offset'])
+    def test_budgeted_resume_append_partial_and_no_duplicates(self):
+        path,cid=self.write(['first needle','second needle'])
+        state=self.index.sync(byte_budget=1,seconds=10);self.assertFalse(state['complete'])
+        for _ in range(10):
+            if self.index.sync(byte_budget=200,seconds=10)['complete']:break
+        self.assertEqual(len(self.matches('needle')),1)
+        count=self.index.db.execute('select count(*) from messages').fetchone()[0]
+        partial=json.dumps(self.message('appended zebra'))
+        with path.open('a') as f:f.write(partial[:-3])
+        self.assertTrue(self.index.sync()['complete']);self.assertEqual(self.matches('zebra'),[])
+        with path.open('a') as f:f.write(partial[-3:]+'\n')
+        self.index.sync();self.assertEqual(self.matches('zebra')[0]['cid'],cid)
+        self.assertEqual(self.index.db.execute('select count(*) from messages').fetchone()[0],count+1)
+        self.assertEqual(self.index.sync()['scanned_bytes'],0)
+    def test_budget_progress_is_fair_between_conversations(self):
+        first,cid1=self.write(['one']*100)
+        second,cid2=self.write(['two']*100)
+        self.index.sync(byte_budget=1,seconds=10)
+        self.index.sync(byte_budget=1,seconds=10)
+        self.assertEqual(self.index.db.execute('select count(*) from documents').fetchone()[0],2)
+    def test_private_channels_are_never_indexed(self):
+        path,cid=self.write(['public visible résumé'])
+        with path.open('a') as f:
+            for channel in ('analysis','justify','confidence','summary','unknown-private'):f.write(json.dumps(self.message('PRIVATE_SENTINEL',channel=channel))+'\n')
+            f.write(json.dumps(self.message('SYSTEM_SENTINEL',role='system'))+'\n')
+        self.index.sync();self.assertEqual(self.matches('PRIVATE_SENTINEL'),[]);self.assertEqual(self.matches('SYSTEM_SENTINEL'),[])
+        self.assertEqual(self.matches('résumé')[0]['cid'],cid)
+        self.assertNotIn('PRIVATE_SENTINEL',str(self.index.db.execute('select text from messages').fetchall()))
+    def test_rewrite_delete_and_replacement_invalidate_results(self):
+        path,cid=self.write(['original wording']);self.index.sync()
+        self.write(['replaced wording'],cid);self.index.sync()
+        self.assertEqual(self.matches('original'),[]);self.assertEqual(len(self.matches('replaced')),1)
+        path.unlink();self.index.sync();self.assertEqual(self.matches('replaced'),[])
+    def test_fork_header_and_profile_boundaries(self):
+        path,cid=self.write(['fork context'])
+        rows=path.read_text().splitlines();rows.insert(1,json.dumps({'type':'session_meta','payload':{'id':str(uuid.uuid4()),'cwd':'/parent'}}));path.write_text('\n'.join(rows)+'\n')
+        outside=self.root/'foreign.jsonl';outside.write_text(path.read_text().replace('fork context','foreign secret'))
+        (path.parent/'linked.jsonl').symlink_to(outside)
+        self.index.sync();self.assertEqual(self.matches('fork')[0]['cid'],cid);self.assertEqual(self.matches('foreign'),[])
+        other=NativeSearchIndex(self.cache,self.root/'other-profile','codex');self.addCleanup(other.close)
+        other.sync();self.assertEqual(other.search('fork')['matches'],[])
+    def test_permissions_query_syntax_and_limit(self):
+        self.write(['literal OR phrase']);self.write(['literal second conversation']);self.index.sync()
+        self.assertEqual(self.index.path.stat().st_mode&0o777,0o600)
+        self.assertEqual(self.index.path.parent.stat().st_mode&0o777,0o700)
+        result=self.index.search('literal',1);self.assertEqual(len(result['matches']),1);self.assertTrue(result['more'])
+        self.assertEqual(self.matches('missing OR literal'),[])
+        self.matches('"literal"');self.matches('literal*')
+    def test_claude_skips_thinking_and_sidechains(self):
+        index=NativeSearchIndex(self.cache,self.home,'claude');self.addCleanup(index.close)
+        cid=str(uuid.uuid4());folder=self.home/'projects'/'workspace';folder.mkdir(parents=True)
+        base=dict(type='assistant',sessionId=cid,cwd=self.cwd)
+        rows=[{**base,'message':{'role':'assistant','content':[{'type':'thinking','thinking':'THINKING_SENTINEL'},{'type':'text','text':'Visible Claude discussion'}]}},
+              {**base,'isSidechain':True,'message':{'role':'assistant','content':'SIDECHAIN_SENTINEL'}}]
+        (folder/(cid+'.jsonl')).write_text(''.join(json.dumps(r)+'\n' for r in rows))
+        index.sync();self.assertEqual(index.search('Visible')['matches'][0]['cid'],cid)
+        self.assertEqual(index.search('THINKING_SENTINEL')['matches'],[]);self.assertEqual(index.search('SIDECHAIN_SENTINEL')['matches'],[])
+    def test_malformed_text_block_does_not_poison_visible_history(self):
+        path,cid=self.write(['visible before'])
+        row=self.message('visible after')
+        row['payload']['content'].insert(0,{'type':'output_text','text':{'invalid':'not a string'}})
+        with path.open('a') as f:f.write(json.dumps(row)+'\n')
+        self.index.sync();self.assertEqual(self.matches('visible after')[0]['cid'],cid)
+    def test_large_image_caption_is_searchable_without_indexing_image_data(self):
+        index=NativeSearchIndex(self.cache,self.home,'claude');self.addCleanup(index.close)
+        cid=str(uuid.uuid4());folder=self.home/'projects'/'large-image';folder.mkdir(parents=True)
+        row={'type':'user','sessionId':cid,'cwd':self.cwd,'message':{'role':'user','content':[{'type':'image','source':{'data':'x'*(3*1024*1024)}},{'type':'text','text':'Large image caption needle'}]}}
+        (folder/(cid+'.jsonl')).write_text(json.dumps(row)+'\n')
+        index.sync(seconds=10);self.assertEqual(index.search('caption needle')['matches'][0]['cid'],cid)
+        self.assertLess(index.path.stat().st_size,100000)
+    def test_oversized_entry_does_not_hide_following_messages(self):
+        path,cid=self.write(['x'*(11*1024*1024),'following sentinel'])
+        for _ in range(10):
+            state=self.index.sync(byte_budget=1024,seconds=10)
+            if state['complete']:break
+        self.assertTrue(state['complete']);self.assertEqual(state['oversized_entries'],1)
+        self.assertEqual(self.matches('following sentinel')[0]['cid'],cid)
+    def test_invalid_header_finishes_with_an_issue(self):
+        path,cid=self.write(['visible']);path.write_text('{}\n')
+        state=self.index.sync();self.assertTrue(state['complete']);self.assertTrue(state['issues'])
+    def test_concurrent_incremental_writers_do_not_duplicate_messages(self):
+        self.write(['concurrent needle']*100)
+        def worker():
+            index=NativeSearchIndex(self.cache,self.home,'codex')
+            try:
+                for _ in range(200):
+                    if index.sync(byte_budget=500,seconds=1)['complete']:break
+            finally:index.close()
+        with ThreadPoolExecutor(max_workers=3) as pool:list(pool.map(lambda _:worker(),range(3)))
+        self.assertEqual(self.index.db.execute('select count(*) from messages').fetchone()[0],100)
+        self.assertEqual(len(self.matches('concurrent')),1)
+    def test_future_cache_version_is_preserved(self):
+        other=NativeSearchIndex(self.cache,self.root/'future','codex');path=other.path
+        other.db.execute('PRAGMA user_version=99');other.close()
+        with self.assertRaisesRegex(ValueError,'unsupported version'):NativeSearchIndex(self.cache,self.root/'future','codex')
+        with closing(sqlite3.connect(path)) as db:self.assertEqual(db.execute('PRAGMA user_version').fetchone()[0],99)
+
+if __name__=='__main__':unittest.main()

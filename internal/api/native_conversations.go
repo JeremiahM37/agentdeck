@@ -21,6 +21,9 @@ var nativeConversationsScript string
 //go:embed scripts/native_identity.py
 var nativeIdentityScript string
 
+//go:embed scripts/native_records.py
+var nativeRecordsScript string
+
 func (s *Server) nativeConversationData(r *http.Request, row *store.Session, cid string) (map[string]json.RawMessage, error) {
 	if row.Agent != "codex" && row.Agent != "claude" {
 		return nil, fmt.Errorf("native history is supported for Claude and Codex; use terminal history for this agent")
@@ -52,7 +55,7 @@ func (s *Server) nativeConversationData(r *http.Request, row *store.Session, cid
 	if row.EndedAt == nil && row.ArchivedAt == nil {
 		name, identity = row.TmuxSession, row.TrackingIdentity
 	}
-	cmd := prefix + "python3 -c " + shellq.Quote(nativeIdentityScript+"\n"+nativeConversationsScript) + " " + shellq.Quote(row.Agent) + " " + shellq.Quote(row.Workdir) + " " + shellq.Quote(cid) + " " + shellq.Quote(r.URL.Query().Get("before")) + " " + shellq.Quote(name) + " " + shellq.Quote(identity)
+	cmd := prefix + "python3 -c " + shellq.Quote(nativeRecordsScript+"\n"+nativeIdentityScript+"\n"+nativeConversationsScript) + " " + shellq.Quote(row.Agent) + " " + shellq.Quote(row.Workdir) + " " + shellq.Quote(cid) + " " + shellq.Quote(r.URL.Query().Get("before")) + " " + shellq.Quote(name) + " " + shellq.Quote(identity)
 	result, err := ex.Run(r.Context(), cmd, executor.RunOpts{Timeout: 30})
 	var out map[string]json.RawMessage
 	if err != nil || json.Unmarshal([]byte(result.Stdout), &out) != nil {
