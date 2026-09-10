@@ -478,9 +478,7 @@ func (m *Manager) Kill(ctx context.Context, id int64) error {
 // watching a terminal the operator already had open — so letting go of one has
 // to be non-destructive too, or "add it to the board" quietly becomes "hand its
 // life over to the board".
-func (m *Manager) Release(id int64) error {
-	m.lifecycleMu.Lock()
-	defer m.lifecycleMu.Unlock()
+func (m *Manager) Release(ctx context.Context, id int64) error {
 	sess, err := m.DB.Session(id)
 	if err != nil {
 		return err
@@ -488,9 +486,41 @@ func (m *Manager) Release(id int64) error {
 	if sess.EndedAt != nil {
 		return nil
 	}
-	now := store.Now()
-	if err := m.DB.Update("sessions", sess.ID, map[string]any{
-		"status": StatusIdle, "ended_at": now, "updated_at": now}); err != nil {
+	identity := sess.TrackingIdentity
+	// Old live records can identify the tmux session they are tracking now.
+	// Already-released records never enter this path. Offline capture is optional:
+	// stopping tracking must remain possible even when SSH is unavailable.
+	if identity == "" && sess.Origin == "discovered" && sess.Status != StatusDead {
+		if _, ex, err := m.resolve(id); err == nil {
+			captureCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
+			identity = captureTrackingIdentity(captureCtx, ex, sess.TmuxSession)
+			cancel()
+		}
+	}
+	err = func() error {
+		m.lifecycleMu.Lock()
+		defer m.lifecycleMu.Unlock()
+		current, err := m.DB.Session(id)
+		if err != nil {
+			return err
+		}
+		if current.EndedAt != nil {
+			return nil
+		}
+		if current.TargetID != sess.TargetID || current.TmuxSession != sess.TmuxSession {
+			return fmt.Errorf("session moved while stopping tracking; retry")
+		}
+		if current.TrackingIdentity != "" {
+			identity = current.TrackingIdentity
+		}
+		status := StatusIdle
+		if current.Status == StatusDead {
+			status = StatusDead
+		}
+		now := store.Now()
+		return m.DB.Update("sessions", id, map[string]any{"status": status, "ended_at": now, "updated_at": now, "tracking_identity": identity})
+	}()
+	if err != nil {
 		return err
 	}
 	m.Bus.Publish("board", "session_dismissed", map[string]any{"id": id})

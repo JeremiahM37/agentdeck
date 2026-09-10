@@ -456,7 +456,7 @@ func (s *Server) deleteSession(w http.ResponseWriter, r *http.Request) {
 		err = s.Sessions.Kill(r.Context(), row.ID)
 	default:
 		// adopted and no explicit kill: let go of it, leave it running
-		err = s.Sessions.Release(row.ID)
+		err = s.Sessions.Release(r.Context(), row.ID)
 	}
 	if err != nil {
 		respondErr(w, err)

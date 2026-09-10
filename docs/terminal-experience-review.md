@@ -50,7 +50,7 @@ in this document is not a substitute for that evidence.
 | Find, group, monitor, attach, detach, reconnect | Live dashboard + PTY tests; browser real tmux resize/reconnect/dual-client tests. Broader multi-session and saved-view UX comparison remains. |
 | Review ongoing work | Live staged/working review implemented for TUI and web; real Git API tests cover renames, binary/untracked files, path boundaries and unchanged index; Playwright covers desktop/mobile, stale responses and retained attachment; actual SSH target proof passed. Full rollout verification is recorded in shared memory. |
 | Branch a conversation / isolated parallel work | Native Claude/Codex workspace conversation picker, paginated reader, and exact-ID fork implemented in TUI/web. API, real tmux/PTY and mobile browser tests cover boundaries, unchanged original history and explicit confirmation. Installed Codex fork persisted a distinct ID; installed Claude loaded saved history with its native fork flag (no new turn). Fresh interactive worktree creation/removal now exists in both interfaces, with durable allocation, ownership checks, retained branches, local/SSH Git proof and mobile/desktop/PTy tests. Native forks still share their original workspace; automatic terminal-to-native identity and combined fork/isolation remain gaps. |
-| Organize large fleets | Named group paths now persist across projects/targets and inherit on forks/handoffs. TUI and web have nested collapse/counts; terminal search reveals folded children and selection/collapse survive refresh. Web keeps per-tab display state. TUI grouping is remembered per section/server and folded named groups survive restarts, with real PTY restart coverage. Newly adopted sessions can restore their original record after stopping tracking, gated by a persistent tmux identity marker; real API, PTY and mobile/desktop tests cover retained metadata, concurrent requests and reused-name rejection. Legacy records still require explicit discovery. Profile configuration, archive/restart and global conversation search remain. |
+| Organize large fleets | Named group paths now persist across projects/targets and inherit on forks/handoffs. TUI and web have nested collapse/counts; terminal search reveals folded children and selection/collapse survive refresh. Web keeps per-tab display state. TUI grouping is remembered per section/server and folded named groups survive restarts, with real PTY restart coverage. Adopted sessions can restore their original record after stopping tracking, gated by a persistent tmux identity marker; real API, PTY and mobile/desktop tests cover retained metadata, concurrent requests and reused-name rejection. Unmarked live records capture identity when released; already-released records without identity still require explicit discovery. Profile configuration, archive/restart and global conversation search remain. |
 | Agent setup | Custom commands exist; named agent settings, MCP/skills setup, installed-agent discovery and lifecycle need comparison with current upstream. |
 | Workspace setup | Task and single-repository interactive worktrees run on local/SSH targets. Multi-repository interactive workspaces and repo setup hooks need audit/implementation. |
 | Sandbox choices | Existing Proxmox sandbox path is not equivalent to portable Docker/Podman sandboxing; portability gap remains. |
@@ -83,8 +83,19 @@ record, and press Enter (or `m`) to choose **Track again**. For scripts use
 
 Restoration retains the session ID, name, project, group, workdir and handoff
 links. It does not start, restart or interrupt an agent. A random tmux session
-marker captured during adoption must still match. Reused names and sessions
-already tracked through another record are rejected. Records created before
+marker captured during adoption (or while releasing an older live record) must still match. Reused names and sessions
+already tracked through another record are rejected. Records already released without
 identity capture cannot be restored automatically; use **Find running sessions**
 (`f` in the console) to adopt explicitly. This operation restores monitoring of
 a running process; recovery of a stopped native agent conversation is separate.
+
+SSH time limits cover connection setup, handshake, channel opening and command
+execution. A timed-out pooled connection is discarded, and later requests
+reconnect. Other in-flight operations on that connection may need retrying; the
+persistent tmux agents remain separate from these control connections. Real SSH
+protocol tests cover stalled handshake/channel/command, a stalled cached
+connection, reconnection and concurrent commands under the race detector.
+
+Capturing identity while releasing an older live record is best effort and
+limited to three seconds. An unreachable target still leaves tracking normally;
+an already-released record never receives a guessed identity later.

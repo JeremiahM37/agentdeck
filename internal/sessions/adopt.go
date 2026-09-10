@@ -77,8 +77,6 @@ var ErrAlreadyAdopted = errors.New("this tmux session is already tracked")
 
 // Adopt starts tracking an externally-started agent.
 func (m *Manager) Adopt(ctx context.Context, o AdoptOpts) (*store.Session, error) {
-	m.lifecycleMu.Lock()
-	defer m.lifecycleMu.Unlock()
 	if o.TmuxSession == "" {
 		return nil, fmt.Errorf("a tmux session name is required")
 	}
@@ -112,25 +110,40 @@ func (m *Manager) Adopt(ctx context.Context, o AdoptOpts) (*store.Session, error
 	if agent == "" {
 		agent = "claude"
 	}
-	sess, err := m.DB.InsertSession(&store.Session{
-		ProjectID: o.ProjectID, TargetID: o.TargetID, Name: name, Agent: agent,
-		Model: o.Model, Workdir: o.Workdir, TmuxSession: o.TmuxSession,
-		Status: StatusIdle, Origin: "discovered",
-	})
+	identity := captureTrackingIdentity(ctx, ex, o.TmuxSession)
+	var sess *store.Session
+	err = func() error {
+		m.lifecycleMu.Lock()
+		defer m.lifecycleMu.Unlock()
+		if _, err := m.DB.SessionByTmux(o.TargetID, o.TmuxSession); err == nil {
+			return ErrAlreadyAdopted
+		} else if !errors.Is(err, store.ErrNotFound) {
+			return err
+		}
+		sess, err = m.DB.InsertSession(&store.Session{
+			ProjectID: o.ProjectID, TargetID: o.TargetID, Name: name, Agent: agent,
+			Model: o.Model, Workdir: o.Workdir, TmuxSession: o.TmuxSession,
+			Status: StatusIdle, Origin: "discovered",
+		})
+		if err != nil {
+			return err
+		}
+		if created, activity, ok := ParseTimes(r.Stdout); ok {
+			fields := map[string]any{"created_at": created}
+			if activity > 0 {
+				fields["last_activity_at"] = activity
+			}
+			m.DB.Update("sessions", sess.ID, fields)
+		}
+		if identity != "" {
+			if err := m.DB.Update("sessions", sess.ID, map[string]any{"tracking_identity": identity}); err != nil {
+				return err
+			}
+		}
+		return nil
+	}()
 	if err != nil {
 		return nil, err
-	}
-	if created, activity, ok := ParseTimes(r.Stdout); ok {
-		fields := map[string]any{"created_at": created}
-		if activity > 0 {
-			fields["last_activity_at"] = activity
-		}
-		m.DB.Update("sessions", sess.ID, fields)
-	}
-	if identity := captureTrackingIdentity(ctx, ex, o.TmuxSession); identity != "" {
-		if err := m.DB.Update("sessions", sess.ID, map[string]any{"tracking_identity": identity}); err != nil {
-			return nil, err
-		}
 	}
 	// pull its state straight away so the card is truthful the moment it appears
 	m.Poll(ctx)

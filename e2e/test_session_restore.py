@@ -1,6 +1,10 @@
 """Recovery uses real tmux identity and retains the original durable record."""
 import concurrent.futures
 import json
+import sqlite3
+import socket
+import threading
+import time
 import subprocess
 import urllib.error
 import urllib.request
@@ -92,3 +96,55 @@ def test_console_restores_original_session_without_starting_a_process(real_termi
         d.quit()
         subprocess.run(['tmux','has-session','-t','=terminal-test'],env=t['env'],check=True)
     finally:d.close()
+
+
+@pytest.mark.parametrize('offline',[False,True],ids=['legacy-live','unreachable-target'])
+def test_legacy_live_release_captures_identity_without_blocking_offline(real_terminal,offline):
+    t=real_terminal;path=f"/sessions/{t['id']}"
+    # Simulate a record created by the pre-identity version, on real tmux.
+    with sqlite3.connect(t['env']['AGENTDECK_DB']) as db:
+        db.execute("UPDATE sessions SET tracking_identity='' WHERE id=?",(t['id'],))
+    subprocess.run(['tmux','set-option','-u','-t','=terminal-test:','@agentdeck-tracking-identity'],env=t['env'],check=True)
+    if offline:
+        subprocess.run(['tmux','new-session','-d','-s','recovery-unrelated','-c',str(t['root']),'bash --norc'],env=t['env'],check=True)
+        other=t['api']('/sessions/adopt',{'target_id':t['target_id'],'tmux_session':'recovery-unrelated','workdir':str(t['root']),'name':'Unrelated healthy session','agent':'claude'})
+        key=t['root']/'recovery-key'
+        subprocess.run(['ssh-keygen','-q','-t','ed25519','-N','','-f',str(key)],check=True)
+        listener=socket.socket();listener.bind(('127.0.0.1',0));listener.listen();listener.settimeout(6)
+        finished=threading.Event();accepted=threading.Event()
+        def stall_handshake():
+            try:
+                connection,_=listener.accept();accepted.set()
+                with connection:finished.wait(6)
+            except OSError:pass
+        thread=threading.Thread(target=stall_handshake,daemon=True);thread.start()
+        target=t['api']('/targets',{'name':'unreachable-recovery','kind':'ssh','host':'127.0.0.1','port':listener.getsockname()[1],'user':'nobody','key_path':str(key)})
+        with sqlite3.connect(t['env']['AGENTDECK_DB']) as db:
+            db.execute('UPDATE sessions SET target_id=? WHERE id=?',(target['id'],t['id']))
+    start=time.monotonic()
+    try:
+        if offline:
+            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+                stalled=pool.submit(request,t,'DELETE',path)
+                assert accepted.wait(2)
+                healthy_start=time.monotonic()
+                assert request(t,'DELETE',f"/sessions/{other['id']}")[0]==200
+                assert time.monotonic()-healthy_start<1.5
+                assert stalled.result(timeout=5)[0]==200
+        else:
+            assert request(t,'DELETE',path)[0]==200
+    finally:
+        if offline:finished.set();listener.close();thread.join(timeout=7)
+    assert time.monotonic()-start<6
+    released=t['api'](path);assert released['ended_at'] is not None
+    assert released['can_restore']==(not offline)
+    if not offline:
+        assert request(t,'POST',path+'/restore',{})[0]==200
+        assert t['api'](path)['id']==t['id']
+    else:
+        # Returning later must not manufacture identity on an already released row.
+        with sqlite3.connect(t['env']['AGENTDECK_DB']) as db:
+            db.execute('UPDATE sessions SET target_id=? WHERE id=?',(t['target_id'],t['id']))
+        assert request(t,'DELETE',path)[0]==200
+        assert request(t,'POST',path+'/restore',{})[0]==409
+    subprocess.run(['tmux','has-session','-t','=terminal-test'],env=t['env'],check=True)
