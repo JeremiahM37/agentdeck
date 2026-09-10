@@ -98,6 +98,7 @@ type dashboard struct {
 	query                          textinput.Model
 	searching                      bool
 	review                         *codeReview
+	nativeSearch                   *nativeSearchState
 	native                         *nativeSelection
 	grouping                       int
 	groupingBySection              map[string]int
@@ -362,6 +363,16 @@ func (m *dashboard) switchSection(i int) tea.Cmd {
 }
 func (m *dashboard) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch v := msg.(type) {
+	case nativeSearchMsg:
+		return m, m.receiveNativeSearch(v)
+	case nativeSearchReadMsg:
+		m.receiveNativeSearchRead(v)
+		return m, nil
+	case nativeSearchTick:
+		if m.nativeSearch == v.owner && v.generation == v.owner.generation && !v.owner.data.Done && !v.owner.starting {
+			return m, m.pollNativeSearch(v.owner)
+		}
+		return m, nil
 	case nativeListMsg:
 		return m, m.nativePicker(v)
 	case reviewMsg:
@@ -371,6 +382,7 @@ func (m *dashboard) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.width = v.Width
 		m.height = v.Height
 		m.layout()
+		m.renderNativeSearch()
 		if r := m.review; r != nil && !r.loading && r.failure == "" {
 			offset := r.viewport.YOffset
 			m.receiveReview(reviewMsg{owner: r, generation: r.generation, data: r.data})
@@ -474,6 +486,9 @@ func (m *dashboard) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, tea.Batch(cmds...)
 		}
+		if m.nativeSearch != nil {
+			return m, m.updateNativeSearch(v)
+		}
 		if v.String() == "ctrl+c" {
 			return m, tea.Quit
 		}
@@ -528,6 +543,8 @@ func (m *dashboard) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, tea.Quit
 		case "G":
 			return m, m.groupForm()
+		case "F":
+			return m, m.nativeSearchForm()
 		case "H":
 			return m, m.savedConversations()
 		case "O":
@@ -648,6 +665,11 @@ func (m *dashboard) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, m.uploadForm()
 		}
 	case tea.MouseMsg:
+		if m.nativeSearch != nil {
+			var cmd tea.Cmd
+			m.nativeSearch.viewport, cmd = m.nativeSearch.viewport.Update(v)
+			return m, cmd
+		}
 		if m.form != nil || m.menu || m.help || m.pending != nil {
 			return m, nil
 		}
@@ -730,6 +752,9 @@ var chosen = lipgloss.NewStyle().Foreground(lipgloss.Color("255")).Background(li
 
 func clip(s string, w int) string { return ansi.Truncate(s, max(0, w), "…") }
 func (m *dashboard) View() string {
+	if m.nativeSearch != nil {
+		return m.nativeSearchView()
+	}
 	if m.review != nil {
 		return m.reviewView()
 	}
@@ -835,7 +860,7 @@ func (m *dashboard) View() string {
 	if m.busy {
 		status = "Working… " + status
 	}
-	keys := " Enter attach · / search · n new · m actions · ? help · q quit"
+	keys := " Enter attach · / filter · F history search · n new · m actions · ? help · q quit"
 	if m.selectedGroup() != nil {
 		keys = " Enter fold · [ parent · ] expand · / search · ? help · q quit"
 	}
@@ -925,6 +950,7 @@ const dashboardHelp = ` Keyboard shortcuts
  n             New item         e        Rename   u Upload context
  m             All actions      f        Find and track running agents
  h             Full history     v        Review task diff
+ F             Search saved conversation text across targets
  H             Saved conversations / fork   O Earlier saved messages
  PgUp/PgDn     Scroll preview   Esc       Clear search / return to live preview
  z             Include ended sessions   A  Archive view

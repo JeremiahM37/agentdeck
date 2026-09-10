@@ -63,12 +63,14 @@ def test_native_search_reads_old_match_and_retains_terminal(page,real_terminal,w
 
 
 def test_native_search_progress_retry_cancel_and_close(page,real_terminal):
-    t=real_terminal;page.goto(t['url']);calls=[]
+    t=real_terminal;page.goto(t['url']);calls=[];expired=[False]
     result={'id':'test-job','query':'needle','done':False,'complete':False,'results':[], 'scopes':[{'id':'1','target':'remote','agent':'codex','state':'indexing','progress':{'documents':3,'pending_files':7,'issues':[],'oversized_entries':0}}]}
     def route(r):
         calls.append(r.request.method)
         if r.request.method=='POST':r.fulfill(json=result)
-        elif r.request.method=='DELETE':r.fulfill(json={**result,'done':True})
+        elif r.request.method=='DELETE':
+            if expired[0]:expired[0]=False;r.fulfill(status=404,json={'detail':'search expired'})
+            else:r.fulfill(json={**result,'done':True})
         else:r.fulfill(status=503,json={'detail':'temporarily offline'})
     page.route('**/api/conversation-search**',route)
     d=open_search(page);d.get_by_label('Conversation text').fill('needle');d.get_by_role('button',name='Search',exact=True).click()
@@ -76,6 +78,9 @@ def test_native_search_progress_retry_cancel_and_close(page,real_terminal):
     expect(d.get_by_role('button',name='Retry connection')).to_be_visible()
     d.locator('.ns-progress summary').click();expect(d.locator('.ns-progress')).to_contain_text('7 pending')
     d.get_by_role('button',name='Retry connection').click()
+    expired[0]=True
+    with page.expect_response(lambda r:r.request.method=='POST' and r.url.endswith('/api/conversation-search')):
+        d.get_by_role('button',name='Search',exact=True).click()
     d.get_by_role('button',name='Stop search').click()
     d.get_by_role('button',name='Close saved conversation search').click()
     page.wait_for_timeout(200)

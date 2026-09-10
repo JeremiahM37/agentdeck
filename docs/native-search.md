@@ -2,8 +2,7 @@
 
 The target-local index, exact-match reader and background HTTP API are implemented
 on the development branch. Web search is available from Sessions, the command
-palette and attached-terminal tools. The terminal dashboard integration remains
-unfinished. The deployed app still uses its existing workspace history picker.
+palette and attached-terminal tools. The terminal dashboard also supports search through the same API. The deployed app still uses its existing workspace history picker.
 
 `internal/api/scripts/native_records.py` supplies the shared visible-message
 parser used by the history reader and search index. Search includes user,
@@ -97,6 +96,19 @@ fetch failure. Closing cancels indexing, including a search whose start response
 arrives after the dialog closes. Late poll/reader responses cannot reopen it.
 Desktop/mobile dimensions follow the visual viewport when the keyboard opens.
 
+## Terminal dashboard search (development branch)
+
+Press `F` to search saved conversation text, using target/agent choices in the
+form. Submit with Ctrl-S. Arrow keys select matches, Enter opens matching context,
+`p` shows per-profile progress and issues, `s` stops indexing, `r` retries, and
+`R` explicitly rebuilds the index. `n` opens a new query. Esc returns from the
+reader/progress view to results, then back to the unchanged dashboard selection.
+Mouse and page scrolling stay inside search and progress updates preserve the
+reading position. Native text is stripped of terminal control sequences before
+rendering. Late replies cannot replace a newer query or reopen a closed view.
+Retrying an expired job works in both interfaces; cancellation uses a bounded
+request before quitting the dashboard.
+
 ## Evidence
 
 Twenty-four index and reader tests cover old text beyond the reader's recent window, long text,
@@ -125,15 +137,20 @@ Four browser cases cover actual saved histories outside tracked workspaces,
 desktop/phone keyboard navigation and reading, retained terminal identity,
 source-change rejection/rebuild, network retry/stop, direct entry points and
 closing while the start request is pending. Desktop and phone reader screenshots
-were inspected. Full regression verification is running before this checkpoint.
+were inspected. The first full web run reached100% but exceeded its600-second suite allowance;
+verify reported FAIL5/6. The overall allowance is now780seconds, retaining
+individual test deadlines, and a full rerun is required.
+Five terminal unit tests passed with the race detector, including stale replies,
+selection stability, control-sequence removal, resizing, expired-job retry and
+mouse/progress scroll preservation. A real PTY test passed through query/filter
+entry, old-message reading, rebuild after source change, dashboard return and
+terminal mode restoration.
 
 ## Remaining integration
 
-- Add the corresponding terminal-dashboard search form, progress, result list
-  and exact-context reader. Web browsing is implemented; broader context
-  pagination/latest and validated native fork actions remain for both interfaces.
+- Add broader context pagination/latest and validated native fork actions to
+  the global result reader in both interfaces.
 - Support native histories outside an existing session's recorded workspace
   through validated provider metadata, rather than accepting arbitrary file paths.
-- Expose the API's full-rebuild/cache-reset operation in the terminal interface.
 - Test actual local/SSH flows, large histories, failures and desktop/mobile UX;
   run final-head verification before deployment.

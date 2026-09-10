@@ -74,7 +74,7 @@ async function request(url, options = {}) {
     try {
       message = (await r.json()).detail || message;
     } catch {}
-    throw Error(message);
+    const error = Error(message); error.status = r.status; throw error;
   }
   return r;
 }

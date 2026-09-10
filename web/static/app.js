@@ -57,7 +57,7 @@ async function api(path, opts = {}) {
   if (!r.ok) {
     let msg = r.statusText;
     try { msg = (await r.json()).detail || msg; } catch {}
-    throw new Error(msg);
+    const error = new Error(msg); error.status = r.status; throw error;
   }
   return r.status === 204 ? null : r.json();
 }

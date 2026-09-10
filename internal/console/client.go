@@ -15,6 +15,13 @@ import (
 	"time"
 )
 
+type HTTPError struct {
+	Status int
+	Detail string
+}
+
+func (e *HTTPError) Error() string { return e.Detail }
+
 type Client struct {
 	Base, Token string
 	HTTP        *http.Client
@@ -64,7 +71,7 @@ func (c *Client) Request(method, path string, body io.Reader, contentType string
 		if v.Detail == "" {
 			v.Detail = res.Status
 		}
-		return nil, fmt.Errorf("%s", v.Detail)
+		return nil, &HTTPError{Status: res.StatusCode, Detail: v.Detail}
 	}
 	return data, nil
 }

@@ -73,7 +73,7 @@ export function openNativeSearch({api, targets = []}) {
     $('.ns-stop').hidden = true; $('.ns-retry').hidden = true;
     $('.ns-status').textContent = 'Starting search…';
     try {
-      if (previous && !lastResult?.done) await cancel(previous);
+      if (previous && !lastResult?.done) { try { await cancel(previous); } catch (error) { if (error.status !== 404) throw error; } }
       if (closed || version !== generation) return;
       const result = await api('/conversation-search', {method:'POST', body:{query:$('.ns-query').value, target_id:Number($('.ns-target').value) || undefined, agent:$('.ns-agent').value || undefined, reset}});
       if (closed || version !== generation) { cancel(result.id).catch(() => {}); return; }
