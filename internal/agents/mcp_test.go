@@ -99,8 +99,8 @@ func TestInteractiveMCPPrepareRejectsSymlinkAndPublishDoesNotClobber(t *testing.
 	if err := os.WriteFile(tmp, []byte("agentdeck"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	if err := exec.Command("bash", "-c", InteractiveMCPPublishCommand(root, rel)).Run(); err != nil {
-		t.Fatal(err)
+	if err := exec.Command("bash", "-c", InteractiveMCPPublishCommand(root, rel)).Run(); err == nil {
+		t.Fatal("existing foreign config must make publication fail")
 	}
 	got, _ := os.ReadFile(dest)
 	if string(got) != "foreign" {
@@ -119,11 +119,31 @@ func TestInteractiveMCPPrepareRejectsSymlinkAndPublishDoesNotClobber(t *testing.
 	if err := os.WriteFile(tmp, []byte("agentdeck"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	if err := exec.Command("bash", "-c", InteractiveMCPPublishCommand(root, rel)).Run(); err != nil {
-		t.Fatal(err)
+	if err := exec.Command("bash", "-c", InteractiveMCPPublishCommand(root, rel)).Run(); err == nil {
+		t.Fatal("symlink config must make publication fail")
 	}
 	got, _ = os.ReadFile(outside)
 	if string(got) != "outside" {
 		t.Fatalf("symlink target was clobbered: %q", got)
+	}
+	foreignDir := filepath.Join(root, "foreign-dir")
+	if err := os.Mkdir(foreignDir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(dest); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(foreignDir, dest); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(tmp, []byte("agentdeck"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := exec.Command("bash", "-c", InteractiveMCPPublishCommand(root, rel)).Run(); err == nil {
+		t.Fatal("symlink-to-directory config must make publication fail")
+	}
+	entries, _ := os.ReadDir(foreignDir)
+	if len(entries) != 0 {
+		t.Fatalf("foreign directory changed: %v", entries)
 	}
 }

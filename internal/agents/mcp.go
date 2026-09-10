@@ -68,13 +68,16 @@ func CodexMCPArgs(mcp map[string]any) ([]string, error) {
 func InteractiveMCPPrepareCommand(workdir, rel string) string {
 	dir := workdir + "/" + strings.TrimSuffix(rel, "/mcp.json")
 	parent := workdir + "/.agentdeck/interactive"
-	return "for p in " + shellQuote(workdir+"/.agentdeck") + " " + shellQuote(parent) + "; do if [ -L \"$p\" ] || { [ -e \"$p\" ] && [ ! -d \"$p\" ]; }; then exit 73; fi; done; mkdir -p " + shellQuote(parent) + " && chmod 700 " + shellQuote(parent) + " && mkdir " + shellQuote(dir) + " && chmod 700 " + shellQuote(dir)
+	return "for p in " + shellQuote(workdir+"/.agentdeck") + " " + shellQuote(parent) + "; do if [ -L \"$p\" ] || { [ -e \"$p\" ] && [ ! -d \"$p\" ]; }; then exit 73; fi; done; mkdir -p " + shellQuote(parent) + " && mkdir " + shellQuote(dir) + " && chmod 700 " + shellQuote(dir)
 }
 
 func InteractiveMCPPublishCommand(workdir, rel string) string {
 	dir := workdir + "/" + strings.TrimSuffix(rel, "/mcp.json")
 	tmp := dir + "/.mcp.tmp"
-	return "chmod 600 " + shellQuote(tmp) + " && mv -n " + shellQuote(tmp) + " " + shellQuote(workdir+"/"+rel)
+	// A hard link is atomic and fails for every existing destination, including
+	// symlinks and directories; unlike mv -n it cannot silently publish inside a
+	// foreign symlink-to-directory tree.
+	return "chmod 600 " + shellQuote(tmp) + " && ln -T " + shellQuote(tmp) + " " + shellQuote(workdir+"/"+rel) + " && rm " + shellQuote(tmp)
 }
 
 func tomlKey(s string) string {
