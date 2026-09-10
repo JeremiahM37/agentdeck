@@ -293,7 +293,21 @@ func (m *dashboard) updatePreview() {
 			content = pretty(r)
 		}
 	}
-	m.preview.SetContent(ansi.Wrap(clean(content), m.preview.Width, ""))
+	rendered := ansi.Wrap(clean(content), m.preview.Width, "")
+	if m.detailTitle == "Diff" {
+		lines := strings.Split(rendered, "\n")
+		for i, line := range lines {
+			if strings.HasPrefix(line, "+") {
+				lines[i] = lipgloss.NewStyle().Foreground(lipgloss.Color("114")).Render(line)
+			} else if strings.HasPrefix(line, "-") {
+				lines[i] = lipgloss.NewStyle().Foreground(lipgloss.Color("203")).Render(line)
+			} else if strings.HasPrefix(line, "@@") {
+				lines[i] = accent.Render(line)
+			}
+		}
+		rendered = strings.Join(lines, "\n")
+	}
+	m.preview.SetContent(rendered)
 	if bottom && m.detailKey == "" {
 		m.preview.GotoBottom()
 	} else {
@@ -365,12 +379,15 @@ func (m *dashboard) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.form = nil
 		m.pending = nil
 		m.notice = v.label + " completed"
-		return m, m.refresh()
+		return m, tea.Batch(m.refresh(), m.references())
 	case loadedFormMsg:
 		m.busy = false
 		if v.err != nil {
 			m.notice = v.err.Error()
 			return m, nil
+		}
+		if v.path == "/settings" {
+			return m, m.notificationForm(v.data)
 		}
 		var body any
 		if e := json.Unmarshal(v.data, &body); e != nil {
@@ -637,6 +654,9 @@ func (m *dashboard) View() string {
 	connection := "Connecting…"
 	if !m.updated.IsZero() {
 		connection = "LIVE · " + m.updated.Format("15:04:05")
+		if time.Since(m.updated) > 10*time.Second {
+			connection = "STALE · fetching"
+		}
 	}
 	if m.failure != "" {
 		connection = "OFFLINE · retrying"
@@ -757,7 +777,17 @@ func (m *dashboard) listView(height int) string {
 		if i == m.selected {
 			line = chosen.Render(line + strings.Repeat(" ", max(0, w-ansi.StringWidth(line))))
 		}
-		lines = append(lines, line, muted.Render(clip("  "+m.group(r)+" · "+s+" · "+str(r["agent"]), w)), "")
+		color := "245"
+		switch s {
+		case "running", "starting":
+			color = "114"
+		case "waiting", "pending", "review":
+			color = "214"
+		case "failed", "dead":
+			color = "203"
+		}
+		meta := muted.Render("  "+m.group(r)+" · ") + lipgloss.NewStyle().Foreground(lipgloss.Color(color)).Render(s) + muted.Render(" · "+str(r["agent"]))
+		lines = append(lines, line, clip(meta, w), "")
 	}
 	return strings.Join(lines, "\n")
 }

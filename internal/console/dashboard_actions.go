@@ -61,6 +61,8 @@ func (m *dashboard) choose(a dashboardAction) tea.Cmd {
 	case "rename":
 		return m.renameForm()
 	case "edit":
+		return m.editCommonForm()
+	case "advanced":
 		return m.editForm()
 	case "send":
 		return m.sendForm()
@@ -103,7 +105,7 @@ func (m *dashboard) actions() []dashboardAction {
 	var actions []dashboardAction
 	switch kind {
 	case "sessions":
-		actions = []dashboardAction{op("Attach", "attach"), op("Companion shell", "shell"), op("Send message", "send"), op("Upload context file", "upload"), op("Read history", "history"), op("Browse files", "files"), op("Rename", "rename"), op("Edit advanced fields", "edit"), op("Request handoff", "handoff"), read("Handoff summaries", "/wraps")}
+		actions = []dashboardAction{op("Attach", "attach"), op("Companion shell", "shell"), op("Send message", "send"), op("Upload context file", "upload"), op("Read history", "history"), op("Browse files", "files"), op("Rename", "rename"), op("Move / edit session", "edit"), op("Request handoff", "handoff"), read("Handoff summaries", "/wraps")}
 		actions = append(actions, dashboardAction{Label: "Interrupt agent", Method: "POST", Path: path + "/send", Body: map[string]any{"key": "C-c"}, Warning: "Send Ctrl-c to this session's current command?"})
 	case "tasks":
 		actions = []dashboardAction{op("Attach to attempt", "attach"), op("Companion shell", "shell"), op("Send message", "send"), op("Upload context file", "upload"), op("Review diff", "diff"), read("Messages", "/messages"), read("Events", "/events"), post("Dispatch in worktree", "/dispatch"), post("Take over as interactive session", "/takeover"), op("Request changes", "followup"), op("Commit changes", "commit"), post("Mark complete", "/complete"), op("Edit task", "edit")}
@@ -120,6 +122,7 @@ func (m *dashboard) actions() []dashboardAction {
 		actions = []dashboardAction{{Label: "Approve", Method: "POST", Path: path + "/decision", Body: map[string]any{"decision": "approved"}, Warning: "Allow the selected pending tool request?"}, {Label: "Deny", Method: "POST", Path: path + "/decision", Body: map[string]any{"decision": "denied"}}}
 	}
 	if kind != "approvals" {
+		actions = append(actions, op("Edit advanced fields (JSON)", "advanced"))
 		warning := "Delete this " + strings.TrimSuffix(kind, "s") + "?"
 		label := "Delete"
 		if kind == "sessions" {
@@ -599,4 +602,75 @@ func (m *dashboard) createAndDispatch(body map[string]any) tea.Cmd {
 		}
 		return resultMsg{label: label, data: data}
 	}
+}
+
+func (m *dashboard) editCommonForm() tea.Cmd {
+	r := m.current()
+	if r == nil {
+		return nil
+	}
+	kind := sections[m.section]
+	path := "/" + kind + "/" + id(r)
+	var fields []field
+	add := func(key, label string, multi, required bool) {
+		fields = append(fields, field{Key: key, Label: label, Value: str(r[key]), Multiline: multi, Required: required})
+	}
+	switch kind {
+	case "sessions":
+		add("name", "Session name", false, true)
+		fields = append(fields, optionField("project_id", "Project", str(r["project_id"]), options(m.projects, "Unassigned"), false))
+		add("model", "Model (applies at next launch)", false, false)
+	case "tasks":
+		add("title", "Task title", false, true)
+		add("prompt", "Prompt", true, true)
+		add("model", "Model", false, false)
+		add("base_branch", "Base branch", false, false)
+	case "routines":
+		add("name", "Routine name", false, true)
+		add("prompt", "Prompt", true, true)
+		add("schedule", "Schedule (blank for manual)", false, false)
+		add("model", "Model", false, false)
+		fields = append(fields, boolField("enabled", "Enabled", r["enabled"] != false), boolField("dispatch", "Dispatch generated tasks", r["dispatch"] != false))
+	case "projects":
+		add("name", "Project name", false, true)
+		add("default_base_branch", "Base branch", false, true)
+		add("verify_cmd", "Verification command", false, false)
+	case "targets":
+		add("name", "Target name", false, true)
+		add("host", "Host / SSH alias", false, false)
+		add("user", "SSH user", false, false)
+		add("port", "SSH port", false, true)
+		add("key_path", "SSH key path on server", false, false)
+		add("max_concurrent", "Concurrent agents", false, true)
+	default:
+		return nil
+	}
+	return m.openForm("Edit "+strings.TrimSuffix(kind, "s"), fields, func(body map[string]any) tea.Cmd {
+		for _, f := range fields {
+			if _, ok := body[f.Key]; !ok {
+				if f.Key == "project_id" {
+					body[f.Key] = nil
+				} else {
+					body[f.Key] = ""
+				}
+			}
+		}
+		return m.request("Edit "+strings.TrimSuffix(kind, "s"), "PATCH", path, body, false)
+	})
+}
+func (m *dashboard) notificationForm(data []byte) tea.Cmd {
+	var r row
+	if e := json.Unmarshal(data, &r); e != nil {
+		m.notice = e.Error()
+		return nil
+	}
+	fields := []field{{Key: "discord_webhook", Label: "Discord webhook", Value: str(r["discord_webhook"])}, {Key: "ntfy_server", Label: "ntfy server", Value: str(r["ntfy_server"])}, {Key: "ntfy_topic", Label: "ntfy topic", Value: str(r["ntfy_topic"])}}
+	return m.openForm("Notification settings", fields, func(body map[string]any) tea.Cmd {
+		for _, f := range fields {
+			if body[f.Key] == nil {
+				body[f.Key] = ""
+			}
+		}
+		return m.request("Save settings", "PUT", "/settings", body, false)
+	})
 }

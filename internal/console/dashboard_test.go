@@ -240,3 +240,36 @@ func TestDashboardPreviewDoesNotPadPastTerminalWidth(t *testing.T) {
 		t.Fatal("short list and preview unnecessarily truncated")
 	}
 }
+
+func TestDashboardNativeEditorsCanClearOptionalFields(t *testing.T) {
+	var got map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		json.NewDecoder(r.Body).Decode(&got)
+		fmt.Fprint(w, `{}`)
+	}))
+	defer srv.Close()
+	m := sampleDashboard()
+	m.client = New(srv.URL, "")
+	m.projects = []row{{"id": float64(8), "name": "Project"}}
+	m.current()["project_id"] = float64(8)
+	m.editCommonForm()
+	for i := range m.form.fields {
+		if m.form.fields[i].Key == "project_id" {
+			m.form.fields[i].Value = ""
+		}
+	}
+	m.form.index = 1
+	m.focusField()
+	cmd := m.updateForm(tea.KeyMsg{Type: tea.KeyCtrlS})
+	m.Update(cmd())
+	if v, ok := got["project_id"]; !ok || v != nil {
+		t.Fatalf("unassign must send explicit null: %v", got)
+	}
+	m.notificationForm([]byte(`{"discord_webhook":"https://old.example","ntfy_server":"","ntfy_topic":""}`))
+	m.form.editor.SetValue("")
+	cmd = m.updateForm(tea.KeyMsg{Type: tea.KeyCtrlS})
+	m.Update(cmd())
+	if got["discord_webhook"] != "" {
+		t.Fatal("could not clear webhook")
+	}
+}
