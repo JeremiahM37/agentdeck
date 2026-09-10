@@ -147,6 +147,12 @@ func AttachArgv(a Attachment, target *store.Target) ([]string, error) {
 	if a.IsShell() {
 		inner = []string{"tmux", "new-session", "-A", "-s", sess, "-c", a.Workdir}
 	}
+	// One pane has one grid. tmux's `latest` policy crops smaller clients around
+	// the cursor when a larger client joins, often showing only blank padding.
+	// Apply this to the attached window, never to the user's global tmux options.
+	// Queue it after new-session so companion shells are created before targeting.
+	inner = append(inner, ";", "set-option", "-w", "-t", "="+sess+":", "window-size", "smallest")
+
 	switch {
 	case target.Kind == "sandbox":
 		if a.SandboxVMID == "" {

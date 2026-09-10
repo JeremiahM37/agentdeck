@@ -198,28 +198,28 @@ func TestAttachArgvPerTargetKind(t *testing.T) {
 		"local": {
 			Attachment{TmuxSession: "adk-7"},
 			&store.Target{Kind: "local"},
-			[]string{"tmux", "attach", "-t", "adk-7"},
+			[]string{"tmux", "attach", "-t", "adk-7", ";", "set-option", "-w", "-t", "=adk-7:", "window-size", "smallest"},
 		},
 		"pct container": {
 			Attachment{TmuxSession: "adk-7"},
 			&store.Target{Kind: "pct", Host: "104"},
-			[]string{"sudo", "pct", "exec", "104", "--", "tmux", "attach", "-t", "adk-7"},
+			[]string{"sudo", "pct", "exec", "104", "--", "tmux", "attach", "-t", "adk-7", ";", "set-option", "-w", "-t", "=adk-7:", "window-size", "smallest"},
 		},
 		"ephemeral sandbox beats the target kind": {
 			Attachment{TmuxSession: "adk-7", SandboxVMID: "9001"},
 			&store.Target{Kind: "sandbox", Host: "irrelevant"},
-			[]string{"sudo", "pct", "exec", "9001", "--", "tmux", "attach", "-t", "adk-7"},
+			[]string{"sudo", "pct", "exec", "9001", "--", "tmux", "attach", "-t", "adk-7", ";", "set-option", "-w", "-t", "=adk-7:", "window-size", "smallest"},
 		},
 		"ssh with a key": {
 			Attachment{TmuxSession: "adk-7"},
 			&store.Target{Kind: "ssh", Host: "192.0.2.14", User: "claude", KeyPath: "/home/admin/.ssh/id_ed25519"},
 			[]string{"ssh", "-tt", "-o", "StrictHostKeyChecking=accept-new",
-				"-i", "/home/admin/.ssh/id_ed25519", "claude@192.0.2.14", "tmux", "attach", "-t", "adk-7"},
+				"-i", "/home/admin/.ssh/id_ed25519", "claude@192.0.2.14", "tmux", "attach", "-t", "adk-7", "';'", "set-option", "-w", "-t", "=adk-7:", "window-size", "smallest"},
 		},
 		"ssh defaults to root": {
 			Attachment{TmuxSession: "adk-7"},
 			&store.Target{Kind: "ssh", Host: "h"},
-			[]string{"ssh", "-tt", "-o", "StrictHostKeyChecking=accept-new", "root@h", "tmux", "attach", "-t", "adk-7"},
+			[]string{"ssh", "-tt", "-o", "StrictHostKeyChecking=accept-new", "root@h", "tmux", "attach", "-t", "adk-7", "';'", "set-option", "-w", "-t", "=adk-7:", "window-size", "smallest"},
 		},
 	} {
 		got, err := AttachArgv(tc.a, tc.target)
@@ -273,12 +273,12 @@ func TestShellAttachOpensAPersistentSessionInTheRepo(t *testing.T) {
 		want   string
 	}{
 		"local": {&store.Target{Kind: "local"},
-			"tmux new-session -A -s adk-sh12 -c /srv/code"},
+			"tmux new-session -A -s adk-sh12 -c /srv/code ; set-option -w -t =adk-sh12: window-size smallest"},
 		"pct": {&store.Target{Kind: "pct", Host: "104"},
-			"sudo pct exec 104 -- tmux new-session -A -s adk-sh12 -c /srv/code"},
+			"sudo pct exec 104 -- tmux new-session -A -s adk-sh12 -c /srv/code ; set-option -w -t =adk-sh12: window-size smallest"},
 		"ssh": {&store.Target{Kind: "ssh", Host: "192.0.2.14", User: "claude"},
 			"ssh -tt -o StrictHostKeyChecking=accept-new claude@192.0.2.14 " +
-				"tmux new-session -A -s adk-sh12 -c /srv/code"},
+				"tmux new-session -A -s adk-sh12 -c /srv/code ';' set-option -w -t =adk-sh12: window-size smallest"},
 	} {
 		got, err := AttachArgv(att, tc.target)
 		if err != nil {
@@ -304,7 +304,7 @@ func TestAnAgentAttachIsStillAnAttach(t *testing.T) {
 		t.Fatal("an attachment with no workdir is not a shell")
 	}
 	got, _ := AttachArgv(att, &store.Target{Kind: "local"})
-	if strings.Join(got, " ") != "tmux attach -t adk-s3" {
+	if strings.Join(got, " ") != "tmux attach -t adk-s3 ; set-option -w -t =adk-s3: window-size smallest" {
 		t.Errorf("got %v", got)
 	}
 }

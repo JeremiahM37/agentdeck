@@ -111,7 +111,7 @@ func TestTerminalAttachEndpoint(t *testing.T) {
 	if port < terminal.PortLo || port > terminal.PortHi {
 		t.Errorf("port outside the terminal range: %d", port)
 	}
-	if len(gotArgv) == 0 || !strings.HasPrefix(gotArgv[len(gotArgv)-1], "adk-") {
+	if len(gotArgv) < 4 || !strings.HasPrefix(gotArgv[3], "adk-") {
 		t.Errorf("ttyd must wrap this attempt's tmux session: %v", gotArgv)
 	}
 	if code := h.status("POST", "/api/tasks/9999/terminal", nil); code != 404 {
@@ -122,12 +122,12 @@ func TestTerminalAttachEndpoint(t *testing.T) {
 func TestAttachArgvPerTargetKind(t *testing.T) {
 	att := terminal.Attachment{Key: "attempt:7", TmuxSession: "adk-7", SandboxVMID: "9001"}
 	sandbox, _ := terminal.AttachArgv(att, &store.Target{Kind: "sandbox"})
-	if strings.Join(sandbox, " ") != "sudo pct exec 9001 -- tmux attach -t adk-7" {
+	if strings.Join(sandbox, " ") != "sudo pct exec 9001 -- tmux attach -t adk-7 ; set-option -w -t =adk-7: window-size smallest" {
 		t.Errorf("sandbox: %v", sandbox)
 	}
 	pct, _ := terminal.AttachArgv(terminal.Attachment{TmuxSession: "adk-7"},
 		&store.Target{Kind: "pct", Host: "105"})
-	if strings.Join(pct, " ") != "sudo pct exec 105 -- tmux attach -t adk-7" {
+	if strings.Join(pct, " ") != "sudo pct exec 105 -- tmux attach -t adk-7 ; set-option -w -t =adk-7: window-size smallest" {
 		t.Errorf("pct: %v", pct)
 	}
 	ssh, _ := terminal.AttachArgv(terminal.Attachment{TmuxSession: "adk-7"},
@@ -137,7 +137,7 @@ func TestAttachArgvPerTargetKind(t *testing.T) {
 		t.Errorf("ssh: %v", ssh)
 	}
 	local, _ := terminal.AttachArgv(terminal.Attachment{TmuxSession: "adk-7"}, &store.Target{Kind: "local"})
-	if strings.Join(local, " ") != "tmux attach -t adk-7" {
+	if strings.Join(local, " ") != "tmux attach -t adk-7 ; set-option -w -t =adk-7: window-size smallest" {
 		t.Errorf("local: %v", local)
 	}
 }
