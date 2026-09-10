@@ -12,6 +12,7 @@ import (
 	"github.com/JeremiahM37/agentdeck/internal/sessions"
 	"github.com/JeremiahM37/agentdeck/internal/shellq"
 	"github.com/JeremiahM37/agentdeck/internal/store"
+	"github.com/JeremiahM37/agentdeck/internal/worktree"
 )
 
 //go:embed scripts/conversations.py
@@ -84,8 +85,9 @@ func (s *Server) forkConversation(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var in struct {
-		ConversationID string `json:"conversation_id"`
-		Name           string `json:"name"`
+		ConversationID string                       `json:"conversation_id"`
+		Name           string                       `json:"name"`
+		Worktree       *worktree.InteractiveOptions `json:"worktree"`
 	}
 	if err := decodeBody(r, &in); err != nil || in.ConversationID == "" {
 		httpError(w, 422, "choose the exact saved conversation to fork")
@@ -115,7 +117,7 @@ func (s *Server) forkConversation(w http.ResponseWriter, r *http.Request) {
 		httpError(w, 422, "name exceeds 160 bytes")
 		return
 	}
-	next, err := s.Sessions.Launch(r.Context(), sessions.LaunchOpts{Configuration: config, GroupPath: row.GroupPath, ProjectID: row.ProjectID, TargetID: row.TargetID, Name: name, Agent: row.Agent, Model: row.Model, Workdir: row.Workdir, ForkID: in.ConversationID})
+	next, err := s.Sessions.Launch(r.Context(), sessions.LaunchOpts{Worktree: in.Worktree, Configuration: config, GroupPath: row.GroupPath, ProjectID: row.ProjectID, TargetID: row.TargetID, Name: name, Agent: row.Agent, Model: row.Model, Workdir: row.Workdir, ForkID: in.ConversationID})
 	if err != nil {
 		httpError(w, 502, "%s", err)
 		return

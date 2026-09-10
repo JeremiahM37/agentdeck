@@ -116,8 +116,8 @@ func (m *Manager) Launch(ctx context.Context, o LaunchOpts) (*store.Session, err
 		}
 		workdir = proj.RepoPath
 	}
-	if o.Worktree != nil && (o.Scratch || o.Resume || o.ResumeID != "" || o.ForkID != "" || o.ReservedID != 0) {
-		return nil, fmt.Errorf("an isolated worktree starts a fresh session; choose fresh context")
+	if o.Worktree != nil && (o.Scratch || o.Resume || o.ResumeID != "" || o.ReservedID != 0) {
+		return nil, fmt.Errorf("an isolated worktree supports fresh context or a conversation fork; it cannot resume an existing conversation")
 	}
 	agent := o.Agent
 	if agent == "" {
@@ -208,6 +208,11 @@ func (m *Manager) Launch(ctx context.Context, o LaunchOpts) (*store.Session, err
 			return nil, err
 		}
 	}
+	directory, err := ex.Run(ctx, "test -d "+shellq.Quote(workdir), executor.RunOpts{Timeout: 10})
+	if err != nil || !directory.OK() {
+		m.end(sess.ID, StatusDead)
+		return nil, fmt.Errorf("working directory is unavailable on target: %s", workdir)
+	}
 	spec.Args = append([]string(nil), spec.Args...)
 	for _, arg := range o.ExtraArgs {
 		spec.Args = append(spec.Args, shellq.Quote(arg))
@@ -232,6 +237,15 @@ func (m *Manager) Launch(ctx context.Context, o LaunchOpts) (*store.Session, err
 	if err != nil {
 		m.end(sess.ID, "dead")
 		return nil, err
+	}
+	if o.Worktree != nil && o.ForkID != "" && agent == "codex" {
+		// Codex otherwise offers a directory picker defaulting to the parent's
+		// directory. Keep a template, so future continuations follow their own
+		// recorded workspace instead of freezing this allocation's path.
+		spec.ForkArgs = nativeDirectoryArgs(spec.ForkArgs)
+		if len(spec.ResumeIDArgs) > 0 {
+			spec.ResumeIDArgs = nativeDirectoryArgs(spec.ResumeIDArgs)
+		}
 	}
 	spec.Env = env
 	if o.Configuration != nil {

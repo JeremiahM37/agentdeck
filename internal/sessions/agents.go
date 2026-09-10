@@ -28,7 +28,8 @@ type Spec struct {
 	// ResumeArgs reopen the CLI's own previous conversation, e.g. ["--continue"].
 	// Empty means resume is not offered for this agent.
 	ResumeArgs []string `json:"resume_args,omitempty"`
-	// ResumeIDArgs select one exact conversation; {id} is shell-quoted.
+	// ResumeIDArgs select one exact conversation. {id} and {dir} are substituted
+	// before shell quoting; {dir} follows the recorded working directory.
 	ResumeIDArgs []string `json:"resume_id_args,omitempty"`
 	ForkArgs     []string `json:"fork_args,omitempty"`
 	// PromptArg says the opening message can be a positional argument. When it
@@ -183,11 +184,11 @@ func (s Spec) LaunchCommand(o Start) string {
 	parts = append(parts, s.Args...)
 	if o.ForkID != "" {
 		for _, arg := range s.ForkArgs {
-			parts = append(parts, shellq.Quote(strings.ReplaceAll(arg, "{id}", o.ForkID)))
+			parts = append(parts, shellq.Quote(strings.NewReplacer("{id}", o.ForkID, "{dir}", o.Workdir).Replace(arg)))
 		}
 	} else if o.ResumeID != "" {
 		for _, arg := range s.ResumeIDArgs {
-			parts = append(parts, shellq.Quote(strings.ReplaceAll(arg, "{id}", o.ResumeID)))
+			parts = append(parts, shellq.Quote(strings.NewReplacer("{id}", o.ResumeID, "{dir}", o.Workdir).Replace(arg)))
 		}
 	} else if o.Resume && len(s.ResumeArgs) > 0 {
 		parts = append(parts, s.ResumeArgs...)
@@ -298,7 +299,9 @@ func findList(doc any, depth int) []any {
 // only ever adds the one key, and only when it is missing.
 const claudeTrust = `python3 - {dir} <<'ADKTRUST'
 import json, os, sys, tempfile
-path = os.path.expanduser("~/.claude.json")
+config = os.environ.get("CLAUDE_CONFIG_DIR")
+path = os.path.join(os.path.expanduser(config), ".claude.json") if config else os.path.expanduser("~/.claude.json")
+os.makedirs(os.path.dirname(path), mode=0o700, exist_ok=True)
 try:
     with open(path) as f:
         doc = json.load(f)
@@ -318,9 +321,28 @@ ADKTRUST`
 // Appended rather than rewritten: the file is the operator's, holding their MCP
 // servers and model settings, and a TOML round-trip through a parser agentdeck
 // does not own is a good way to lose a comment or reorder someone's config.
-const codexTrust = `f="$HOME/.codex/config.toml"; mkdir -p "$(dirname "$f")"; touch "$f"; ` +
-	`grep -qF "[projects.\"{dir_raw}\"]" "$f" || ` +
-	`printf '\n[projects."%s"]\ntrust_level = "trusted"\n' {dir} >> "$f"`
+const codexTrust = `python3 - {dir} <<'ADKTRUST'
+import fcntl, json, os, sys
+from pathlib import Path
+root = Path(os.path.expanduser(os.environ.get("CODEX_HOME") or "~/.codex"))
+root.mkdir(mode=0o700, parents=True, exist_ok=True)
+fd = os.open(root / "config.toml", os.O_RDWR | os.O_CREAT, 0o600)
+with os.fdopen(fd, "r+", encoding="utf-8") as config:
+    fcntl.flock(config, fcntl.LOCK_EX)
+    text = config.read()
+    if text.strip():
+        # Reading only: existing settings and comments remain byte-identical.
+        # Without a TOML parser, leave an existing config to the CLI itself.
+        try:
+            import tomllib
+        except ImportError:
+            raise SystemExit(1)
+        doc = tomllib.loads(text)
+        if sys.argv[1] in doc.get("projects", {}):
+            raise SystemExit(0)
+    config.seek(0, 2)
+    config.write("\n[projects." + json.dumps(sys.argv[1], ensure_ascii=False) + "]\ntrust_level = \"trusted\"\n")
+ADKTRUST`
 
 // TrustProbe is the command that marks a directory trusted for this agent, or
 // empty when the agent has no such notion.
@@ -328,6 +350,6 @@ func (s Spec) TrustProbe(dir string) string {
 	if s.TrustCommand == "" || dir == "" {
 		return ""
 	}
-	cmd := strings.ReplaceAll(s.TrustCommand, "{dir}", shellq.Quote(dir))
+	cmd := strings.ReplaceAll(currentTrustCommand(s.TrustCommand), "{dir}", shellq.Quote(dir))
 	return strings.ReplaceAll(cmd, "{dir_raw}", dir)
 }

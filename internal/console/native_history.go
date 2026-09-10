@@ -69,11 +69,20 @@ func (m *dashboard) nativePicker(v nativeListMsg) tea.Cmd {
 		actions = append(actions, choice{"Resume this conversation", "resume"})
 	}
 	fields := []field{{Key: "conversation", Label: "Saved conversation (this workspace)", Value: choices[0].Value, Options: choices}, {Key: "action", Label: "Action", Value: "read", Options: actions}, {Key: "name", Label: "New session name", Value: ""}}
+	if data.ForkSupported {
+		fields = append(fields, field{Key: "workspace", Label: "Workspace for forks", Value: "shared", Options: []choice{{"Use the same files", "shared"}, {"New isolated Git worktree", "isolated"}}}, field{Key: "branch", Label: "Fork branch (blank = automatic)"}, field{Key: "base", Label: "Fork base commit or branch (blank = HEAD)"})
+	}
 	return m.openForm("Saved conversations", fields, func(values map[string]any) tea.Cmd {
 		cid := str(values["conversation"])
 		m.form = nil
 		if str(values["action"]) == "fork" {
-			m.pending = &dashboardAction{Label: "Fork conversation", Method: "POST", Path: "/sessions/" + v.session + "/fork", Body: map[string]any{"conversation_id": cid, "name": values["name"]}, Warning: "Create a new conversation from " + cid + "? Both agents share the workspace files. The original keeps running."}
+			body := map[string]any{"conversation_id": cid, "name": values["name"]}
+			warning := "Create a new conversation from " + cid + "? Both agents share the workspace files. The original conversation is unchanged."
+			if str(values["workspace"]) == "isolated" {
+				body["worktree"] = map[string]any{"branch": values["branch"], "base": values["base"]}
+				warning = "Fork " + cid + " into a new Git worktree from the selected committed base? Uncommitted changes stay in the original workspace. The original conversation is unchanged."
+			}
+			m.pending = &dashboardAction{Label: "Fork conversation", Method: "POST", Path: "/sessions/" + v.session + "/fork", Body: body, Warning: warning}
 			return nil
 		}
 		if str(values["action"]) == "resume" {

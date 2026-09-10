@@ -49,7 +49,7 @@ in this document is not a substitute for that evidence.
 | --- | --- |
 | Find, group, monitor, attach, detach, reconnect | Live dashboard + PTY tests; browser real tmux resize/reconnect/dual-client tests. Broader multi-session and saved-view UX comparison remains. |
 | Review ongoing work | Live staged/working review implemented for TUI and web; real Git API tests cover renames, binary/untracked files, path boundaries and unchanged index; Playwright covers desktop/mobile, stale responses and retained attachment; actual SSH target proof passed. Full rollout verification is recorded in shared memory. |
-| Branch a conversation / isolated parallel work | Native Claude/Codex workspace conversation picker, paginated reader, and exact-ID fork implemented in TUI/web. API, real tmux/PTY and mobile browser tests cover boundaries, unchanged original history and explicit confirmation. Installed Codex fork persisted a distinct ID; installed Claude loaded saved history with its native fork flag (no new turn). Fresh interactive worktree creation/removal now exists in both interfaces, with durable allocation, ownership checks, retained branches, local/SSH Git proof and mobile/desktop/PTy tests. Native forks still share their original workspace; automatic terminal-to-native identity and combined fork/isolation remain gaps. |
+| Branch a conversation / isolated parallel work | Native Claude/Codex workspace conversation picker, paginated reader, and exact-ID fork implemented in TUI/web. API, real tmux/PTY and mobile browser tests cover boundaries, unchanged original history and explicit confirmation. Installed Codex fork persisted a distinct ID; installed Claude loaded saved history with its native fork flag (no new turn). Fresh interactive worktree creation/removal now exists in both interfaces, with durable allocation, ownership checks, retained branches, local/SSH Git proof and mobile/desktop/PTy tests. Native forks now optionally allocate an isolated worktree in both interfaces. Real Git/tmux API, browser and PTY tests cover committed-base isolation, preserved parent changes/history, directory-aware continuation and cleanup protection. Installed Codex and Claude CLIs were verified with distinct child IDs and worktree directories; Claude persistence used a synthetic response-only turn with no tool calls. Automatic terminal-to-native identity remains a gap. |
 | Organize large fleets | Named group paths now persist across projects/targets and inherit on forks/handoffs. TUI and web have nested collapse/counts; terminal search reveals folded children and selection/collapse survive refresh. Web keeps per-tab display state. TUI grouping is remembered per section/server and folded named groups survive restarts, with real PTY restart coverage. Adopted sessions can restore their original record after stopping tracking, gated by a persistent tmux identity marker; real API, PTY and mobile/desktop tests cover retained metadata, concurrent requests and reused-name rejection. Unmarked live records capture identity when released; already-released records without identity still require explicit discovery. Archive now retains terminal snapshots and metadata, with explicit stop confirmation and unarchive without restart; exact native continuation is available separately. Profile configuration, automatic native identity and global conversation search remain. |
 | Agent setup | Custom commands exist; named agent settings, MCP/skills setup, installed-agent discovery and lifecycle need comparison with current upstream. |
 | Workspace setup | Task and single-repository interactive worktrees run on local/SSH targets. Multi-repository interactive workspaces and repo setup hooks need audit/implementation. |
@@ -206,3 +206,29 @@ Real tmux tests cover failures, identity changes during the operation, neighbori
 session names and repeated stops. Desktop and phone browser tests confirm that
 a failed stop leaves the card visible and the terminal running, and that a later
 successful retry closes it. Stop tracking remains non-destructive.
+
+## Fork a conversation into an isolated worktree
+
+Saved conversations → Fork offers a workspace choice in both interfaces. An
+isolated fork retains the selected history and creates a Git worktree from the
+chosen committed base, with a named or automatically generated branch. Parent
+uncommitted changes remain in the parent working directory. The source
+conversation and its launch configuration stay intact.
+
+Codex receives an explicit directory override: changing only the outer shell's
+directory opens a native picker that defaults to the parent directory. The
+saved configuration uses a directory template so later resumes/forks use their
+own recorded workspace. Unsupported native resume capability stays unsupported.
+A resumed session also prevents removal of its still-active worktree. Once a
+worktree is removed, a continuation fails clearly until its directory is restored.
+
+Built-in trust preparation uses the selected CODEX_HOME or CLAUDE_CONFIG_DIR.
+Known older built-in probe bodies in launch snapshots use the corrected helper;
+custom trust commands remain unchanged. Codex configuration is read and appended
+under a lock, preserving comments and existing project policy. Reading an existing
+TOML file for pre-trust needs Python 3.11's tomllib; on older Python the helper
+leaves it unchanged and the CLI can ask for trust normally.
+
+The mobile confirmation presents one scrollable form rather than splitting its
+fields across the transcript area. Session visibility filters also share the
+dashboard's dark control style and a 44-pixel target.

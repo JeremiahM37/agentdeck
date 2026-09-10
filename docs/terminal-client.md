@@ -128,14 +128,25 @@ checkout mutation.
 On a Claude or Codex session, press `H` (or Actions → Saved conversations / fork)
 to choose a saved conversation from that workspace on its target. Read it in the
 preview, use `O` for the preceding page, or choose **Fork** in the picker. The
-confirmation names the exact conversation ID and explains that the workspace
-files are shared. The original agent keeps running; no new prompt is submitted.
+confirmation names the exact conversation ID. Choose **Use the same files** or
+**New isolated Git worktree** in Workspace for forks. Isolation creates a branch
+from the selected committed base (HEAD by default); uncommitted changes stay in
+the parent workspace. A blank branch name gets a unique name. The original
+conversation is unchanged, and forking submits no new prompt.
 
 The web offers **Saved conversations** in the session's More menu and the
 attached terminal's Tools menu. Choose a conversation explicitly; messages are
 grouped by role, tool activity folds away, and **Load earlier messages** pages
 back without replacing the messages already on screen. Codex's saved thread
 names are used when present. Long messages and discovery limits are labelled.
+
+The web fork confirmation offers the same Workspace, branch and base controls.
+The confirmation uses the dialog space; Cancel returns to the transcript.
+Scripts pass an optional worktree object to POST /sessions/ID/fork, for example
+{"conversation_id":"UUID","worktree":{"branch":"experiment","base":"HEAD"}}.
+Omitting worktree keeps the shared-files behavior. Resume always continues in
+the recorded directory; it does not allocate another worktree. A removed or
+unavailable directory produces an error until the workspace is restored.
 
 History reads native JSONL stores using the target's `CODEX_HOME` or
 `CLAUDE_CONFIG_DIR` (including configured agent environment overrides), and

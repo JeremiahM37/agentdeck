@@ -47,10 +47,17 @@ func TestTrustProbeQuotesTheDirectory(t *testing.T) {
 
 // runProbe executes a trust command against a temp HOME, the way the executor
 // does on a target.
-func runProbe(t *testing.T, probe, home string) {
+func runProbe(t *testing.T, probe, home string, overrides ...string) {
 	t.Helper()
 	cmd := exec.Command("bash", "-c", probe)
-	cmd.Env = append(os.Environ(), "HOME="+home)
+	cmd.Dir = home
+	for _, variable := range os.Environ() {
+		if !strings.HasPrefix(variable, "HOME=") && !strings.HasPrefix(variable, "CODEX_HOME=") && !strings.HasPrefix(variable, "CLAUDE_CONFIG_DIR=") {
+			cmd.Env = append(cmd.Env, variable)
+		}
+	}
+	cmd.Env = append(cmd.Env, "HOME="+home)
+	cmd.Env = append(cmd.Env, overrides...)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("probe failed: %v\n%s", err, out)
 	}
@@ -174,5 +181,119 @@ func TestCodexTrustCreatesTheConfigWhenThereIsNone(t *testing.T) {
 	}
 	if !strings.Contains(string(raw), "trusted") {
 		t.Errorf("got %q", raw)
+	}
+}
+
+func TestTrustUsesSelectedConfigurationWithoutChangingDefault(t *testing.T) {
+	for _, version := range []string{"claude", "codex", "legacy-claude", "legacy-codex"} {
+		agent := strings.TrimPrefix(version, "legacy-")
+		t.Run(version, func(t *testing.T) {
+			home := t.TempDir()
+			selected := filepath.Join(home, "selected config")
+			if err := os.Mkdir(selected, 0700); err != nil {
+				t.Fatal(err)
+			}
+			key := "CLAUDE_CONFIG_DIR"
+			filename := ".claude.json"
+			defaultFile := filepath.Join(home, ".claude.json")
+			initial := "{\n  \"theme\": \"light\"\n}"
+			if agent == "codex" {
+				key = "CODEX_HOME"
+				filename = "config.toml"
+				defaultFile = filepath.Join(home, ".codex", "config.toml")
+				initial = "# preserve this comment\nmodel = \"fixture\"\n"
+			}
+			if err := os.MkdirAll(filepath.Dir(defaultFile), 0700); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(defaultFile, []byte(initial), 0600); err != nil {
+				t.Fatal(err)
+			}
+			chosen := filepath.Join(selected, filename)
+			if err := os.WriteFile(chosen, []byte(initial), 0600); err != nil {
+				t.Fatal(err)
+			}
+			dir := filepath.Join(home, "workspace's \"quote\" $(touch owned)")
+			spec := specFor(t, agent)
+			if version == "legacy-claude" {
+				spec.TrustCommand = legacyClaudeTrust
+			}
+			if version == "legacy-codex" {
+				spec.TrustCommand = legacyCodexTrust
+			}
+			probe := spec.TrustProbe(dir)
+			runProbe(t, probe, home, key+"="+selected)
+			after, err := os.ReadFile(defaultFile)
+			if err != nil || string(after) != initial {
+				t.Fatal("default configuration changed")
+			}
+			runProbe(t, probe, home, key+"="+selected)
+			raw, err := os.ReadFile(chosen)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if agent == "claude" {
+				var doc map[string]any
+				if err := json.Unmarshal(raw, &doc); err != nil {
+					t.Fatal(err)
+				}
+				if doc["projects"].(map[string]any)[dir].(map[string]any)["hasTrustDialogAccepted"] != true {
+					t.Fatal("selected project not trusted")
+				}
+			} else {
+				cmd := exec.Command("python3", "-c", "import sys,tomllib; d=tomllib.load(open(sys.argv[1],'rb')); assert d['projects'][sys.argv[2]]['trust_level']=='trusted'", chosen, dir)
+				if out, err := cmd.CombinedOutput(); err != nil {
+					t.Fatalf("invalid selected TOML: %s %v", out, err)
+				}
+				if !strings.HasPrefix(string(raw), initial) {
+					t.Fatal("existing config rewritten")
+				}
+			}
+			if _, err := os.Stat(filepath.Join(home, "owned")); !os.IsNotExist(err) {
+				t.Fatal("directory executed as shell syntax")
+			}
+		})
+	}
+}
+
+func TestCodexTrustPreservesExistingLiteralProjectKey(t *testing.T) {
+	home := t.TempDir()
+	folder := filepath.Join(home, ".codex")
+	if err := os.Mkdir(folder, 0700); err != nil {
+		t.Fatal(err)
+	}
+	filename := filepath.Join(folder, "config.toml")
+	original := "# explicit policy\n[projects.'/srv/repo']\ntrust_level = \"untrusted\"\n"
+	if err := os.WriteFile(filename, []byte(original), 0600); err != nil {
+		t.Fatal(err)
+	}
+	runProbe(t, specFor(t, "codex").TrustProbe("/srv/repo"), home)
+	after, err := os.ReadFile(filename)
+	if err != nil || string(after) != original {
+		t.Fatal("existing project policy was rewritten or duplicated")
+	}
+}
+
+func TestConcurrentCodexTrustDoesNotDuplicateProject(t *testing.T) {
+	home := t.TempDir()
+	folder := filepath.Join(home, "config")
+	probe := specFor(t, "codex").TrustProbe("/srv/concurrent")
+	commands := []*exec.Cmd{}
+	for i := 0; i < 3; i++ {
+		cmd := exec.Command("bash", "-c", probe)
+		cmd.Env = append(os.Environ(), "HOME="+home, "CODEX_HOME="+folder)
+		if err := cmd.Start(); err != nil {
+			t.Fatal(err)
+		}
+		commands = append(commands, cmd)
+	}
+	for _, cmd := range commands {
+		if err := cmd.Wait(); err != nil {
+			t.Fatal(err)
+		}
+	}
+	cmd := exec.Command("python3", "-c", "import sys,tomllib; d=tomllib.load(open(sys.argv[1],'rb')); assert d['projects']=={'/srv/concurrent':{'trust_level':'trusted'}}", filepath.Join(folder, "config.toml"))
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("concurrent config: %s %v", out, err)
 	}
 }
