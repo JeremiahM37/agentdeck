@@ -340,3 +340,12 @@ restart, retained output and the exact same tmux session ID. API integration
 checks cover stream EOF, rejected reconnects while draining, continuing health
 requests and concurrent drain calls under the race detector. This addresses a
 shutdown delay; it does not shorten the grace period for ordinary requests.
+
+
+The session launch action now stays at the bottom of the open form while its
+settings scroll. Its opaque footer covers the sheet's bottom padding and keeps
+phone safe-area space; fields remain reachable above it. Browser checks cover
+390×844, 390×450 and 1440×900, expanded workspace options, the final message field,
+and returning to the top without losing that message. Real Git/tmux phone and
+desktop launch-and-cleanup flows also pass. Screenshot review caught and removed
+a strip of scrolling content beneath the first footer layout.

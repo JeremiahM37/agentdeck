@@ -146,3 +146,32 @@ def test_session_sheet_keeps_keyboard_focus_and_returns_to_opener(page, server):
     expect(sheet).not_to_be_visible()
     expect(opener).to_be_focused()
     assert not page.locator('#tabbar').evaluate('(e)=>e.inert')
+
+
+@pytest.mark.parametrize('size', [(390,844),(390,450),(1440,900)])
+def test_session_launch_stays_visible_through_long_form(page, server, size):
+    page.set_viewport_size({'width':size[0],'height':size[1]})
+    page.goto(server + '/#sessions')
+    page.locator('#sess-new').click()
+    sheet = page.get_by_role('dialog', name='New session', exact=True)
+    launch = sheet.locator('#ns-go')
+    sheet.evaluate('(e)=>Promise.all(e.getAnimations().map(a=>a.finished))')
+    def visible_action():
+        box = launch.bounding_box()
+        assert box and box['height'] >= 40
+        assert 0 <= box['y'] and box['y'] + box['height'] <= size[1]
+        assert size[1] - (box['y'] + box['height']) <= 16
+        assert sheet.evaluate('(e)=>e.scrollWidth<=e.clientWidth')
+    visible_action()
+    page.screenshot(path=f'/tmp/agentdeck-launch-action-{size[0]}-{size[1]}.png',animations='disabled')
+    sheet.get_by_label('Isolate in a new Git worktree',exact=True).check()
+    sheet.locator('#ns-repositories summary').click()
+    visible_action()
+    sheet.get_by_label('First message (optional)',exact=True).fill('Keep every setting reachable')
+    visible_action()
+    sheet.evaluate('(e)=>e.scrollTop=e.scrollHeight')
+    message = sheet.get_by_label('First message (optional)',exact=True).bounding_box()
+    assert message['y'] + message['height'] <= launch.bounding_box()['y']
+    sheet.evaluate('(e)=>e.scrollTop=0')
+    visible_action()
+    expect(sheet.get_by_label('First message (optional)',exact=True)).to_have_value('Keep every setting reachable')

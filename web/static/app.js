@@ -916,7 +916,7 @@ function renderNewSession(sheet) {
     <div class="subhint" id="ns-yolo-hint"></div>
     <label class="f" for="ns-prime">First message (optional)</label>
     <textarea class="f" id="ns-prime" placeholder="Typed in once the agent is up."></textarea>
-    <div class="btnrow" style="margin-top:20px">
+    <div class="btnrow session-launch-actions">
       <button class="b ok grow" id="ns-go">▶ Start session</button>
     </div>`;
   $(".x", sheet).onclick = closeSheet;

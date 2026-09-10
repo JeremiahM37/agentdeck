@@ -127,3 +127,13 @@
  body.terminals-open.terminal-compact .terminal-search { display:block; }
 }
 .terminal-focus[hidden] { display:none !important; }
+
+/* Keep the launch action reachable while reviewing a long session form. */
+#sheet:has(.session-launch-actions) { scroll-padding-bottom: 96px; }
+.session-launch-actions {
+  position: sticky; bottom: calc(-28px - env(safe-area-inset-bottom, 0px)); z-index: 6;
+  margin: 20px -18px calc(-28px - env(safe-area-inset-bottom, 0px));
+  padding: 12px 18px calc(12px + env(safe-area-inset-bottom, 0px));
+  background: inherit; border-top: 1px solid var(--line);
+  box-shadow: 0 -10px 18px -12px rgba(0,0,0,.6);
+}
