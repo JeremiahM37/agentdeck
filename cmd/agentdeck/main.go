@@ -35,6 +35,12 @@ func main() {
 
 	if len(os.Args) > 1 {
 		switch os.Args[1] {
+		case "console", "tui", "api", "upload", "files", "download", "help", "--help", "-h":
+			if err := clientCommand(cfg, os.Args[1], os.Args[2:]); err != nil {
+				fmt.Fprintln(os.Stderr, err)
+				os.Exit(1)
+			}
+			return
 		case "attach":
 			if err := attach(cfg, os.Args[2:]); err != nil {
 				fmt.Fprintln(os.Stderr, err)
@@ -52,7 +58,7 @@ func main() {
 			fmt.Println(version.Version)
 			return
 		default:
-			fmt.Fprintf(os.Stderr, "unknown command %q (try: mcp, version)\n", os.Args[1])
+			fmt.Fprintf(os.Stderr, "unknown command %q (try: --help)\n", os.Args[1])
 			os.Exit(2)
 		}
 	}
