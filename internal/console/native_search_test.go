@@ -148,3 +148,13 @@ func TestNativeSearchPagesKeepOriginalConversation(t *testing.T) {
 		t.Fatal("paging changed conversation", paths)
 	}
 }
+
+func TestSearchShortcutKeepsQuitHintVisible(t *testing.T) {
+	m := sampleDashboard()
+	for _, width := range []int{45, 80, 120} {
+		m.Update(tea.WindowSizeMsg{Width: width, Height: 24})
+		if !strings.Contains(m.View(), "q quit") {
+			t.Fatalf("quit hint clipped at %d columns", width)
+		}
+	}
+}

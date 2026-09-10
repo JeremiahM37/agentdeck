@@ -860,7 +860,7 @@ func (m *dashboard) View() string {
 	if m.busy {
 		status = "Working… " + status
 	}
-	keys := " Enter attach · / filter · F history search · n new · m actions · ? help · q quit"
+	keys := " Enter attach · / filter · F text search · n new · m actions · ? help · q quit"
 	if m.selectedGroup() != nil {
 		keys = " Enter fold · [ parent · ] expand · / search · ? help · q quit"
 	}
