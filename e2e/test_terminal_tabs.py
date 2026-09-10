@@ -82,6 +82,7 @@ def test_terminal_tabs_restore_and_fit_on_mobile(page,real_terminal):
         page.locator('.tab[data-tab="board"]').click()
         page.locator('.tab[data-tab="terminals"]').click()
         expect(one.locator('#agent-terminal')).to_be_visible()
+        expect(one.locator('#terminal-keybar')).to_be_visible()
         assert one.locator('#agent-terminal').bounding_box()['height']>80
         assert page.evaluate('document.documentElement.scrollWidth<=innerWidth')
         bounds=page.locator('#terminal-workspace').bounding_box()

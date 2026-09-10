@@ -9,8 +9,14 @@ const encoder = new TextEncoder();
 const embedded = new URLSearchParams(location.search).get("embed") === "1";
 document.body.classList.toggle("embedded", embedded);
 const mobileTerminal = matchMedia('(max-width:1023px)');
+const shortTerminal = matchMedia('(max-height:380px)');
+const applyTerminalChrome = () => document.body.classList.toggle('compact-chrome',
+  document.body.classList.contains('compact-terminal') ||
+  (document.body.classList.contains('mobile-terminal') && shortTerminal.matches));
+shortTerminal.addEventListener('change', applyTerminalChrome);
 const applyStandaloneLayout = () => {
   if (!embedded) document.body.classList.toggle('mobile-terminal', mobileTerminal.matches);
+  applyTerminalChrome();
 };
 mobileTerminal.addEventListener('change', applyStandaloneLayout);
 applyStandaloneLayout();
@@ -388,6 +394,7 @@ window.addEventListener("message", (e) => {
   if (embedded && e.source === parent && e.origin === location.origin && e.data?.type === "adk-terminal-visible") {
     document.body.classList.toggle('compact-terminal', e.data.compact === true);
     document.body.classList.toggle('mobile-terminal', e.data.mobile === true || (e.data.mobile === undefined && e.data.compact === true));
+    applyTerminalChrome();
     fitPanes();
   }
 });

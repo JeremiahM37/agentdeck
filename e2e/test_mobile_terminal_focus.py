@@ -83,7 +83,7 @@ finally:
         one.get_by_role('button',name='Send '+key,exact=True).click()
     proof=t['root']/'keybar-bytes'
     for _ in range(100):
-        if proof.exists():break
+        if proof.exists() and proof.stat().st_size == 15:break
         page.wait_for_timeout(50)
     assert proof.read_bytes()==b'\x1b\t\x1bOD\x1bOA\x1bOB\x1bOC\x03'
     expect(one.locator('#connection')).to_have_text('Connected')
