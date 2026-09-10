@@ -45,6 +45,10 @@ func (m *dashboard) nativePicker(v nativeListMsg) tea.Cmd {
 			ID, Title string
 			Modified  float64
 		} `json:"conversations"`
+		Current struct {
+			State, ID string
+			Saved     bool
+		} `json:"current"`
 		Limited         bool `json:"scan_limited"`
 		ForkSupported   bool `json:"fork_supported"`
 		ResumeSupported bool `json:"resume_supported"`
@@ -55,11 +59,23 @@ func (m *dashboard) nativePicker(v nativeListMsg) tea.Cmd {
 	}
 	if len(data.Conversations) == 0 {
 		m.notice = "No saved conversations found in this workspace."
+		if data.Current.State == "identified" {
+			m.notice = "The current terminal has not saved readable messages yet."
+		}
 		return nil
 	}
 	choices := []choice{}
+	selected := ""
 	for _, c := range data.Conversations {
-		choices = append(choices, choice{time.Unix(int64(c.Modified), 0).Format("Jan 2 15:04") + " · " + clean(c.Title) + " · " + c.ID, c.ID})
+		label := ""
+		if data.Current.State == "identified" && data.Current.Saved && c.ID == data.Current.ID {
+			label = "Current terminal · "
+			selected = c.ID
+		}
+		choices = append(choices, choice{label + time.Unix(int64(c.Modified), 0).Format("Jan 2 15:04") + " · " + clean(c.Title) + " · " + c.ID, c.ID})
+	}
+	if selected == "" {
+		selected = choices[0].Value
 	}
 	actions := []choice{{"Read saved messages", "read"}}
 	if data.ForkSupported {
@@ -68,7 +84,7 @@ func (m *dashboard) nativePicker(v nativeListMsg) tea.Cmd {
 	if data.ResumeSupported {
 		actions = append(actions, choice{"Resume this conversation", "resume"})
 	}
-	fields := []field{{Key: "conversation", Label: "Saved conversation (this workspace)", Value: choices[0].Value, Options: choices}, {Key: "action", Label: "Action", Value: "read", Options: actions}, {Key: "name", Label: "New session name", Value: ""}}
+	fields := []field{{Key: "conversation", Label: "Saved conversation (this workspace)", Value: selected, Options: choices}, {Key: "action", Label: "Action", Value: "read", Options: actions}, {Key: "name", Label: "New session name", Value: ""}}
 	if data.ForkSupported {
 		fields = append(fields, field{Key: "workspace", Label: "Workspace for forks", Value: "shared", Options: []choice{{"Use the same files", "shared"}, {"New isolated Git worktree", "isolated"}}}, field{Key: "branch", Label: "Fork branch (blank = automatic)"}, field{Key: "base", Label: "Fork base commit or branch (blank = HEAD)"})
 	}

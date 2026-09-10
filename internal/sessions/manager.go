@@ -284,6 +284,12 @@ func (m *Manager) Launch(ctx context.Context, o LaunchOpts) (*store.Session, err
 		// than guessing a delay and landing in whatever the CLI put on screen
 		go m.primeWhenReady(sess.ID, o.Prime)
 	}
+	// Bind new owned terminals as well as adopted ones to their tmux identity.
+	if identity := captureTrackingIdentity(ctx, ex, tmuxName); identity != "" {
+		if err := m.DB.Update("sessions", sess.ID, map[string]any{"tracking_identity": identity}); err != nil {
+			m.Log.Warn("could not record terminal identity", "session", sess.ID, "err", err)
+		}
+	}
 	fresh, err := m.DB.Session(sess.ID)
 	if err != nil {
 		return sess, nil

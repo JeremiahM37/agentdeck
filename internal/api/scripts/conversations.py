@@ -106,6 +106,9 @@ try:
                         if isinstance(entry,dict) and isinstance(entry.get('thread_name'),str): titles[entry.get('id')]=entry['thread_name'][:160]
                     except (ValueError,TypeError): pass
         except OSError: pass
+    current = native_identity(agent, workspace, home, *sys.argv[5:7]) if not selected and len(sys.argv)>6 else dict(state='unavailable')
+    if current.get('id'):
+        paths.sort(key=lambda p: current['id'] not in os.path.basename(p))
     conversations = []; chosen = None
     for file in paths[:500]:
         try: info = metadata(file)
@@ -115,7 +118,8 @@ try:
         if selected and info['id'] == selected: chosen = (file, info); break
         if not selected and all(c['id'] != info['id'] for c in conversations): conversations.append(info)
     if not selected:
-        print(json.dumps(dict(conversations=conversations, scan_limited=scan_limited)))
+        current['saved'] = any(c['id']==current.get('id') for c in conversations)
+        print(json.dumps(dict(conversations=conversations, scan_limited=scan_limited, current=current)))
     else:
         if chosen is None: raise ValueError('Conversation not found in this workspace on this target')
         file, info = chosen

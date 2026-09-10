@@ -49,8 +49,8 @@ in this document is not a substitute for that evidence.
 | --- | --- |
 | Find, group, monitor, attach, detach, reconnect | Live dashboard + PTY tests; browser real tmux resize/reconnect/dual-client tests. Broader multi-session and saved-view UX comparison remains. |
 | Review ongoing work | Live staged/working review implemented for TUI and web; real Git API tests cover renames, binary/untracked files, path boundaries and unchanged index; Playwright covers desktop/mobile, stale responses and retained attachment; actual SSH target proof passed. Full rollout verification is recorded in shared memory. |
-| Branch a conversation / isolated parallel work | Native Claude/Codex workspace conversation picker, paginated reader, and exact-ID fork implemented in TUI/web. API, real tmux/PTY and mobile browser tests cover boundaries, unchanged original history and explicit confirmation. Installed Codex fork persisted a distinct ID; installed Claude loaded saved history with its native fork flag (no new turn). Fresh interactive worktree creation/removal now exists in both interfaces, with durable allocation, ownership checks, retained branches, local/SSH Git proof and mobile/desktop/PTy tests. Native forks now optionally allocate an isolated worktree in both interfaces. Real Git/tmux API, browser and PTY tests cover committed-base isolation, preserved parent changes/history, directory-aware continuation and cleanup protection. Installed Codex and Claude CLIs were verified with distinct child IDs and worktree directories; Claude persistence used a synthetic response-only turn with no tool calls. Automatic terminal-to-native identity remains a gap. |
-| Organize large fleets | Named group paths now persist across projects/targets and inherit on forks/handoffs. TUI and web have nested collapse/counts; terminal search reveals folded children and selection/collapse survive refresh. Web keeps per-tab display state. TUI grouping is remembered per section/server and folded named groups survive restarts, with real PTY restart coverage. Adopted sessions can restore their original record after stopping tracking, gated by a persistent tmux identity marker; real API, PTY and mobile/desktop tests cover retained metadata, concurrent requests and reused-name rejection. Unmarked live records capture identity when released; already-released records without identity still require explicit discovery. Archive now retains terminal snapshots and metadata, with explicit stop confirmation and unarchive without restart; exact native continuation is available separately. Profile configuration, automatic native identity and global conversation search remain. |
+| Branch a conversation / isolated parallel work | Native Claude/Codex workspace conversation picker, paginated reader, and exact-ID fork implemented in TUI/web. API, real tmux/PTY and mobile browser tests cover boundaries, unchanged original history and explicit confirmation. Installed Codex fork persisted a distinct ID; installed Claude loaded saved history with its native fork flag (no new turn). Fresh interactive worktree creation/removal now exists in both interfaces, with durable allocation, ownership checks, retained branches, local/SSH Git proof and mobile/desktop/PTy tests. Native forks now optionally allocate an isolated worktree in both interfaces. Real Git/tmux API, browser and PTY tests cover committed-base isolation, preserved parent changes/history, directory-aware continuation and cleanup protection. Installed Codex and Claude CLIs were verified with distinct child IDs and worktree directories; Claude persistence used a synthetic response-only turn with no tool calls. Current native identity is detected from verified Linux process evidence; unsupported/legacy cases retain manual selection. |
+| Organize large fleets | Named group paths now persist across projects/targets and inherit on forks/handoffs. TUI and web have nested collapse/counts; terminal search reveals folded children and selection/collapse survive refresh. Web keeps per-tab display state. TUI grouping is remembered per section/server and folded named groups survive restarts, with real PTY restart coverage. Adopted sessions can restore their original record after stopping tracking, gated by a persistent tmux identity marker; real API, PTY and mobile/desktop tests cover retained metadata, concurrent requests and reused-name rejection. Unmarked live records capture identity when released; already-released records without identity still require explicit discovery. Archive now retains terminal snapshots and metadata, with explicit stop confirmation and unarchive without restart; exact native continuation is available separately. Profile configuration, broader native identity coverage and global conversation search remain. |
 | Agent setup | Custom commands exist; named agent settings, MCP/skills setup, installed-agent discovery and lifecycle need comparison with current upstream. |
 | Workspace setup | Task and single-repository interactive worktrees run on local/SSH targets. Multi-repository interactive workspaces and repo setup hooks need audit/implementation. |
 | Sandbox choices | Existing Proxmox sandbox path is not equivalent to portable Docker/Podman sandboxing; portability gap remains. |
@@ -232,3 +232,26 @@ leaves it unchanged and the CLI can ask for trust normally.
 The mobile confirmation presents one scrollable form rather than splitting its
 fields across the transcript area. Session visibility filters also share the
 dashboard's dark control style and a 44-pixel target.
+
+## Identify the current native conversation
+
+The saved-history picker now marks and defaults to a verified current conversation
+in both interfaces. Detection checks the active tmux pane, its recorded identity,
+process ancestry and process-start times. Claude runtime records provide its ID;
+Codex provides an open transcript descriptor with CLI-origin metadata. A shell
+merely opening a transcript does not qualify. Subagent transcripts, other native
+profiles/workspaces, replaced terminals and multiple plausible conversations are
+not selected automatically. No conversation ID is inferred from recency.
+
+This currently covers Linux process information on local/SSH/WSL targets and does
+not persist an inferred binding after the process stops. Unsupported/older runtime
+formats, unmarked legacy terminals and renamed Codex binaries retain manual choice.
+A known but not-yet-persisted Claude conversation is distinguished from saved
+history. Automatic native identity coverage therefore has explicit limits; global
+conversation-content search remains separate work.
+
+A real installed Codex fork exposed a history-reader bug during this check:
+the copied parent header could overwrite the child's header before its first
+message was read. The reader now treats the first native header as authoritative.
+Regression coverage includes this nested-header structure and verifies the child
+remains readable from its worktree without appearing as the parent conversation.

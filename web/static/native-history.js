@@ -32,11 +32,13 @@ export function openNativeHistory({id, name, api, onFork, onResume}) {
     try{
       const data=await api(`/sessions/${id}/conversations`);if(closed||generation!==version)return;
       forkSupported=!!data.fork_supported;resumeSupported=!!data.resume_supported;$('.nh-resume').hidden=!resumeSupported;$('.nh-select').replaceChildren();const placeholder=document.createElement('option');placeholder.value='';placeholder.textContent='Choose a saved conversation';$('.nh-select').appendChild(placeholder);
-      for(const c of data.conversations){const option=document.createElement('option');option.value=c.id;option.textContent=`${new Date(c.modified*1000).toLocaleString()} · ${c.title} · ${c.id.slice(0,8)}`;$('.nh-select').appendChild(option);}
+      for(const c of data.conversations){const option=document.createElement('option');option.value=c.id;option.textContent=`${c.id===data.current?.id?'Current terminal · ':''}${new Date(c.modified*1000).toLocaleString()} · ${c.title} · ${c.id.slice(0,8)}`;$('.nh-select').appendChild(option);}
+      if(!cid&&data.current?.state==='identified'&&data.current.saved)cid=data.current.id;
       if(data.conversations.some(c=>c.id===cid))$('.nh-select').value=cid;
       cid=$('.nh-select').value;loading=false;controls();
       if(cid)await read();else{$('.nh-status').textContent=data.conversations.length?'Choose a saved conversation to see available actions.':'No saved conversations found in this workspace.';$('.nh-messages').replaceChildren();}
-      if(data.scan_limited)$('.nh-explain').textContent='Showing conversations discovered among the 500 most recently changed transcript files. Choose one explicitly; the running terminal is unchanged.';
+      $('.nh-explain').textContent=data.current?.state==='identified'?(data.current.saved?'The current terminal’s conversation is marked in the list. You can choose another saved conversation.':'The current terminal has not saved readable messages yet. You can choose another conversation.') :data.current?.state==='ambiguous'?'Several conversations are active in this terminal. Choose the one you want explicitly.':'The current conversation could not be identified. Choose a saved conversation explicitly.';
+      if(data.scan_limited)$('.nh-explain').textContent+=' Showing up to 500 discovered transcript files, prioritizing the current terminal.';
     }catch(e){if(!closed&&generation===version){$('.nh-status').textContent=e.message;loading=false;controls();}}
   }
   $('.nh-select').onchange=()=>{cid=$('.nh-select').value;$('.nh-confirm').hidden=true;read();};

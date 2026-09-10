@@ -218,3 +218,16 @@ clients, while these display preferences are local to the browser.
 `{"group_path":""}`. Names are normalized by trimming each level; empty levels,
 control characters and more than eight levels are rejected. Moving a group
 label does not move files, change the project, or restart the agent.
+
+When a live Claude or Codex conversation can be verified, **Saved conversations**
+marks it **Current terminal** and selects it initially. The web reader opens its
+saved messages immediately; the terminal dashboard defaults its conversation
+choice to that entry. Refresh preserves a different conversation you selected.
+
+Identification is read-only and currently uses Linux process information, including
+on SSH/WSL targets. Claude supplies a runtime record tied to its process start;
+Codex must hold its transcript open in the native `codex` process. The active tmux
+pane and its identity must remain stable. Ambiguous, unavailable or stale evidence
+leaves manual selection available. A new Claude conversation can be identified
+before it has saved any readable messages; it becomes readable after persistence.
+Older unmarked terminals and renamed Codex binaries may require manual selection.
