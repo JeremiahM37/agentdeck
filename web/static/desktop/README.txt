@@ -1,79 +1,53 @@
 AgentDeck native terminals
 
-Linux + Kitty
+Open in terminal uses your device's default terminal. AgentDeck does not require
+Kitty, WezTerm, or another specific terminal, and does not override its appearance.
 
-Install Kitty with your distribution's package manager if needed. Download
-setup-agentdeck-kitty.sh from the Desktop panel, then run:
-  bash setup-agentdeck-kitty.sh
+Linux
 
-This installs a per-user agentdeck:// handler. Configure ~/.ssh/config:
+Download setup-agentdeck-terminal.sh, then run:
+  bash setup-agentdeck-terminal.sh
+
+The handler asks xdg-terminal-exec or your desktop's x-terminal-emulator to open
+SSH. Minimal window managers can use their existing TERMINAL environment setting;
+when no default helper is available, it uses an installed terminal automatically.
+The older setup-agentdeck-kitty.sh download now installs this same generic handler.
+
+Windows
+
+Download setup-agentdeck.ps1, then run in PowerShell:
+  powershell -NoProfile -ExecutionPolicy Bypass -File .\setup-agentdeck.ps1
+
+This starts OpenSSH in the terminal host chosen by Windows's Default terminal
+application setting. No separate terminal installation is required. OpenSSH must
+be installed. Original open-terminal.ps1 is retained as a .bak file.
+
+Connection (both platforms)
+
+Configure your existing SSH key and this alias in ~/.ssh/config (Windows:
+%USERPROFILE%\.ssh\config), using your server's host and account:
   Host agentdeck
-    HostName aiserver
-    User admin
+    HostName YOUR_SERVER
+    User YOUR_USER
     ServerAliveInterval 30
     ServerAliveCountMax 3
 
-Authorize this desktop's own public key on the control plane, then connect once
-with ssh agentdeck true and verify its host key. No server private key is needed.
-Use AgentDeck > Attach > Desktop > Open desktop terminal. Kitty inherits your
-theme with 14pt text and 100,000 scrollback lines for these windows. It uses
-xterm-256color for compatibility with remote systems lacking Kitty terminfo.
-Ctrl+Shift+C/V copies/pastes; Ctrl+Shift+H opens Kitty's scrollback pager.
+Connect once with ssh agentdeck true and verify its host key. Then click
+Open in terminal in AgentDeck. The browser may ask to allow the external link.
+The same tmux session remains available in both views. Ctrl+B then D detaches.
+Tools > Terminal connection setup contains installation and manual instructions.
 
-Original launcher/MIME files are saved under ~/.local/state/agentdeck/setup-*.
+Original Linux launcher/MIME files are saved under ~/.local/state/agentdeck/setup-*.
 To uninstall, restore the saved MIME settings and remove
-~/.local/bin/agentdeck-kitty and ~/.local/share/applications/agentdeck-kitty.desktop.
-
-WezTerm on Windows
-
-1. Install WezTerm from https://wezterm.org/install/windows.html
-   Or in PowerShell:
-     winget install --id wez.wezterm -e
-
-2. Keep Tailscale connected. Configure this SSH alias in
-   %USERPROFILE%\.ssh\config (create the file if needed):
-
-     Host agentdeck
-       HostName aiserver
-       User admin
-       ServerAliveInterval 30
-       ServerAliveCountMax 3
-
-   Use your existing desktop SSH key/account for AIServer. Do not copy a
-   server's private key onto the desktop. If no desktop key exists, run
-   ssh-keygen -t ed25519 and add its .pub file to admin's authorized_keys
-   on AIServer. Test: ssh agentdeck true
-
-   This SSH alias is the desktop's one connection to the control plane.
-   AgentDeck resolves local/LXC/SSH/WSL targets from there automatically.
-   Other AgentDeck installations: replace HostName and User with your own
-   control-plane host and account. Configure AGENTDECK_PORT/AUTH_TOKEN in
-   that account's environment if the service uses a nondefault port/token.
-
-3. Download setup-agentdeck.ps1 beside this document. Run in PowerShell:
-     powershell -NoProfile -ExecutionPolicy Bypass -File .\setup-agentdeck.ps1
-   No administrator privileges needed. Existing WezTerm settings are untouched.
-
-4. AgentDeck > Attach > Desktop > Open desktop terminal.
-   Your browser may ask whether to open the AgentDeck link; allow it.
-   This opens the SAME tmux session. Close the window or detach with
-   Ctrl+B then D; the session continues and stays available in the browser.
-
-Optional appearance: merge these into your existing .wezterm.lua config table:
-   font_size = 14.0,
-   color_scheme = 'Builtin Solarized Dark',
-   scrollback_lines = 100000,
-   enable_scroll_bar = true,
-
-WezTerm defaults: Ctrl+Shift+C/V copy/paste; Ctrl+Shift+F search;
-Ctrl+Shift+Space quick select; Ctrl+Shift+L launcher.
+~/.local/bin/agentdeck-terminal and
+~/.local/share/applications/agentdeck-terminal.desktop.
 
 Files: use AgentDeck's browser terminal to drop local files or paste screenshots.
 It transfers the bytes to the session's machine and inserts the remote path.
 Because both views attach to the same tmux session, the inserted path appears
-in WezTerm too. A native terminal drop alone may only insert a LOCAL filename.
+in your terminal too. A native terminal drop alone may only insert a LOCAL filename.
 
-Manual connection (also works in Kitty on Linux/macOS):
+Manual connection (any SSH terminal):
    ssh -t agentdeck /usr/local/bin/agentdeck attach session SESSION_ID
 Copy the exact command from the Desktop panel; tasks use attempt IDs.
 

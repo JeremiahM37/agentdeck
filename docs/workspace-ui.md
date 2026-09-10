@@ -15,8 +15,8 @@ Switching sections preserves drafts. Arrow keys, Home and End navigate the
 section tabs. Task creation stays on the Board; session creation stays in
 Sessions. Attach opens an internal terminal tab, and Pop out remains available.
 
-Linux/Kitty and Windows/WezTerm have equally visible setup instructions in the
-Desktop dialog. The attached terminal and a native terminal can remain open
+Open in terminal uses the device's default terminal. Linux and Windows setup
+instructions live under Tools → Terminal connection setup. The attached terminal and a native terminal can remain open
 simultaneously.
 
 Verified layouts: 390px phone and 1440px desktop, live session data, project

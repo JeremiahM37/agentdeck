@@ -21,11 +21,12 @@
       <button id="upload">Attach files</button
       ><input id="file-input" type="file" multiple hidden />
       <button id="files">Files</button>
-      <button id="desktop">Desktop terminal</button>
+      <a id="desktop" class="button">Open in terminal</a>
       <details id="terminal-tools" class="action-menu">
         <summary id="terminal-tools-summary">Tools</summary>
         <div class="action-menu-panel">
           <button id="find">Find in terminal</button><button id="history">Session history</button>
+          <button id="desktop-setup">Terminal connection setup</button>
           <button id="shell">Split shell</button><button id="preferences">Appearance</button>
           <button id="pause">Pause view</button><button id="bottom">Jump to live</button>
           <button id="reconnect" title="Reconnect this view and redraw the terminal; the agent keeps running">Reconnect view</button>
@@ -130,19 +131,19 @@
     <dialog id="desktop-dialog">
       <div class="dialog-head"><h2>Open in your terminal</h2><button data-close aria-label="Close desktop setup">Close</button></div>
       <p>
-        Attach to this same session in Kitty or WezTerm. Closing either terminal leaves
+        Attach to this same session in your default terminal. Closing either terminal leaves
         the session running.
       </p>
-      <a id="desktop-open" class="button primary">Open desktop terminal</a>
+      <a id="desktop-open" class="button primary">Open in terminal</a>
       <h3>First-time setup</h3>
       <div class="desktop-platforms">
-        <section><span class="platform-label">Linux</span><h3>Kitty</h3>
-          <p>Install Kitty, download the launcher, then run:</p>
-          <code>bash setup-agentdeck-kitty.sh</code>
-          <a href="/desktop/setup-agentdeck-kitty.sh" download>Download Linux setup</a>
+        <section><span class="platform-label">Linux</span><h3>Your default terminal</h3>
+          <p>Download the launcher, then run:</p>
+          <code>bash setup-agentdeck-terminal.sh</code>
+          <a href="/desktop/setup-agentdeck-terminal.sh" download>Download Linux setup</a>
         </section>
-        <section><span class="platform-label">Windows</span><h3>WezTerm</h3>
-          <p>Install WezTerm, download the launcher, then run in PowerShell:</p>
+        <section><span class="platform-label">Windows</span><h3>Your default terminal</h3>
+          <p>Download the launcher, then run in PowerShell:</p>
           <code>powershell -ExecutionPolicy Bypass -File .\setup-agentdeck.ps1</code>
           <a href="/desktop/setup-agentdeck.ps1" download>Download Windows setup</a>
         </section>
@@ -155,7 +156,7 @@
         <code id="cli-install-command"></code>
       </details>
       <details class="manual-connection"><summary>Connect from an already-open terminal</summary>
-        <p>Run this in Kitty, WezTerm, or another SSH terminal:</p>
+        <p>Run this in your terminal:</p>
         <textarea id="desktop-command" readonly rows="3" aria-label="Manual SSH command"></textarea>
         <button id="desktop-copy">Copy command</button>
       </details>

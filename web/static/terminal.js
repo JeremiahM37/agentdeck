@@ -699,19 +699,14 @@ async function preview(p) {
   });
   if (!$("#preview-dialog").open) $("#preview-dialog").showModal();
 }
-$("#desktop").onclick = () => {
+$("#desktop-setup").onclick = () => {
   $("#desktop-open").href = info.desktop_uri;
   $("#desktop-command").value = info.desktop_command;
   $("#desktop-dialog").showModal();
 };
 $('#cli-install-command').textContent = 'bash install-agentdeck-cli.sh --server agentdeck --api ' + quote(location.origin);
-const desktopPlatform = navigator.userAgentData?.platform || navigator.platform;
-const nativeName = /Linux/i.test(desktopPlatform) && !/Android/i.test(navigator.userAgent) ? 'Kitty'
-  : /Win/i.test(desktopPlatform) ? 'WezTerm' : null;
-if (nativeName) {
-  $('#desktop').textContent = nativeName;
-  $('#desktop-open').textContent = 'Open in ' + nativeName;
-  if (nativeName === 'WezTerm') $('#cli-install-command').textContent = 'powershell -ExecutionPolicy Bypass -File .\\install-agentdeck-cli.ps1 -Server agentdeck';
+if (/Win/i.test(navigator.userAgentData?.platform || navigator.platform)) {
+  $('#cli-install-command').textContent = 'powershell -ExecutionPolicy Bypass -File .\\install-agentdeck-cli.ps1 -Server agentdeck';
 }
 $('#terminal-tools .action-menu-panel').addEventListener('click', e => {
   if (e.target.closest('button')) $('#terminal-tools').open = false;
@@ -753,6 +748,7 @@ window.addEventListener("beforeunload", () =>
 );
 act(async () => {
   info = await api("/info");
+  $("#desktop").href = info.desktop_uri;
   $("#identity").textContent = info.tmux_session + " · " + info.target;
   document.title = info.tmux_session + " · AgentDeck";
   $("#workspace-path").textContent = info.workdir;

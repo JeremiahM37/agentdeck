@@ -407,7 +407,7 @@ body.embedded > nav > button { flex:none; white-space:nowrap; }
 /* A short toolbar; secondary tools remain available in one disclosure. */
 :root { --bg:#0c1018; --surface:#151d29; --line:#2a3545; --ink:#e2e8f0; --muted:#a0aec1; --accent:#b5a2f0; }
 nav { padding:8px 12px; gap:8px; align-items:center; flex-wrap:nowrap; border-bottom:1px solid var(--line); }
-nav>button { min-height:40px; white-space:nowrap; background:transparent; border-color:transparent; }
+nav>button,nav>a.button { min-height:40px; white-space:nowrap; background:transparent; border-color:transparent; }
 #upload { background:#7860d2; border-color:#8f79df; color:white; }
 #desktop { margin-left:auto; }
 #workspace { padding:0; gap:1px; }
@@ -435,9 +435,11 @@ dialog { border-radius:14px; padding:22px; border-color:#384459; }
 .manual-connection summary { cursor:pointer; color:var(--muted); padding:5px 0; }
 @media(max-width:600px) {
  nav,body.embedded nav { gap:3px; padding:5px 6px; }
- nav>button,.action-menu>summary { min-height:44px; padding:9px 8px; font-size:12px; }
+ nav>button,nav>a.button,.action-menu>summary { min-height:44px; padding:9px 8px; font-size:12px; }
  .desktop-platforms { grid-template-columns:1fr; }
  .action-menu-panel>button { min-height:44px; }
 }
 .action-menu-panel { max-height:calc(100dvh - 90px); overflow-y:auto; }
 .action-menu.menu-above>.action-menu-panel { top:auto; bottom:calc(100% + 6px); }
+
+nav>a.button { text-decoration:none; display:inline-flex; align-items:center; }

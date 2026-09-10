@@ -320,8 +320,8 @@ searchable tmux history, saved appearance settings, and an optional persistent
 shell alongside it. A file drawer previews text, images and PDFs and downloads
 artifacts. Uploads insert the path on the agent's machine without pressing Enter.
 
-**Desktop** connects Kitty (Linux) or WezTerm (Windows) to the same session,
-keeping the browser attached. Both installers are available in the Desktop panel.
+**Open in terminal** opens your device's default terminal on the same session,
+keeping the browser attached. Connection setup is available under Tools.
 The shared tmux screen fits the smaller connected terminal, so a larger native
 window cannot crop the browser into a blank view. Attachments open as tabs inside
 AgentDeck; **Pop out** remains available.

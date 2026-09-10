@@ -2,7 +2,7 @@
 import pytest
 from playwright.sync_api import expect
 from conftest import PHONE, DESKTOP
-from test_terminal_workspace import real_terminal, open_terminal
+from test_terminal_workspace import real_terminal, open_terminal, terminal_tool
 
 @pytest.mark.parametrize('page',[PHONE,DESKTOP],indirect=True)
 def test_settings_sections_keep_drafts_and_keyboard_navigation(page,server):
@@ -34,10 +34,15 @@ def test_session_search_and_secondary_actions_survive_refresh(page,real_terminal
 @pytest.mark.parametrize('page',[PHONE,DESKTOP],indirect=True)
 def test_desktop_platform_choices_and_terminal_tools(page,real_terminal):
     open_terminal(page,real_terminal)
-    page.locator('#desktop').click()
+    expect(page.locator('#desktop')).to_have_text('Open in terminal')
+    expect(page.locator('#desktop')).to_have_attribute('href',f"agentdeck://attach/session/{real_terminal['id']}")
+    terminal_tool(page,'#desktop-setup')
+    expect(page.locator('#desktop-open')).to_have_text('Open in terminal')
+    expect(page.locator('#desktop-dialog')).not_to_contain_text('Kitty')
+    expect(page.locator('#desktop-dialog')).not_to_contain_text('WezTerm')
     expect(page.locator('#desktop-dialog')).to_contain_text('Linux')
     expect(page.locator('#desktop-dialog')).to_contain_text('Windows')
-    expect(page.locator('a[href="/desktop/setup-agentdeck-kitty.sh"]')).to_be_visible()
+    expect(page.locator('a[href="/desktop/setup-agentdeck-terminal.sh"]')).to_be_visible()
     expect(page.locator('a[href="/desktop/setup-agentdeck.ps1"]')).to_be_visible()
     page.locator('#desktop-dialog [data-close]').click()
     expect(page.locator('#pause')).not_to_be_visible()

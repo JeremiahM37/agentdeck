@@ -115,3 +115,11 @@ tmux uses the alternate screen even for a plain shell. Without mouse reporting,
 AgentDeck can retrieve retained tmux history. End-to-end tests run with an empty
 tmux config and cover both its default alternate screen and a normal-screen
 configuration, so host customizations cannot hide this behavior.
+
+## Default terminal
+
+Open in terminal follows the agentdeck:// link directly. The installed desktop
+handler asks Linux's default-terminal helper or Windows's default console host
+to launch SSH. It does not choose a brand from the browser's OS, or change fonts
+or themes. Minimal Linux environments without a default helper use TERMINAL or
+an installed terminal. Setup remains under Tools → Terminal connection setup.

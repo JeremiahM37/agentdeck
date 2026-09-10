@@ -508,7 +508,7 @@ function sessionCard(s) {
     const native = document.createElement('a');
     native.className = 'b';
     native.href = `agentdeck://attach/session/${s.id}`;
-    native.textContent = /Linux/i.test(navigator.platform) && !/Android/i.test(navigator.userAgent) ? 'Open in Kitty' : /Win/i.test(navigator.platform) ? 'Open in WezTerm' : 'Open desktop terminal';
+    native.textContent = 'Open in terminal';
     panel.appendChild(native);
     if (s.status === "running") act("⎋ Interrupt", "warn", () => sendKey(s, "escape"));
     act("⇥ Handoff", "", () => handoffSession(s));

@@ -12,17 +12,10 @@ if ($Uri -notmatch '^agentdeck://attach/(session|attempt|project|session-shell|a
 }
 $kind = $Matches[1]
 $sessionId = $Matches[2]
-$wezterm = (Get-Command wezterm-gui.exe -ErrorAction SilentlyContinue).Source
-if (-not $wezterm) {
-    $candidates = @(
-        (Join-Path $env:ProgramFiles 'WezTerm\wezterm-gui.exe'),
-        (Join-Path $env:LOCALAPPDATA 'Programs\WezTerm\wezterm-gui.exe')
-    )
-    $wezterm = $candidates | Where-Object { Test-Path $_ } | Select-Object -First 1
-}
-if (-not $wezterm) { throw 'Install WezTerm first: winget install --id wez.wezterm -e' }
-# Start-Process receives only fixed words and validated kind/numeric ID.
-Start-Process -FilePath $wezterm -ArgumentList @('start','--','ssh','-t','agentdeck','/usr/local/bin/agentdeck','attach',$kind,$sessionId)
+# Launch a console application normally. Windows hosts it in the user's
+# default terminal application (Windows Terminal, Console Host, or another host).
+$ssh = (Get-Command ssh.exe -ErrorAction Stop).Source
+Start-Process -FilePath $ssh -ArgumentList @('-t','agentdeck','/usr/local/bin/agentdeck','attach',$kind,$sessionId)
 '@
 $launcherPath = Join-Path $installDir 'open-terminal.ps1'
 if (Test-Path $launcherPath) { Copy-Item $launcherPath ($launcherPath + '.bak') -Force }
@@ -36,5 +29,5 @@ $command = 'powershell.exe -NoProfile -ExecutionPolicy Bypass -File "' + $launch
 Set-Item -Path "$reg\shell\open\command" -Value $command
 Write-Host 'AgentDeck desktop links are installed for this Windows user.'
 Write-Host 'Next: configure the agentdeck SSH alias, then test: ssh agentdeck true'
-Write-Host 'In AgentDeck: Attach > Desktop > Open desktop terminal.'
+Write-Host 'In AgentDeck: Attach > Desktop > Open in terminal.'
 Write-Host 'Remove later: Remove-Item HKCU:\Software\Classes\agentdeck -Recurse'
