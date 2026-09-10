@@ -1,3 +1,4 @@
+import { openNativeHistory } from "/native-history.js";
 import { openReview } from "/review.js";
 import { TerminalTabs } from "/terminal-tabs.js";
 import { actionMenu } from "/ui-menu.js";
@@ -522,6 +523,9 @@ function sessionCard(s) {
   // running — and killing it is a separate, explicit choice.
   const adopted = s.origin === "discovered";
   actionRow = panel;
+  if (["claude", "codex"].includes(s.agent)) {
+    act("Saved conversations", "", () => openNativeHistory({id:s.id,name:s.name,api,onFork:()=>{refreshSessions();toast("Fork started. The original session keeps running.");}}));
+  }
   if (s.status === "dead") {
     act("Dismiss", "no", () => endSession(s, false));
   } else if (adopted) {

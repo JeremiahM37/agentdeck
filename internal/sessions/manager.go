@@ -67,6 +67,7 @@ type LaunchOpts struct {
 	// you were in yesterday.
 	Resume   bool
 	ResumeID string
+	ForkID   string
 	// ReservedID is an internal durable session reservation for task takeover.
 	ReservedID int64
 	// ExtraArgs carries already-validated runtime configuration from a task.
@@ -153,6 +154,10 @@ func (m *Manager) Launch(ctx context.Context, o LaunchOpts) (*store.Session, err
 		m.end(sess.ID, "dead")
 		return nil, fmt.Errorf("unknown agent %q", agent)
 	}
+	if o.ForkID != "" && len(spec.ForkArgs) == 0 {
+		m.end(sess.ID, "dead")
+		return nil, fmt.Errorf("agent %q does not support forking", agent)
+	}
 	if o.ResumeID != "" && len(spec.ResumeIDArgs) == 0 {
 		return nil, fmt.Errorf("agent %q does not support resuming an exact conversation", agent)
 	}
@@ -192,7 +197,7 @@ func (m *Manager) Launch(ctx context.Context, o LaunchOpts) (*store.Session, err
 	}
 
 	cmd := spec.LaunchCommand(Start{
-		Workdir: workdir, TmuxName: tmuxName, Model: o.Model, Resume: o.Resume, ResumeID: o.ResumeID,
+		Workdir: workdir, TmuxName: tmuxName, Model: o.Model, Resume: o.Resume, ResumeID: o.ResumeID, ForkID: o.ForkID,
 		Prompt: argPrompt, EnvPrefix: envPrefix, Yolo: o.Yolo})
 	r, err := ex.Run(ctx, cmd, executor.RunOpts{Timeout: 60})
 	if err != nil {

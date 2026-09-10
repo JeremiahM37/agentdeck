@@ -1,3 +1,4 @@
+import { openNativeHistory } from "/native-history.js";
 import { openReview } from "/review.js";
 import { installTerminalScroll } from "/terminal-scroll.js";
 import '/ui-menu.js';
@@ -770,3 +771,6 @@ act(async () => {
 })();
 
 $("#review").onclick = () => openReview({kind,id,name:info?.workdir,api: async path => (await request("/api"+path)).json()});
+
+$("#saved-conversations").hidden=kind!=="session";
+$("#saved-conversations").onclick=()=>openNativeHistory({id,name:info?.workdir,api:async (path,options={})=>{const opts={...options};if(opts.body){opts.body=JSON.stringify(opts.body);opts.headers={"Content-Type":"application/json"};}return (await request("/api"+path,opts)).json();},onFork:()=>notice("Fork started. Find it in Sessions; this terminal stays attached.")});

@@ -30,6 +30,7 @@ type Spec struct {
 	ResumeArgs []string `json:"resume_args,omitempty"`
 	// ResumeIDArgs select one exact conversation; {id} is shell-quoted.
 	ResumeIDArgs []string `json:"resume_id_args,omitempty"`
+	ForkArgs     []string `json:"fork_args,omitempty"`
 	// PromptArg says the opening message can be a positional argument. When it
 	// cannot, agentdeck falls back to typing the message once the pane settles.
 	PromptArg bool `json:"prompt_arg,omitempty"`
@@ -66,11 +67,11 @@ type Spec struct {
 func Builtins() []Spec {
 	return []Spec{
 		{Name: "claude", Command: "claude", ModelFlag: "--model",
-			ResumeIDArgs: []string{"--resume", "{id}"}, ResumeArgs: []string{"--continue"}, PromptArg: true, Builtin: true,
+			ForkArgs: []string{"--resume", "{id}", "--fork-session"}, ResumeIDArgs: []string{"--resume", "{id}"}, ResumeArgs: []string{"--continue"}, PromptArg: true, Builtin: true,
 			YoloArgs:     []string{"--permission-mode", "bypassPermissions"},
 			TrustCommand: claudeTrust},
 		{Name: "codex", Command: "codex", ModelFlag: "-m",
-			ResumeIDArgs: []string{"resume", "{id}"}, ResumeArgs: []string{"resume", "--last"}, PromptArg: true, Builtin: true,
+			ForkArgs: []string{"fork", "{id}"}, ResumeIDArgs: []string{"resume", "{id}"}, ResumeArgs: []string{"resume", "--last"}, PromptArg: true, Builtin: true,
 			ModelsCommand: "{bin} debug models",
 			YoloArgs:      []string{"--dangerously-bypass-approvals-and-sandbox"},
 			TrustCommand:  codexTrust},
@@ -166,6 +167,7 @@ type Start struct {
 	Model     string
 	Resume    bool
 	ResumeID  string
+	ForkID    string
 	Prompt    string
 	EnvPrefix string
 	// Yolo runs the agent without its approval prompts. On by default for
@@ -179,7 +181,11 @@ type Start struct {
 func (s Spec) LaunchCommand(o Start) string {
 	parts := []string{s.Command}
 	parts = append(parts, s.Args...)
-	if o.ResumeID != "" {
+	if o.ForkID != "" {
+		for _, arg := range s.ForkArgs {
+			parts = append(parts, shellq.Quote(strings.ReplaceAll(arg, "{id}", o.ForkID)))
+		}
+	} else if o.ResumeID != "" {
 		for _, arg := range s.ResumeIDArgs {
 			parts = append(parts, shellq.Quote(strings.ReplaceAll(arg, "{id}", o.ResumeID)))
 		}

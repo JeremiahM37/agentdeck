@@ -33,8 +33,7 @@ useful, but breadth alone does not make a terminal interface pleasant.
   restoration after exit. A plain menu remains for pipes and accessibility.
 
 These changes target daily agent-management workflow quality. They do not imply
-feature-for-feature replacement of every tool: native conversation branching,
-tmuxp-compatible declarative layouts, and Zellij's pane/plugin system remain
+feature-for-feature replacement of every tool: tmuxp-compatible declarative layouts, and Zellij's pane/plugin system remain
 separate capabilities. Existing tmux/Zellij workspaces can host the client;
 AgentDeck continues using tmux for the underlying agent sessions.
 
@@ -50,7 +49,7 @@ in this document is not a substitute for that evidence.
 | --- | --- |
 | Find, group, monitor, attach, detach, reconnect | Live dashboard + PTY tests; browser real tmux resize/reconnect/dual-client tests. Broader multi-session and saved-view UX comparison remains. |
 | Review ongoing work | Live staged/working review implemented for TUI and web; real Git API tests cover renames, binary/untracked files, path boundaries and unchanged index; Playwright covers desktop/mobile, stale responses and retained attachment; actual SSH target proof passed. Full rollout verification is recorded in shared memory. |
-| Branch a conversation / isolated parallel work | Task worktrees exist. Native session forking and interactive worktree creation remain gaps; latest-session resume is not forking. |
+| Branch a conversation / isolated parallel work | Native Claude/Codex workspace conversation picker, paginated reader, and exact-ID fork implemented in TUI/web. API, real tmux/PTY and mobile browser tests cover boundaries, unchanged original history and explicit confirmation. Installed Codex fork persisted a distinct ID; installed Claude loaded saved history with its native fork flag (no new turn). Interactive worktree creation and automatic terminal-to-native identity remain gaps. |
 | Organize large fleets | Project/target grouping and search exist. Saved profiles, archive/recovery, custom groups, global conversation search need audit/implementation. |
 | Agent setup | Custom commands exist; named agent settings, MCP/skills setup, installed-agent discovery and lifecycle need comparison with current upstream. |
 | Workspace setup | Task worktrees and target executors exist; multi-repository interactive workspaces and repo setup hooks need audit/implementation. |

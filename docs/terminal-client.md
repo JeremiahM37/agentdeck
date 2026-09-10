@@ -122,3 +122,39 @@ reads a snapshot when opened/refreshed; the agent can continue editing. Large
 patches are explicitly truncated at 512 KiB. Git and Python 3 run on the target,
 including SSH targets; there is no local-checkout assumption and no staging or
 checkout mutation.
+
+## Saved native conversations and forks
+
+On a Claude or Codex session, press `H` (or Actions → Saved conversations / fork)
+to choose a saved conversation from that workspace on its target. Read it in the
+preview, use `O` for the preceding page, or choose **Fork** in the picker. The
+confirmation names the exact conversation ID and explains that the workspace
+files are shared. The original agent keeps running; no new prompt is submitted.
+
+The web offers **Saved conversations** in the session's More menu and the
+attached terminal's Tools menu. Choose a conversation explicitly; messages are
+grouped by role, tool activity folds away, and **Load earlier messages** pages
+back without replacing the messages already on screen. Codex's saved thread
+names are used when present. Long messages and discovery limits are labelled.
+
+History reads native JSONL stores using the target's `CODEX_HOME` or
+`CLAUDE_CONFIG_DIR` (including configured agent environment overrides), and
+checks the stored working directory. It never guesses that a directory's most
+recent conversation belongs to the selected terminal. Other agents retain the
+terminal history/reader. Native history is currently limited to these two agent
+formats; private reasoning/system/developer records are omitted.
+
+`GET /sessions/{id}/conversations` lists candidates;
+`GET /sessions/{id}/conversations/{uuid}?before=BYTE_OFFSET` reads a page;
+`POST /sessions/{id}/fork` accepts `conversation_id` and an optional `name`.
+Custom Claude/Codex definitions can provide `fork_args` with an `{id}` placeholder.
+Without it, the picker offers reading only. A fork is a conversation branch, not
+a Git worktree; interactive worktree isolation is a separate remaining feature.
+
+Optional installed-CLI checks (no new prompt/model turn):
+`python3 tests/native_codex_fork.py` verifies a distinct persisted Codex ID,
+copied fixture history, and unchanged original; `python3 tests/native_claude_fork.py`
+verifies Claude loads fixture history with its native fork flag and leaves the
+original unchanged. Claude need not write the new transcript before a new turn.
+The regular suite tests target lookup, pagination, workspace boundaries and
+actual tmux launch with scripted agents, without requiring either paid CLI.

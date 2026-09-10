@@ -98,6 +98,7 @@ type dashboard struct {
 	query                          textinput.Model
 	searching                      bool
 	review                         *codeReview
+	native                         *nativeSelection
 	grouping                       int
 	attention, ended               bool
 	preview                        viewport.Model
@@ -331,6 +332,8 @@ func (m *dashboard) switchSection(i int) tea.Cmd {
 }
 func (m *dashboard) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch v := msg.(type) {
+	case nativeListMsg:
+		return m, m.nativePicker(v)
 	case reviewMsg:
 		m.receiveReview(v)
 		return m, nil
@@ -379,6 +382,11 @@ func (m *dashboard) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.detailKey = v.key
 				m.detailTitle = v.label
 				m.detail = clean(formatDetail(v.label, v.data))
+				if v.label == "Saved conversation" && m.native != nil {
+					var p struct{ Before *int64 }
+					json.Unmarshal(v.data, &p)
+					m.native.before = p.Before
+				}
 				m.preview.GotoTop()
 				m.updatePreview()
 				m.previewFocus = true
@@ -488,6 +496,10 @@ func (m *dashboard) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		switch v.String() {
 		case "q":
 			return m, tea.Quit
+		case "H":
+			return m, m.savedConversations()
+		case "O":
+			return m, m.olderNative()
 		case "?":
 			m.help = true
 		case "/":
@@ -816,6 +828,7 @@ const dashboardHelp = ` Keyboard shortcuts
  n             New item         e        Rename   u Upload context
  m             All actions      f        Find and track running agents
  h             Full history     v        Review task diff
+ H             Saved conversations / fork   O Earlier saved messages
  PgUp/PgDn     Scroll preview   Esc       Clear search / return to live preview
  z             Include ended sessions   r  Refresh now
  7 Settings    8 Usage           9 Full API

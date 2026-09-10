@@ -70,6 +70,8 @@ func (m *dashboard) choose(a dashboardAction) tea.Cmd {
 		return m.uploadForm()
 	case "history":
 		return m.readDetail("History")
+	case "saved-history":
+		return m.savedConversations()
 	case "review":
 		return m.openReview()
 	case "diff":
@@ -107,7 +109,7 @@ func (m *dashboard) actions() []dashboardAction {
 	var actions []dashboardAction
 	switch kind {
 	case "sessions":
-		actions = []dashboardAction{op("Attach", "attach"), op("Companion shell", "shell"), op("Send message", "send"), op("Upload context file", "upload"), op("Review changes", "review"), op("Read history", "history"), op("Browse files", "files"), op("Rename", "rename"), op("Move / edit session", "edit"), op("Request handoff", "handoff"), read("Handoff summaries", "/wraps")}
+		actions = []dashboardAction{op("Attach", "attach"), op("Companion shell", "shell"), op("Send message", "send"), op("Upload context file", "upload"), op("Review changes", "review"), op("Read history", "history"), op("Saved conversations / fork", "saved-history"), op("Browse files", "files"), op("Rename", "rename"), op("Move / edit session", "edit"), op("Request handoff", "handoff"), read("Handoff summaries", "/wraps")}
 		actions = append(actions, dashboardAction{Label: "Interrupt agent", Method: "POST", Path: path + "/send", Body: map[string]any{"key": "C-c"}, Warning: "Send Ctrl-c to this session's current command?"})
 	case "tasks":
 		actions = []dashboardAction{op("Attach to attempt", "attach"), op("Companion shell", "shell"), op("Send message", "send"), op("Upload context file", "upload"), op("Review diff", "diff"), op("Review live changes", "review"), read("Messages", "/messages"), read("Events", "/events"), post("Dispatch in worktree", "/dispatch"), post("Take over as interactive session", "/takeover"), op("Request changes", "followup"), op("Commit changes", "commit"), post("Mark complete", "/complete"), op("Edit task", "edit")}
@@ -513,6 +515,9 @@ func (m *dashboard) readDetail(label string) tea.Cmd {
 	return m.readResource(label, "/term/"+terminalKind+"/"+rid+"/history?lines=1000")
 }
 func formatDetail(label string, data []byte) string {
+	if label == "Saved conversation" {
+		return nativeText(data)
+	}
 	var value any
 	if json.Unmarshal(data, &value) != nil {
 		return string(data)
