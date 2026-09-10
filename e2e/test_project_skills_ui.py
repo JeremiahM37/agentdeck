@@ -14,7 +14,7 @@ from pathlib import Path
 import pytest
 from playwright.sync_api import expect
 
-from conftest import DESKTOP, PHONE, _binary
+from conftest import DESKTOP, PHONE, _binary, _start, _stop, _unused_port
 from test_terminal_dashboard import Dashboard
 from test_ui import _tab
 
@@ -247,3 +247,137 @@ def test_project_skills_dashboard_real_pty_has_native_controls(skill_api, tmp_pa
         assert any(r[0] == "POST" and r[1] == "/api/projects/7/skills" for r in state["requests"])
     finally:
         d.close()
+
+
+@pytest.fixture()
+def real_skill_server(tmp_path):
+    """A real local target with a disposable repo and no model executable."""
+    repo = tmp_path / "repo"; repo.mkdir()
+    subprocess.run(["git", "init", "-q", str(repo)], check=True)
+    source_root = tmp_path / "configured-skills"; source = source_root / "review"; source.mkdir(parents=True)
+    (source / "SKILL.md").write_text("name: Review proof\ndescription: Verify target-local materialization\n")
+    agent = tmp_path / "synthetic-claude"
+    agent.write_text("#!/bin/sh\nif [ -L .claude/skills/review ]; then echo SKILL-CWD-PROOF; else echo SKILL-CWD-MISSING; fi\n")
+    agent.chmod(0o755)
+    port = _unused_port()
+    proc = _start(port, {
+        "AGENTDECK_MOCK": "0", "AGENTDECK_DB": str(tmp_path / "skills.db"),
+        "AGENTDECK_CLAUDE_BIN": str(agent), "AGENTDECK_SESSION_POLL": "0.1",
+    })
+    try:
+        yield f"http://127.0.0.1:{port}", repo, source_root, source
+    finally:
+        _stop(proc, port)
+
+
+def _create_real_skill_project(request, base, repo, source_root):
+    target = request.post(f"{base}/api/targets", data={"name": "real-skill-target", "kind": "local"}).json()
+    project = request.post(f"{base}/api/projects", data={
+        "name": "Real skills fixture", "target_id": target["id"], "repo_path": str(repo),
+        "default_agent": "claude", "skill_sources": [str(source_root)]}).json()
+    return target, project
+
+
+@pytest.mark.parametrize("page", [PHONE, DESKTOP], indirect=True, ids=["phone390", "desktop1440"])
+def test_project_skills_real_server_git_launch_detach_and_foreign_preservation(page, real_skill_server):
+    base, repo, source_root, source = real_skill_server
+    target, project = _create_real_skill_project(page.request, base, repo, source_root)
+    project_id = project["id"]
+    try:
+        page.goto(base); _tab(page, "targets")
+        page.locator('[data-settings="projects"]').click()
+        page.fill("#pj-search", "Real skills fixture")
+        page.locator(".pjrow", has_text="Real skills fixture").click()
+        card = page.locator("#sheet .project-skills")
+        expect(card.locator(".skills-status")).to_contain_text("available", timeout=15000)
+        skill = card.locator(".catalog-skill", has_text="Review proof")
+        expect(skill).to_have_count(1)
+        skill.locator(".skill-attach").click()
+        expect(card.locator(".skills-status")).to_have_text("Skill attached.", timeout=15000)
+
+        link = repo / ".claude" / "skills" / "review"
+        assert link.is_symlink()
+        assert link.resolve() == source.resolve()
+        assert subprocess.check_output(["git", "-C", str(repo), "status", "--short", "--untracked-files=all"], text=True) == ""
+
+        launched = page.request.post(f"{base}/api/sessions", data={
+            "name": "Skill cwd proof", "project_id": project_id, "agent": "claude", "yolo": True}).json()
+        deadline = time.monotonic() + 15; pane = ""
+        while time.monotonic() < deadline:
+            current = page.request.get(f"{base}/api/sessions/{launched['id']}").json()
+            pane = current.get("pane_tail", "")
+            if "SKILL-CWD-PROOF" in pane or "SKILL-CWD-MISSING" in pane: break
+            time.sleep(.1)
+        assert "SKILL-CWD-PROOF" in pane, pane
+
+        card.locator(".attached-skill .skill-detach").click()
+        expect(card.locator(".skills-status")).to_have_text("Skill detached.", timeout=15000)
+        assert source.joinpath("SKILL.md").exists()
+        assert not link.exists() and not link.is_symlink()
+
+        link.mkdir(parents=True); foreign = link / "foreign.txt"; foreign.write_text("operator-owned")
+        skill.locator(".skill-attach").click()
+        expect(card.locator(".skills-status")).to_contain_text("occupied", timeout=15000)
+        assert foreign.read_text() == "operator-owned"
+    finally:
+        page.request.delete(f"{base}/api/sessions/{launched['id']}") if "launched" in locals() else None
+        page.request.delete(f"{base}/api/projects/{project_id}")
+
+
+def test_project_skills_real_server_plain_console_pty_lifecycle(real_skill_server, tmp_path):
+    base, repo, source_root, source = real_skill_server
+    import urllib.request
+    def call(path, body=None, method="GET"):
+        req = urllib.request.Request(base + path, method=method,
+            data=json.dumps(body).encode() if body is not None else None,
+            headers={"Content-Type": "application/json"})
+        with urllib.request.urlopen(req, timeout=15) as response: return json.load(response)
+    target = call("/api/targets", {"name": "real-pty-target", "kind": "local"}, "POST")
+    project = call("/api/projects", {"name": "Real PTY skills", "target_id": target["id"], "repo_path": str(repo),
+        "default_agent": "claude", "skill_sources": [str(source_root)]}, "POST")
+    skill_id = call(f"/api/skills?project_id={project['id']}&agent=claude")["skills"][0]["id"]
+    master, slave = pty.openpty()
+    def controlling_terminal():
+        os.setsid(); import fcntl, termios
+        fcntl.ioctl(0, termios.TIOCSCTTY, 0)
+    proc = subprocess.Popen([_binary(), "console", "--plain"], stdin=slave, stdout=slave, stderr=slave,
+                            env={**os.environ, "AGENTDECK_API": base}, preexec_fn=controlling_terminal)
+    os.close(slave); output = b""
+    def wait(token, timeout=15):
+        nonlocal output
+        end = time.monotonic() + timeout
+        while time.monotonic() < end:
+            if token in output: return
+            if select.select([master], [], [], .1)[0]:
+                try: output += os.read(master, 65536)
+                except OSError: break
+        raise AssertionError(f"missing {token!r}: {output.decode(errors='replace')}")
+    def wait_count(token, count, timeout=15):
+        nonlocal output
+        end = time.monotonic() + timeout
+        while time.monotonic() < end:
+            if output.count(token) >= count: return
+            if select.select([master], [], [], .1)[0]:
+                try: output += os.read(master, 65536)
+                except OSError: break
+        raise AssertionError(f"missing {count} occurrences of {token!r}: {output.decode(errors='replace')}")
+    def send(value): os.write(master, value.encode())
+    try:
+        wait(b"Open:"); send("4\n"); wait(b"Choose:"); send(f"{project['id']}\n"); wait(b"Action:"); send("skills\n")
+        wait(b"Available:"); send("a\n"); wait(b"Skill ID:"); send(skill_id + "\n")
+        link = repo / ".claude" / "skills" / "review"
+        deadline = time.monotonic() + 15
+        while time.monotonic() < deadline and not link.is_symlink(): time.sleep(.1)
+        assert link.is_symlink(); assert subprocess.check_output(["git", "-C", str(repo), "status", "--short"], text=True) == ""
+        send("d\n"); wait(b"Attachment ID:"); send("1\n")
+        deadline = time.monotonic() + 15
+        while time.monotonic() < deadline and link.exists(): time.sleep(.1)
+        assert source.joinpath("SKILL.md").exists() and not link.exists()
+        link.mkdir(parents=True); foreign = link / "foreign.txt"; foreign.write_text("operator-owned")
+        send("a\n"); wait(b"Skill ID:"); send(skill_id + "\n"); wait(b"Attach failed")
+        assert foreign.read_text() == "operator-owned"
+        send("b\n"); wait_count(b"Action:", 2); send("b\n"); wait_count(b"Choose:", 2); send("b\n"); wait_count(b"Open:", 2); send("q\n")
+        proc.wait(timeout=10); assert proc.returncode == 0
+    finally:
+        if proc.poll() is None: proc.terminate(); proc.wait(timeout=10)
+        os.close(master)
