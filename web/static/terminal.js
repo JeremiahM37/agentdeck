@@ -1,3 +1,4 @@
+import { openNativeSearch } from "/native-search.js";
 import { openNativeHistory } from "/native-history.js";
 import { openReview } from "/review.js";
 import { installTerminalScroll } from "/terminal-scroll.js";
@@ -814,3 +815,13 @@ $("#review").onclick = () => openReview({kind,id,name:info?.workdir,api: async p
 
 $("#saved-conversations").hidden=kind!=="session";
 $("#saved-conversations").onclick=()=>openNativeHistory({id,name:info?.workdir,api:async (path,options={})=>{const opts={...options};if(opts.body){opts.body=JSON.stringify(opts.body);opts.headers={"Content-Type":"application/json"};}return (await request("/api"+path,opts)).json();},onFork:()=>notice("Fork started. Find it in Sessions; this terminal stays attached.")});
+
+$("#search-conversations").onclick=async()=>{
+  try {
+    const targets=await (await request("/api/targets")).json();
+    openNativeSearch({targets,api:async(path,options={})=>{
+      const opts={...options};if(opts.body){opts.body=JSON.stringify(opts.body);opts.headers={"Content-Type":"application/json"};}
+      return (await request("/api"+path,opts)).json();
+    }});
+  } catch(error){notice(error.message);}
+};

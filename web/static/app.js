@@ -2,6 +2,7 @@ import { renderSessionGroups } from "/session-groups.js";
 import { CommandPalette } from "/command-palette.js";
 import { openArchiveHistory } from "/archive-history.js";
 import { openNativeHistory } from "/native-history.js";
+import { openNativeSearch } from "/native-search.js";
 import { openReview } from "/review.js";
 import { TerminalTabs } from "/terminal-tabs.js";
 import { actionMenu } from "/ui-menu.js";
@@ -762,6 +763,7 @@ function renderSessions() {
     <div class="list wide">
       <div class="sesshead">
         <div><h2>Sessions</h2><p>${live.length} active · Pick up where you left off.</p></div>
+        <button class="b" id="sess-saved-search">Search saved conversations</button>
         <button class="b" id="sess-discover">⌕ Find running agents</button>
         <button class="b ok" id="sess-new">+ New session</button>
       </div>
@@ -770,6 +772,7 @@ function renderSessions() {
       <label class="session-grouping session-scope">Show <select class="f" id="sess-scope"><option value="active">Active sessions</option><option value="all">Include ended and untracked</option><option value="archived">Archived sessions</option></select></label>
       <div id="sesslist"></div>
     </div>`;
+  $("#sess-saved-search").onclick = () => openNativeSearch({api,targets:state.targets});
   $("#sess-new").onclick = () => { state.sheet = { kind: "new-session" }; renderSheet(); };
   $("#sess-discover").onclick = () => { state.sheet = { kind: "discover" }; renderSheet(); };
 
@@ -2305,6 +2308,7 @@ const commandPalette = new CommandPalette({
     return [
       command('new-session', 'New session', () => sheet('new-session'), 'Start an interactive agent', 'create launch'),
       command('new-task', 'New task', () => sheet('new'), 'Plan or dispatch work', 'create'),
+      command('saved-search', 'Search saved conversations', () => openNativeSearch({api, targets:state.targets}), 'Find text across local and SSH histories', 'history messages content native'),
       command('discover', 'Find running agents', () => sheet('discover'), 'Track existing tmux sessions', 'adopt restore untracked'),
       command('routines', 'Routines', () => sheet('routines'), 'Saved jobs and active runs', 'schedule takeover'),
       ...[['board','Task board'],['sessions','Sessions'],['terminals','Open terminals'],['deck','Deck'],['approvals','Approvals']].map(([tab,title]) => command(`nav-${tab}`,title,()=>switchTab(tab),'','navigate view','Navigate')),

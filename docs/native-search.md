@@ -1,8 +1,9 @@
 # Native conversation search: implementation in progress
 
 The target-local index, exact-match reader and background HTTP API are implemented
-on the development branch. The command palette and terminal dashboard integration
-remain unfinished. The deployed app still uses its existing workspace history picker.
+on the development branch. Web search is available from Sessions, the command
+palette and attached-terminal tools. The terminal dashboard integration remains
+unfinished. The deployed app still uses its existing workspace history picker.
 
 `internal/api/scripts/native_records.py` supplies the shared visible-message
 parser used by the history reader and search index. Search includes user,
@@ -82,6 +83,20 @@ jobs are retained for fifteen minutes, with old completed jobs evicted when full
 Ready result IDs remain stable across progress polls. Each scope's scanned-byte
 count describes its latest indexing pass, not the entire history size.
 
+## Web search (development branch)
+
+Search saved conversations opens a separate dialog without taking ownership of an
+attached terminal. Choose target/agent filters and submit the query explicitly;
+ordinary session/action ranking does not start remote indexing. The dialog shows
+ready matches during indexing, expandable per-profile progress/issues, stop and
+connection-retry controls, plus an explicit rebuild under Search options.
+Keyboard arrows move from the query through results; Enter opens the exact match.
+Back returns to the selected result. Match context is plain text, with tool
+messages collapsible and the selected message marked. Results survive a progress
+fetch failure. Closing cancels indexing, including a search whose start response
+arrives after the dialog closes. Late poll/reader responses cannot reopen it.
+Desktop/mobile dimensions follow the visual viewport when the keyboard opens.
+
 ## Evidence
 
 Twenty-four index and reader tests cover old text beyond the reader's recent window, long text,
@@ -106,13 +121,19 @@ aliases, configuration changes, untracked workspaces, partial failures, cancella
 and the active-job limit; these passed with the Go race detector. A temporary Go
 server also passed an actual API-to-SSH search/read round trip on main-pc with
 Unicode text, zero-byte warm indexing and stale-source rejection.
+Four browser cases cover actual saved histories outside tracked workspaces,
+desktop/phone keyboard navigation and reading, retained terminal identity,
+source-change rejection/rebuild, network retry/stop, direct entry points and
+closing while the start request is pending. Desktop and phone reader screenshots
+were inspected. Full regression verification is running before this checkpoint.
 
 ## Remaining integration
 
-- Add result browsing to web and terminal; show target, workspace and agent, and
-  open the exact matching message with surrounding context.
+- Add the corresponding terminal-dashboard search form, progress, result list
+  and exact-context reader. Web browsing is implemented; broader context
+  pagination/latest and validated native fork actions remain for both interfaces.
 - Support native histories outside an existing session's recorded workspace
   through validated provider metadata, rather than accepting arbitrary file paths.
-- Expose the API's full-rebuild/cache-reset operation in both interfaces.
+- Expose the API's full-rebuild/cache-reset operation in the terminal interface.
 - Test actual local/SSH flows, large histories, failures and desktop/mobile UX;
   run final-head verification before deployment.
