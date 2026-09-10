@@ -410,7 +410,7 @@ func TestBackgroundSetupStateMigratesAndPersists(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, column := range []string{"setup_state", "setup_error"} {
+	for _, column := range []string{"setup_state", "setup_error", "setup_cancel_requested"} {
 		if _, err := db.Exec("ALTER TABLE sessions DROP COLUMN " + column); err != nil {
 			t.Fatal(err)
 		}
@@ -421,10 +421,10 @@ func TestBackgroundSetupStateMigratesAndPersists(t *testing.T) {
 		t.Fatal(err)
 	}
 	legacy, err := db.Session(row.ID)
-	if err != nil || legacy.SetupState != "" || legacy.SetupError != "" {
+	if err != nil || legacy.SetupState != "" || legacy.SetupError != "" || legacy.SetupCancelRequested {
 		t.Fatalf("legacy setup state: %v", err)
 	}
-	if err := db.Update("sessions", row.ID, map[string]any{"setup_state": "failed", "setup_error": "checkout failed"}); err != nil {
+	if err := db.Update("sessions", row.ID, map[string]any{"setup_state": "failed", "setup_error": "checkout failed", "setup_cancel_requested": true}); err != nil {
 		t.Fatal(err)
 	}
 	db.Close()
@@ -434,7 +434,7 @@ func TestBackgroundSetupStateMigratesAndPersists(t *testing.T) {
 	}
 	defer db.Close()
 	loaded, err := db.Session(row.ID)
-	if err != nil || loaded.SetupState != "failed" || loaded.SetupError != "checkout failed" {
+	if err != nil || loaded.SetupState != "failed" || loaded.SetupError != "checkout failed" || !loaded.SetupCancelRequested {
 		t.Fatalf("setup result was not durable: %v", err)
 	}
 }

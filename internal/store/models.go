@@ -148,31 +148,32 @@ type Memory struct {
 // which is work they hand OFF. Its tmux session is the process; this row is the
 // durable record that outlives it.
 type Session struct {
-	SetupState       string   `json:"setup_state,omitempty"`
-	SetupError       string   `json:"setup_error,omitempty"`
-	LaunchConfigJSON string   `json:"-"`
-	ArchivedAt       *float64 `json:"archived_at"`
-	ResumeID         string   `json:"resume_id,omitempty"`
-	TrackingIdentity string   `json:"-"`
-	GroupPath        string   `json:"group_path"`
-	WorktreeJSON     string   `json:"-"`
-	ID               int64    `json:"id"`
-	ProjectID        *int64   `json:"project_id"`
-	TargetID         int64    `json:"target_id"`
-	Name             string   `json:"name"`
-	Agent            string   `json:"agent"`
-	Model            string   `json:"model"`
-	Workdir          string   `json:"workdir"`
-	TmuxSession      string   `json:"tmux_session"`
-	Status           string   `json:"status"`
-	Origin           string   `json:"origin"`
-	PaneHash         string   `json:"-"`
-	PaneTail         string   `json:"pane_tail"`
-	ContextPct       *int     `json:"context_pct"`
-	LastActivityAt   *float64 `json:"last_activity_at"`
-	CreatedAt        float64  `json:"created_at"`
-	UpdatedAt        float64  `json:"updated_at"`
-	EndedAt          *float64 `json:"ended_at"`
+	SetupCancelRequested bool     `json:"setup_cancel_requested,omitempty"`
+	SetupState           string   `json:"setup_state,omitempty"`
+	SetupError           string   `json:"setup_error,omitempty"`
+	LaunchConfigJSON     string   `json:"-"`
+	ArchivedAt           *float64 `json:"archived_at"`
+	ResumeID             string   `json:"resume_id,omitempty"`
+	TrackingIdentity     string   `json:"-"`
+	GroupPath            string   `json:"group_path"`
+	WorktreeJSON         string   `json:"-"`
+	ID                   int64    `json:"id"`
+	ProjectID            *int64   `json:"project_id"`
+	TargetID             int64    `json:"target_id"`
+	Name                 string   `json:"name"`
+	Agent                string   `json:"agent"`
+	Model                string   `json:"model"`
+	Workdir              string   `json:"workdir"`
+	TmuxSession          string   `json:"tmux_session"`
+	Status               string   `json:"status"`
+	Origin               string   `json:"origin"`
+	PaneHash             string   `json:"-"`
+	PaneTail             string   `json:"pane_tail"`
+	ContextPct           *int     `json:"context_pct"`
+	LastActivityAt       *float64 `json:"last_activity_at"`
+	CreatedAt            float64  `json:"created_at"`
+	UpdatedAt            float64  `json:"updated_at"`
+	EndedAt              *float64 `json:"ended_at"`
 
 	// joined for the UI, which groups sessions by project and names their host
 	ProjectName string `json:"project_name,omitempty"`

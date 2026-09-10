@@ -33,14 +33,15 @@ type Manager struct {
 	// before giving up and saying so.
 	HandoffTimeout time.Duration
 
-	lifecycleMu   sync.Mutex
-	workspaceMu   sync.Mutex
-	workspaceUses map[*workspaceUse]bool
-	sendMu        sync.Mutex
-	mu            sync.Mutex
-	transitions   map[string]bool
-	activeSetups  map[int64]bool
-	handoffs      map[int64]bool // sessions with a wrap in flight
+	lifecycleMu    sync.Mutex
+	workspaceMu    sync.Mutex
+	workspaceUses  map[*workspaceUse]bool
+	sendMu         sync.Mutex
+	mu             sync.Mutex
+	transitions    map[string]bool
+	activeSetups   map[int64]bool
+	setupLaunching map[int64]bool
+	handoffs       map[int64]bool // sessions with a wrap in flight
 }
 
 // New builds a session manager.
@@ -340,6 +341,10 @@ func (m *Manager) Launch(ctx context.Context, o LaunchOpts) (*store.Session, err
 				m.publish(preparing)
 			}
 		}
+		if err := m.checkSetupCancellation(sess.ID); err != nil {
+			m.end(sess.ID, StatusDead)
+			return nil, err
+		}
 		setupTimeout := 120.0
 		if o.SetupTimeout > 0 {
 			setupTimeout = o.SetupTimeout
@@ -356,6 +361,10 @@ func (m *Manager) Launch(ctx context.Context, o LaunchOpts) (*store.Session, err
 			m.end(sess.ID, StatusDead)
 			return nil, err
 		}
+	}
+	if err := m.checkSetupCancellation(sess.ID); err != nil {
+		m.end(sess.ID, StatusDead)
+		return nil, err
 	}
 	directory, err := ex.Run(ctx, "test -d "+shellq.Quote(workdir), executor.RunOpts{Timeout: 10})
 	if err != nil || !directory.OK() {
@@ -381,6 +390,12 @@ func (m *Manager) Launch(ctx context.Context, o LaunchOpts) (*store.Session, err
 			m.end(sess.ID, StatusDead)
 			return nil, err
 		}
+	}
+	// Serialize the decision to launch with cancellation acceptance. Once the
+	// agent launch starts, callers must use the session's normal End action.
+	if err := m.beginSetupAgent(sess.ID); err != nil {
+		m.end(sess.ID, StatusDead)
+		return nil, err
 	}
 	cmd := spec.LaunchCommand(Start{
 		Workdir: workdir, TmuxName: tmuxName, Model: o.Model, Resume: o.Resume, ResumeID: o.ResumeID, ForkID: forkID,

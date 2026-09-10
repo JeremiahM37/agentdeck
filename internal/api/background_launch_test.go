@@ -15,6 +15,7 @@ import (
 	"github.com/JeremiahM37/agentdeck/internal/sessions"
 	"github.com/JeremiahM37/agentdeck/internal/shellq"
 	"github.com/JeremiahM37/agentdeck/internal/store"
+	"github.com/JeremiahM37/agentdeck/internal/worktree"
 )
 
 func TestBackgroundWorkspaceSurvivesResponseAndRetainsFailures(t *testing.T) {
@@ -148,6 +149,7 @@ func TestBackgroundWorkspaceSurvivesResponseAndRetainsFailures(t *testing.T) {
 	if current.SetupState != "ready" || current.EndedAt != nil || current.Workdir == repo {
 		t.Fatalf("background launch failed: %+v", current)
 	}
+	h.decode("POST", endpoint+"/setup/cancel", obj{}, 409, nil)
 	h.decode("DELETE", endpoint, nil, 200, nil)
 	os.WriteFile(hook, []byte("#!/bin/sh\nprintf valuable > setup-artifact\necho background-setup-failure >&2\nexit 1\n"), 0700)
 	h.decode("POST", "/api/sessions", input, 202, &row)
@@ -176,4 +178,46 @@ func TestBackgroundWorkspaceSurvivesResponseAndRetainsFailures(t *testing.T) {
 	if live := h.getList("/api/sessions"); len(live) != 0 {
 		t.Fatal("default API live-only filtering changed")
 	}
+	// A new held checkout can be cancelled through the public API without
+	// releasing its hook, starting an agent, or removing allocated files.
+	os.Remove(release)
+	os.Remove(started)
+	os.WriteFile(hook, []byte("#!/bin/sh\nprintf keep > cancelled-artifact\ntouch "+shellq.Quote(started)+"\nwhile [ ! -f "+shellq.Quote(release)+" ]; do sleep .05; done\n"), 0700)
+	h.decode("POST", "/api/sessions", input, 202, &row)
+	deadline = time.Now().Add(10 * time.Second)
+	for {
+		if _, err := os.Stat(started); err == nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("cancel checkout did not start")
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	cancelEndpoint := fmt.Sprintf("/api/sessions/%d/setup/cancel", row.id())
+	var requested obj
+	h.decode("POST", cancelEndpoint, obj{}, 202, &requested)
+	if requested["setup_cancel_requested"] != true {
+		t.Fatal("cancel request was not retained")
+	}
+	cancelled := wait(row.id())
+	if cancelled.SetupState != "failed" || !cancelled.SetupCancelRequested || !strings.Contains(cancelled.SetupError, "cancelled") {
+		t.Fatalf("cancel outcome missing: %s", cancelled.SetupError)
+	}
+	if err := exec.Command("tmux", "has-session", "-t", "="+cancelled.TmuxSession).Run(); err == nil {
+		t.Fatal("cancelled setup started an agent")
+	}
+	var allocation worktree.Interactive
+	if err := json.Unmarshal([]byte(cancelled.WorktreeJSON), &allocation); err != nil {
+		t.Fatal(err)
+	}
+	dest := allocation.Path
+	if len(allocation.Repositories) > 0 {
+		dest = allocation.Repositories[0].Worktree.Path
+	}
+	if contents, err := os.ReadFile(filepath.Join(dest, "cancelled-artifact")); err != nil || string(contents) != "keep" {
+		t.Fatal("cancellation removed files")
+	}
+	h.decode("POST", cancelEndpoint, obj{}, 202, nil)
+
 }

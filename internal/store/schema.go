@@ -166,6 +166,7 @@ CREATE INDEX IF NOT EXISTS idx_routines_due ON routines(enabled, next_run_at);
 // the current schema. Each is expected to fail with "duplicate column" once the
 // column exists, which is not an error.
 var migrations = []string{
+	"ALTER TABLE sessions ADD COLUMN setup_cancel_requested INTEGER NOT NULL DEFAULT 0",
 	"ALTER TABLE sessions ADD COLUMN setup_state TEXT NOT NULL DEFAULT ''",
 	"ALTER TABLE sessions ADD COLUMN setup_error TEXT NOT NULL DEFAULT ''",
 	"ALTER TABLE sessions ADD COLUMN launch_config_json TEXT NOT NULL DEFAULT ''",

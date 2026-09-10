@@ -64,6 +64,7 @@ func (m *Manager) LaunchBackground(ctx context.Context, options LaunchOpts) (*st
 		}
 		m.mu.Lock()
 		delete(m.activeSetups, reserved)
+		delete(m.setupLaunching, reserved)
 		m.mu.Unlock()
 		if fresh, loadErr := m.DB.Session(reserved); loadErr == nil {
 			m.publish(fresh)

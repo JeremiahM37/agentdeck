@@ -50,3 +50,20 @@ func (s *Server) removeSessionWorktree(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, 200, s.sessionView(row))
 }
+
+func (s *Server) cancelSessionSetup(w http.ResponseWriter, r *http.Request) {
+	row, ok := s.sessionParam(w, r)
+	if !ok {
+		return
+	}
+	if err := s.Sessions.CancelSetup(r.Context(), row.ID); err != nil {
+		httpError(w, 409, "%s", err)
+		return
+	}
+	row, err := s.DB.Session(row.ID)
+	if err != nil {
+		respondErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusAccepted, s.sessionView(row))
+}
