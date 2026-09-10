@@ -269,8 +269,14 @@ while True:
     try:
         for cols, rows in [(240,50),(72,22),(180,44),(90,30)]:
             fcntl.ioctl(master, termios.TIOCSWINSZ, struct.pack('HHHH', rows, cols, 0, 0))
-            page.wait_for_timeout(400)
-            sizes = subprocess.check_output(['tmux','list-clients','-F','#{client_width}x#{client_height}'],env=t['env']).decode().splitlines()
+            # Attachment includes an HTTP resolution step. Wait for the
+            # actual client/resize instead of assuming it finished in 400ms.
+            deadline=time.monotonic()+10
+            while time.monotonic()<deadline:
+                page.wait_for_timeout(100)
+                assert native.poll() is None, 'native attachment exited'
+                sizes = subprocess.check_output(['tmux','list-clients','-F','#{client_width}x#{client_height}'],env=t['env']).decode().splitlines()
+                if f'{cols}x{rows}' in sizes:break
             assert f'{cols}x{rows}' in sizes, sizes
             page.evaluate("window.dispatchEvent(new Event('focus'))")
             expect(page.locator('#connection')).to_have_text('Connected')

@@ -89,7 +89,16 @@ def test_dashboard_search_rename_live_refresh_and_resize(real_terminal):
 def test_dashboard_native_attach_detach_returns_to_selection(real_terminal,outer_tmux):
     t=real_terminal;d=Dashboard(t,['console'],outer_tmux=outer_tmux)
     try:
-        d.wait('Real terminal');d.send('\r');d.wait('$')
+        d.wait('Real terminal');d.send('\r')
+        # The preview already contains a shell prompt. Wait for a real tmux
+        # client before typing, especially while SSH is still connecting.
+        deadline=time.monotonic()+12
+        while time.monotonic()<deadline:
+            d.pump()
+            clients=subprocess.check_output(['tmux','list-clients','-t','terminal-test','-F','#{client_name}'],env=t['env'],text=True).strip()
+            if clients:break
+        assert clients, d.text
+        d.wait('$')
         d.send('printf dashboard-native-proof > dashboard-proof.txt\r')
         end=time.monotonic()+5
         while time.monotonic()<end and not (t['root']/'dashboard-proof.txt').exists():d.pump()
