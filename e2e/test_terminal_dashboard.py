@@ -4,6 +4,7 @@ No keystroke/model mocks: requests hit the real server; attach hits real tmux.
 """
 import codecs
 import fcntl
+import json
 import os
 import pty
 import select
@@ -12,6 +13,7 @@ import struct
 import subprocess
 import termios
 import time
+import urllib.request
 
 import pyte
 import pytest
@@ -135,6 +137,39 @@ def test_dashboard_context_upload_preserves_local_bytes(real_terminal,tmp_path):
         d.send(str(pdf)+'\x13');d.wait('Uploaded:')
         assert any(p.read_bytes()==pdf.read_bytes() for p in t['root'].rglob('*.pdf'))
         d.quit()
+    finally:d.close()
+
+
+def test_dashboard_group_tree_search_refresh_and_attach(real_terminal):
+    t=real_terminal
+    request=urllib.request.Request(t['url']+f"/api/sessions/{t['id']}", method='PATCH',
+        headers={'Content-Type':'application/json'},data=json.dumps({'group_path':'Work/Backend'}).encode())
+    with urllib.request.urlopen(request) as response:assert response.status==200
+    d=Dashboard(t)
+    try:
+        d.wait('Real terminal');d.send('ggg');d.wait('group: named group')
+        # Collapsing from the selected session moves to its group header.
+        d.send('[');d.wait('▸ Backend (1)')
+        assert 'Real terminal' not in d.text
+        d.send('[');d.wait('▸ Work (1)')
+        d.pump(3.5);d.wait('▸ Work (1)')
+        d.send('/Real terminal\r');d.wait('Real terminal')
+        # Searching through a folded group still selects an actual session.
+        d.send('\r')
+        deadline=time.monotonic()+12
+        clients=''
+        while time.monotonic()<deadline:
+            d.pump()
+            clients=subprocess.check_output(['tmux','list-clients','-t','terminal-test','-F','#{client_name}'],env=t['env'],text=True).strip()
+            if clients:break
+        assert clients,d.text
+        d.send('\x02d');d.wait('Detached. Session keeps running.')
+        d.send('\x1b');d.wait('▸ Work (1)')
+        # Expand with Enter; a header must never try to attach as a session.
+        d.send('\r');d.wait('▸ Backend (1)')
+        d.send('j\r');d.wait('Real terminal')
+        d.quit()
+        subprocess.run(['tmux','has-session','-t','=terminal-test'],env=t['env'],check=True)
     finally:d.close()
 
 

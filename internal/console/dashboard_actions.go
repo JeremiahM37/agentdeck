@@ -54,6 +54,15 @@ func (m *dashboard) choose(a dashboardAction) tea.Cmd {
 		return nil
 	}
 	switch a.Operation {
+	case "toggle-group":
+		m.toggleGroup()
+		return nil
+	case "collapse-group":
+		m.collapseGroup()
+		return nil
+	case "expand-group":
+		m.expandGroup()
+		return nil
 	case "attach":
 		return m.attachSelected(false)
 	case "shell":
@@ -93,6 +102,13 @@ func (m *dashboard) choose(a dashboardAction) tea.Cmd {
 	return m.execute(a)
 }
 func (m *dashboard) actions() []dashboardAction {
+	if m.selectedGroup() != nil {
+		return []dashboardAction{
+			{Label: "Expand / collapse group", Operation: "toggle-group"},
+			{Label: "Collapse parent group", Operation: "collapse-group"},
+			{Label: "Expand / enter group", Operation: "expand-group"},
+		}
+	}
 	r := m.current()
 	if r == nil {
 		return nil

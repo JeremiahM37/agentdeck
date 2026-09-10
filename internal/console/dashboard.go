@@ -100,6 +100,8 @@ type dashboard struct {
 	review                         *codeReview
 	native                         *nativeSelection
 	grouping                       int
+	collapsed                      map[string]bool
+	matched                        int
 	attention, ended               bool
 	preview                        viewport.Model
 	previewFocus                   bool
@@ -180,9 +182,13 @@ func (m *dashboard) current() row {
 	if m.selected < 0 || m.selected >= len(m.visible) {
 		return nil
 	}
-	return m.visible[m.selected]
+	r := m.visible[m.selected]
+	if isGroup(r) {
+		return nil
+	}
+	return r
 }
-func (m *dashboard) key() string { return sections[m.section] + "/" + id(m.current()) }
+func (m *dashboard) key() string { return sections[m.section] + "/" + m.selectionID() }
 func (m *dashboard) group(r row) string {
 	if m.grouping == 2 {
 		return "All"
@@ -207,7 +213,7 @@ func (m *dashboard) group(r row) string {
 	return oneLine(s)
 }
 func (m *dashboard) filter() {
-	selected := id(m.current())
+	selected := m.selectionID()
 	q := m.query.Value()
 	status := ""
 	if len(q) > 0 {
@@ -237,9 +243,13 @@ func (m *dashboard) filter() {
 		}
 		return strings.ToLower(name(a)) < strings.ToLower(name(b))
 	})
+	m.matched = len(m.visible)
+	if m.treeMode() && strings.TrimSpace(m.query.Value()) == "" {
+		m.visible = m.groupTree(m.visible)
+	}
 	m.selected = 0
 	for i, r := range m.visible {
-		if id(r) == selected {
+		if displayID(r) == selected {
 			m.selected = i
 			break
 		}
@@ -249,14 +259,13 @@ func (m *dashboard) filter() {
 }
 func (m *dashboard) ensureSelection() {
 	m.selected = max(0, min(m.selected, len(m.visible)-1))
-	capacity := max(1, (m.height-9)/3)
 	if m.selected < m.offset {
 		m.offset = m.selected
 	}
-	if m.selected >= m.offset+capacity {
-		m.offset = m.selected - capacity + 1
+	m.offset = max(0, min(m.offset, m.selected))
+	for m.offset < m.selected && m.rowsHeight(m.offset, m.selected+1) > max(3, m.height-8) {
+		m.offset++
 	}
-	m.offset = max(0, min(m.offset, max(0, len(m.visible)-capacity)))
 }
 func (m *dashboard) layout() {
 	m.query.Width = max(12, m.width-6)
@@ -274,6 +283,10 @@ func (m *dashboard) layout() {
 }
 func (m *dashboard) listWidth() int { return min(48, max(30, m.width*42/100)) }
 func (m *dashboard) updatePreview() {
+	if r := m.selectedGroup(); r != nil {
+		m.preview.SetContent(fmt.Sprintf("%s\n\n%d sessions · %d need attention\n\nEnter or Space: expand / collapse\n[ Collapse parent group\n] Expand group\n/ Search also finds hidden sessions", str(r["name"]), r["count"], r["attention"]))
+		return
+	}
 	r := m.current()
 	if r == nil && m.detailKey != m.key() {
 		m.preview.SetContent("No matches. / Search · n New · f Find running agents")
@@ -568,6 +581,12 @@ func (m *dashboard) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "g":
 			m.grouping = (m.grouping + 1) % 4
 			m.filter()
+		case " ":
+			m.toggleGroup()
+		case "[":
+			m.collapseGroup()
+		case "]":
+			m.expandGroup()
 		case "w":
 			m.attention = !m.attention
 			m.filter()
@@ -581,6 +600,10 @@ func (m *dashboard) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.previewFocus = !m.previewFocus
 			m.updatePreview()
 		case "enter", "a":
+			if m.selectedGroup() != nil {
+				m.toggleGroup()
+				return m, nil
+			}
 			return m, m.attachSelected(false)
 		case "s":
 			return m, m.attachSelected(true)
@@ -618,10 +641,15 @@ func (m *dashboard) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.width >= 100 && v.X > m.listWidth()+1 {
 				m.previewFocus = true
 			} else if v.Y >= 4 {
-				m.selected = m.offset + (v.Y-4)/3
+				index := m.rowAt(v.Y - 4)
+				if index < 0 {
+					return m, nil
+				}
+				m.selected = index
 				m.ensureSelection()
 				m.previewFocus = false
 				m.updatePreview()
+				m.toggleGroup()
 			}
 		}
 	}
@@ -712,7 +740,7 @@ func (m *dashboard) View() string {
 	}
 	header := clip(title, m.width) + "\n" + clip(strings.Join(tabs, ""), m.width) + "\n" + clip(m.query.View(), m.width-1) + "\n"
 	group := []string{"project", "target", "none", "named group"}[m.grouping]
-	meta := fmt.Sprintf(" %d/%d items · group: %s", len(m.visible), len(m.rows), group)
+	meta := fmt.Sprintf(" %d/%d items · group: %s", m.matched, len(m.rows), group)
 	if m.attention {
 		meta += " · needs attention"
 	}
@@ -744,6 +772,9 @@ func (m *dashboard) View() string {
 	default:
 		list := m.listView(bodyHeight)
 		previewTitle := "Live preview"
+		if m.selectedGroup() != nil {
+			previewTitle = "Group"
+		}
 		if m.detailTitle != "" {
 			previewTitle = m.detailTitle
 		}
@@ -779,11 +810,20 @@ func (m *dashboard) View() string {
 		status = "Working… " + status
 	}
 	keys := " Enter attach · / search · n new · m actions · ? help · q quit"
+	if m.selectedGroup() != nil {
+		keys = " Enter fold · [ parent · ] expand · / search · ? help · q quit"
+	}
 	if m.width < 80 {
 		keys = " Enter attach · / find · ? help · q quit"
+		if m.selectedGroup() != nil {
+			keys = " Enter fold · / find · ? help · q quit"
+		}
 	}
 	if m.width < 42 {
 		keys = " Enter attach · / find · q quit"
+		if m.selectedGroup() != nil {
+			keys = " Enter fold · / find · q quit"
+		}
 	}
 	footer := muted.Render(clip(keys, m.width-1)) + "\n" + clip(" "+status, m.width-1)
 	return header + strings.Join(lines, "\n") + "\n" + footer
@@ -797,8 +837,24 @@ func (m *dashboard) listView(height int) string {
 		w = m.listWidth()
 	}
 	var lines []string
-	for i := m.offset; i < len(m.visible) && len(lines)+3 <= height; i++ {
+	for i := m.offset; i < len(m.visible) && len(lines)+m.rowHeight(i) <= height; i++ {
 		r := m.visible[i]
+		if isGroup(r) {
+			marker := "▾"
+			if m.collapsed[str(r["group_key"])] {
+				marker = "▸"
+			}
+			line := fmt.Sprintf("%s%s %s (%d)", strings.Repeat("  ", r["depth"].(int)), marker, str(r["name"]), r["count"])
+			if count := r["attention"].(int); count > 0 {
+				line += fmt.Sprintf(" · %d need attention", count)
+			}
+			line = clip(line, w)
+			if i == m.selected {
+				line = chosen.Render(line + strings.Repeat(" ", max(0, w-ansi.StringWidth(line))))
+			}
+			lines = append(lines, line)
+			continue
+		}
 		s := str(r["status"])
 		if sections[m.section] == "routines" {
 			s = str(r["schedule"])
@@ -824,7 +880,10 @@ func (m *dashboard) listView(height int) string {
 			color = "203"
 		}
 		meta := muted.Render("  "+m.group(r)+" · ") + lipgloss.NewStyle().Foreground(lipgloss.Color(color)).Render(s) + muted.Render(" · "+str(r["agent"]))
-		lines = append(lines, line, clip(meta, w), "")
+		lines = append(lines, line, clip(meta, w))
+		if m.rowHeight(i) == 3 {
+			lines = append(lines, "")
+		}
 	}
 	return strings.Join(lines, "\n")
 }
@@ -835,6 +894,7 @@ const dashboardHelp = ` Keyboard shortcuts
  1–6 / ←→      Change section    Tab/p    Focus list / preview
  /             Fuzzy search     @ ! # &  Search prefix: waiting/running/idle/failed
  G             Move to named group
+ Space/Enter   Fold selected group   [ Collapse parent   ] Expand group
  g             Group by project/target/name   w  Needs attention only
  n             New item         e        Rename   u Upload context
  m             All actions      f        Find and track running agents
