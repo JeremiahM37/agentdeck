@@ -38,10 +38,15 @@ func TestWorkspaceActionsHideExtensionControlsDuringInitialSetup(t *testing.T) {
 			}},
 		},
 	}
+	progress := false
 	for _, action := range workspaceActions(r, "/sessions/1") {
 		if strings.Contains(action.Label, "repository") || strings.Contains(action.Label, "Repository") {
 			t.Fatalf("initial setup exposed extension action %q", action.Label)
 		}
+		progress = progress || action.Label == "Workspace setup progress"
+	}
+	if !progress {
+		t.Fatal("initial setup hid workspace progress")
 	}
 
 	r["setup_state"] = "ready"

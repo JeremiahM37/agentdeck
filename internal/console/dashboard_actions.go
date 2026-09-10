@@ -847,8 +847,10 @@ func workspaceActions(r row, path string) []dashboardAction {
 		// extension controls out of that menu; the backend correctly rejects
 		// additions during setup, and the progress/cancel entry belongs to the
 		// initial setup flow instead.
-		if repositories, ok := ws["repositories"].([]any); ok && len(repositories) > 0 && r["setup_state"] != "creating" {
-			actions = append(actions, dashboardAction{Label: "Add repository", Operation: "extend-workspace"}, dashboardAction{Label: "Repository addition progress", Method: "GET", Path: path + "/worktree/operations"}, dashboardAction{Label: "Cancel repository addition", Operation: "cancel-extension"}, dashboardAction{Label: "Check interrupted addition", Operation: "recover-extension"})
+		if repositories, ok := ws["repositories"].([]any); ok && len(repositories) > 0 {
+			if r["setup_state"] != "creating" {
+				actions = append(actions, dashboardAction{Label: "Add repository", Operation: "extend-workspace"}, dashboardAction{Label: "Repository addition progress", Method: "GET", Path: path + "/worktree/operations"}, dashboardAction{Label: "Cancel repository addition", Operation: "cancel-extension"}, dashboardAction{Label: "Check interrupted addition", Operation: "recover-extension"})
+			}
 			actions = append(actions, dashboardAction{Label: "Workspace setup progress", Method: "GET", Path: path + "/worktree?format=text"})
 		}
 		if r["setup_state"] == "creating" {
