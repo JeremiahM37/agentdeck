@@ -767,7 +767,7 @@ function renderSessions() {
       </div>
       <input id="sess-search" class="f" type="search" placeholder="Search sessions, groups, branches or folders" aria-label="Find a session or project">
       <label class="session-grouping">Group by <select class="f" id="sess-grouping" aria-label="Group sessions by"><option value="none">None</option><option value="group">Named group</option><option value="project">Project</option><option value="target">Target</option></select></label>
-      <label>Show <select id="sess-scope"><option value="active">Active sessions</option><option value="all">Include ended and untracked</option><option value="archived">Archived sessions</option></select></label>
+      <label class="session-grouping session-scope">Show <select class="f" id="sess-scope"><option value="active">Active sessions</option><option value="all">Include ended and untracked</option><option value="archived">Archived sessions</option></select></label>
       <div id="sesslist"></div>
     </div>`;
   $("#sess-new").onclick = () => { state.sheet = { kind: "new-session" }; renderSheet(); };
