@@ -25,3 +25,39 @@ func TestWorkspaceExtensionFormFiltersTargetsAndExistingRepositories(t *testing.
 		t.Fatal(m.notice)
 	}
 }
+
+func TestWorkspaceActionsHideExtensionControlsDuringInitialSetup(t *testing.T) {
+	r := row{
+		"id":          float64(1),
+		"setup_state": "creating",
+		"workspace": map[string]any{
+			"state": "creating",
+			"repositories": []any{map[string]any{
+				"project_id": float64(3),
+				"worktree":   map[string]any{"state": "ready"},
+			}},
+		},
+	}
+	progress := false
+	for _, action := range workspaceActions(r, "/sessions/1") {
+		if strings.Contains(action.Label, "repository") || strings.Contains(action.Label, "Repository") {
+			t.Fatalf("initial setup exposed extension action %q", action.Label)
+		}
+		progress = progress || action.Label == "Workspace setup progress"
+	}
+	if !progress {
+		t.Fatal("initial setup hid workspace progress")
+	}
+
+	r["setup_state"] = "ready"
+	found := false
+	for _, action := range workspaceActions(r, "/sessions/1") {
+		if action.Label == "Add repository" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatal("ready workspace omitted extension action")
+	}
+}

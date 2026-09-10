@@ -44,10 +44,11 @@ def open_extension(page, row):
 
 
 @pytest.mark.parametrize('width', [390,1440])
-def test_browser_extension_reopens_keeps_terminal_and_retries(page, real_terminal, width):
+def test_browser_extension_reopens_keeps_terminal_and_retries(page, real_terminal, width, request):
     t = real_terminal
     release = t['root'].parent/'release-extension'
     row, extra = group(t, f'while [ ! -f "{release}" ]; do sleep .05; done; echo ADDED_REPO_READY')
+    request.addfinalizer(lambda: release.touch())
     dirty = Path(row['workspace']['repositories'][0]['worktree']['path'])/'keep.txt'
     dirty.write_text('Existing uncommitted work')
     errors = []; page.on('pageerror', lambda e:errors.append(str(e)))
