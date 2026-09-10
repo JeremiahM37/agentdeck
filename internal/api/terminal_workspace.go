@@ -13,6 +13,7 @@ import (
 	"github.com/JeremiahM37/agentdeck/internal/executor"
 	"github.com/JeremiahM37/agentdeck/internal/shellq"
 	"github.com/JeremiahM37/agentdeck/internal/terminal"
+	"github.com/JeremiahM37/agentdeck/internal/worktree"
 	"github.com/JeremiahM37/agentdeck/web"
 )
 
@@ -131,16 +132,21 @@ func (s *Server) terminalUpload(w http.ResponseWriter, r *http.Request) {
 const terminalFileScript = `import os,sys,json,base64,stat
 root=os.path.realpath(sys.argv[1]); rel=sys.argv[2]; action=sys.argv[3]
 def inside(p): return os.path.commonpath([root,p])==root
+def bookkeeping(p):
+ if len(sys.argv)<5 or sys.argv[4]!='grouped': return False
+ name=os.path.relpath(p,root)
+ return name in ('.agentdeck-lock','.agentdeck-state.json','.agentdeck-process.json','.agentdeck-state.next') or (os.sep not in name and name.startswith('.agentdeck-write-'))
 try:
  p=os.path.realpath(os.path.join(root,rel))
  if not inside(p): raise ValueError('path is outside this workspace')
+ if bookkeeping(p): raise ValueError('workspace bookkeeping is not a project file')
  if action=='list':
   entries=[]
   with os.scandir(p) as scan:
    for e in scan:
     if len(entries)>=500: break
     dest=os.path.realpath(e.path)
-    if not inside(dest): continue
+    if not inside(dest) or bookkeeping(dest): continue
     try:
      st=e.stat()
      if not stat.S_ISREG(st.st_mode) and not stat.S_ISDIR(st.st_mode): continue
@@ -179,7 +185,25 @@ func (s *Server) terminalFileResult(w http.ResponseWriter, r *http.Request, acti
 		respondErr(w, err)
 		return nil, false
 	}
-	cmd := "python3 -c " + shellq.Quote(terminalFileScript) + " " + shellq.Quote(dir) + " " + shellq.Quote(r.URL.Query().Get("path")) + " " + shellq.Quote(action)
+	mode := ""
+	// Continuations may share an owned root without owning the allocation.
+	// Resolve its role from durable records, not filenames supplied by clients.
+	records, loadErr := s.DB.Sessions(true)
+	if loadErr != nil {
+		respondErr(w, loadErr)
+		return nil, false
+	}
+	for _, row := range records {
+		if row.TargetID != target.ID || row.WorktreeJSON == "" {
+			continue
+		}
+		var workspace worktree.Interactive
+		if json.Unmarshal([]byte(row.WorktreeJSON), &workspace) == nil && len(workspace.Repositories) > 0 && path.Clean(workspace.Path) == path.Clean(dir) {
+			mode = "grouped"
+			break
+		}
+	}
+	cmd := "python3 -c " + shellq.Quote(terminalFileScript) + " " + shellq.Quote(dir) + " " + shellq.Quote(r.URL.Query().Get("path")) + " " + shellq.Quote(action) + " " + shellq.Quote(mode)
 	result, err := ex.Run(r.Context(), cmd, executor.RunOpts{Timeout: 60})
 	var out map[string]json.RawMessage
 	if err != nil || json.Unmarshal([]byte(result.Stdout), &out) != nil {

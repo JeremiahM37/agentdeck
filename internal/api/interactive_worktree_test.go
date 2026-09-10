@@ -124,6 +124,23 @@ func TestMultiRepositorySessionLifecycle(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(secondPath, "file"), []byte("second repository change\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
+	filesURL := fmt.Sprintf("/api/term/session/%d", int64(row.num("id")))
+	var listing obj
+	h.decode("GET", filesURL+"/files", nil, 200, &listing)
+	if strings.Contains(fmt.Sprint(listing), ".agentdeck-") {
+		t.Fatal("workspace bookkeeping leaked into file browser")
+	}
+	for _, name := range []string{".agentdeck-lock", ".agentdeck-state.json", ".agentdeck-process.json"} {
+		h.decode("GET", filesURL+"/file?path="+name, nil, 400, nil)
+	}
+	for _, r := range repositories {
+		child := r.(map[string]any)["worktree"].(map[string]any)
+		relative := filepath.Base(child["path"].(string)) + "/file"
+		code, data := h.request("GET", filesURL+"/file?path="+relative, nil, nil)
+		if code != 200 || len(data) == 0 {
+			t.Fatal("repository files unavailable through shared root")
+		}
+	}
 	reviewURL := fmt.Sprintf("/api/term/session/%d/changes", int64(row.num("id")))
 	var changes obj
 	h.decode("GET", reviewURL+"?repository=1&path=file", nil, 200, &changes)

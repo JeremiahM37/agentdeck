@@ -138,3 +138,18 @@ Malformed process receipts fail closed with repository files preserved. A crash
 between temporary-file creation and rename may leave an extra root entry for
 inspection; cleanup does not silently delete it. Earlier unshipped grouped roots
 without a saved lock identity are deliberately refused, not retroactively claimed.
+
+Additional lifecycle evidence: a real Git wrapper injects an edit into the second
+repository after the first removal succeeds. Cleanup refuses the later edit,
+persists the first child's removed state, preserves the new file, and completes
+on retry after that file is explicitly removed. Concurrent removal while checkout
+runs is refused, as is duplicate creation of the same allocation; supervisor-death
+recovery remains covered. These tests exercise actual Git operations, not a mocked
+workspace executor.
+
+The shared-root file API serves both repository trees but omits root bookkeeping
+(lock/state/process/temp files) and rejects direct file requests for those names.
+It identifies owned grouped roots from durable session records, including when a
+continuation shares the root without owning it. Ordinary workspace file behavior
+is unchanged. This is UI/API filtering, not isolation from a user or agent that
+can run arbitrary shell commands in the workspace.

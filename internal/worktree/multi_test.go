@@ -306,6 +306,43 @@ func TestMultiWorkspaceCreationFailureAndCleanup(t *testing.T) {
 				t.Fatalf("active workspace root was not protected: %v", err)
 			}
 			exec.Command("tmux", "kill-session", "-t", "group-root").Run()
+			if !fails {
+				// Inject a real later edit after the first worktree removal. All
+				// initial preflights have passed, so per-child rechecks matter.
+				realGit, err := exec.LookPath("git")
+				if err != nil {
+					t.Fatal(err)
+				}
+				tools := t.TempDir()
+				laterArtifact := filepath.Join(plan.Repositories[1].Worktree.Path, "late-edit")
+				firstPath := plan.Repositories[0].Worktree.Path
+				wrapper := "#!/bin/sh\n" + executor.ShellQuote(realGit) + " \"$@\"\nresult=$?\nif [ \"$result\" = 0 ] && [ \"$3\" = worktree ] && [ \"$4\" = remove ] && [ \"$6\" = " + executor.ShellQuote(firstPath) + " ]; then printf keep > " + executor.ShellQuote(laterArtifact) + "; fi\nexit \"$result\"\n"
+				if err := os.WriteFile(filepath.Join(tools, "git"), []byte(wrapper), 0700); err != nil {
+					t.Fatal(err)
+				}
+				previousPath := os.Getenv("PATH")
+				t.Setenv("PATH", tools+string(os.PathListSeparator)+previousPath)
+				err = RunInteractive(ctx, ex, "remove", plan)
+				if err == nil || !strings.Contains(err.Error(), "changed, untracked or ignored") {
+					t.Fatalf("later edit was not protected: %v", err)
+				}
+				if plan.State != "failed" || plan.Repositories[0].Worktree.State != "removed" {
+					t.Fatal("partial removal receipt lost")
+				}
+				if content, _ := os.ReadFile(laterArtifact); string(content) != "keep" {
+					t.Fatal("later edit was removed")
+				}
+				data, err := os.ReadFile(filepath.Join(plan.Path, ".agentdeck-state.json"))
+				if err != nil {
+					t.Fatal(err)
+				}
+				var persisted Interactive
+				if err := json.Unmarshal(data, &persisted); err != nil || persisted.Repositories[0].Worktree.State != "removed" {
+					t.Fatal("partial removal not durable")
+				}
+				os.Remove(laterArtifact)
+				t.Setenv("PATH", previousPath)
+			}
 			if err := RunInteractive(ctx, ex, "remove", plan); err != nil {
 				t.Fatal(err)
 			}
@@ -375,6 +412,13 @@ func TestMultiWorkspaceSupervisorDeathKeepsCheckoutGuarded(t *testing.T) {
 			t.Fatal("checkout hook did not start")
 		}
 		time.Sleep(20 * time.Millisecond)
+	}
+	concurrentExecutor := executor.NewLocal()
+	if err := RunInteractive(context.Background(), concurrentExecutor, "remove", plan); err == nil || !strings.Contains(err.Error(), "operation is still running") {
+		t.Fatalf("live checkout not guarded: %v", err)
+	}
+	if err := RunInteractive(context.Background(), concurrentExecutor, "create", plan); err == nil || !strings.Contains(err.Error(), "already exists") {
+		t.Fatalf("duplicate creation did not refuse: %v", err)
 	}
 	if err := cmd.Process.Kill(); err != nil {
 		t.Fatal(err)
