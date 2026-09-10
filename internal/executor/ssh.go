@@ -16,7 +16,7 @@ import (
 )
 
 // SSH is a remote target reached over SSH. Key auth only, one reused connection
-// with keepalive.
+// with bounded setup and command execution.
 type SSH struct {
 	Host    string
 	User    string
@@ -59,37 +59,55 @@ func NewSSH(host, user string, port int, keyPath, wrapper string) *SSH {
 	return &SSH{Host: host, User: user, Port: port, KeyPath: keyPath, Wrapper: wrapper}
 }
 
-func (s *SSH) client() (*ssh.Client, error) {
+func (s *SSH) client(ctx context.Context) (*ssh.Client, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.conn != nil {
-		// cheap liveness probe: a dead connection fails here rather than halfway
-		// through a dispatch
-		if _, _, err := s.conn.SendRequest("keepalive@openssh.com", true, nil); err == nil {
-			return s.conn, nil
-		}
-		s.conn.Close()
-		s.conn = nil
+	cached := s.conn
+	s.mu.Unlock()
+	// Opening the command channel checks liveness under the caller's deadline.
+	// A synchronous keepalive here could hang forever on a half-open connection.
+	if cached != nil {
+		return cached, nil
 	}
 	auth, err := s.authMethods()
 	if err != nil {
 		return nil, err
 	}
 	cfg := &ssh.ClientConfig{
-		User: s.User,
-		Auth: auth,
-		// agentdeck addresses its own homelab targets by Tailscale IP; pinning
-		// host keys here would break every legitimate re-provision of a container.
+		User: s.User, Auth: auth,
+		// Preserve the target trust policy used by this executor.
 		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
-		Timeout:         10 * time.Second,
 	}
 	addr := net.JoinHostPort(s.Host, fmt.Sprint(s.Port))
-	conn, err := ssh.Dial("tcp", addr, cfg)
+	setup, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	raw, err := (&net.Dialer{}).DialContext(setup, "tcp", addr)
 	if err != nil {
 		return nil, Errf("ssh connect %s@%s:%d: %v", s.User, s.Host, s.Port, err)
 	}
-	s.conn = conn
-	return conn, nil
+	stop := context.AfterFunc(setup, func() { _ = raw.Close() })
+	transport, channels, requests, err := ssh.NewClientConn(raw, addr, cfg)
+	stopped := stop()
+	if err != nil || !stopped || setup.Err() != nil {
+		_ = raw.Close()
+		if err == nil {
+			err = setup.Err()
+		}
+		return nil, Errf("ssh handshake %s@%s:%d: %v", s.User, s.Host, s.Port, err)
+	}
+	conn := ssh.NewClient(transport, channels, requests)
+	s.mu.Lock()
+	if s.conn == nil {
+		s.conn = conn
+		s.mu.Unlock()
+		return conn, nil
+	}
+	cached = s.conn
+	s.mu.Unlock()
+	_ = conn.Close()
+	return cached, nil
 }
 
 func (s *SSH) authMethods() ([]ssh.AuthMethod, error) {
@@ -146,51 +164,51 @@ func (s *SSH) Run(ctx context.Context, cmd string, opts RunOpts) (Result, error)
 	return s.run(ctx, cmd, opts, nil)
 }
 
-func (s *SSH) run(ctx context.Context, cmd string, opts RunOpts, input io.Reader) (Result, error) {
+func (s *SSH) run(parent context.Context, cmd string, opts RunOpts, input io.Reader) (Result, error) {
+	ctx, cancel := context.WithTimeout(parent, time.Duration(opts.timeoutOrDefault()*float64(time.Second)))
+	defer cancel()
 	full := s.buildCommand(cmd, opts.Cwd)
-	// the seam receives the FULLY BUILT command, so a test asserting on it is
-	// checking what the target would really see rather than a reimplementation
 	if s.runner != nil {
 		return s.runner(ctx, full, opts)
 	}
-	conn, err := s.client()
+	conn, err := s.client(ctx)
 	if err != nil {
 		return Result{}, err
 	}
+	// Channel setup and command I/O share the same total deadline. Closing a
+	// timed-out transport also releases blocked channel requests and buffer writers.
+	// Other in-flight commands on that pooled connection may need retrying.
+	stop := context.AfterFunc(ctx, func() { s.dropClient(conn) })
+	defer stop()
 	sess, err := conn.NewSession()
 	if err != nil {
-		s.drop()
+		s.dropClient(conn)
 		return Result{}, Errf("ssh session failed: %v", err)
 	}
 	defer sess.Close()
 	var out, errb bytes.Buffer
 	sess.Stdout, sess.Stderr = &out, &errb
 	sess.Stdin = input
-
 	done := make(chan error, 1)
 	go func() { done <- sess.Run(full) }()
-	timeout := time.After(time.Duration(opts.timeoutOrDefault() * float64(time.Second)))
-	select {
-	case err := <-done:
-		rc := 0
-		if err != nil {
-			var ee *ssh.ExitError
-			if e, ok := err.(*ssh.ExitError); ok {
-				ee = e
-				rc = ee.ExitStatus()
-			} else {
-				s.drop()
-				return Result{}, Errf("ssh run failed: %v", err)
-			}
+	err = <-done
+	// sess.Run has joined the output-copy goroutines before buffers are read.
+	if ctx.Err() != nil {
+		if parent.Err() != nil {
+			return Result{}, parent.Err()
 		}
-		return Result{rc, out.String(), errb.String()}, nil
-	case <-timeout:
-		_ = sess.Signal(ssh.SIGKILL)
 		return Result{124, out.String(), "command timed out"}, nil
-	case <-ctx.Done():
-		_ = sess.Signal(ssh.SIGKILL)
-		return Result{}, ctx.Err()
 	}
+	rc := 0
+	if err != nil {
+		if exit, ok := err.(*ssh.ExitError); ok {
+			rc = exit.ExitStatus()
+		} else {
+			s.dropClient(conn)
+			return Result{}, Errf("ssh run failed: %v", err)
+		}
+	}
+	return Result{rc, out.String(), errb.String()}, nil
 }
 
 // ReadFile tails from a byte offset.
@@ -225,9 +243,19 @@ func (s *SSH) Close() error {
 
 func (s *SSH) drop() {
 	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.conn != nil {
-		s.conn.Close()
+	conn := s.conn
+	s.conn = nil
+	s.mu.Unlock()
+	if conn != nil {
+		_ = conn.Close()
+	}
+}
+
+func (s *SSH) dropClient(conn *ssh.Client) {
+	s.mu.Lock()
+	if s.conn == conn {
 		s.conn = nil
 	}
+	s.mu.Unlock()
+	_ = conn.Close()
 }
