@@ -245,7 +245,8 @@ out="$CAPTURE_DIR/$n.log"
   printf 'CLAUDE_CONFIG_DIR=%s\n' "${CLAUDE_CONFIG_DIR-}"
   printf 'CODEX_HOME=%s\n' "${CODEX_HOME-}"
   printf 'PWD=%s\n' "$(pwd)"
-  printf 'SKILL_TARGET=%s\n' "$(realpath "${CAPTURE_SKILL_REL}" 2>/dev/null || true)"
+  skill_target=$(realpath .claude/skills/lifecycle 2>/dev/null || realpath .agents/skills/lifecycle 2>/dev/null || true)
+  printf 'SKILL_TARGET=%s\n' "$skill_target"
   for arg in "$@"; do printf 'ARG=%s\n' "$arg"; done
 } > "$out"
 exec sleep 600

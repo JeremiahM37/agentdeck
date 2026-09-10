@@ -219,6 +219,12 @@ func TestNativeSkillStaysInRepositoryAndLinksIntoChild(t *testing.T) {
 			if err := exec.Command("git", "init", "-q", repo).Run(); err != nil {
 				t.Fatal(err)
 			}
+			if err := exec.Command("git", "-C", repo, "add", ".").Run(); err != nil {
+				t.Fatal(err)
+			}
+			if out, err := exec.Command("git", "-C", repo, "-c", "user.name=AgentDeck native", "-c", "user.email=agentdeck@example.invalid", "commit", "-qm", "native skill").CombinedOutput(); err != nil {
+				t.Fatalf("native commit: %v %s", err, out)
+			}
 			db, err := store.Open(filepath.Join(root, "state.db"))
 			if err != nil {
 				t.Fatal(err)
@@ -258,27 +264,191 @@ func TestNativeSkillStaysInRepositoryAndLinksIntoChild(t *testing.T) {
 				t.Fatalf("native state: mats=%+v err=%v", mats, err)
 			}
 			child := filepath.Join(root, "child")
-			if err := exec.Command("git", "init", "-q", child).Run(); err != nil {
+			if out, err := exec.Command("git", "-C", repo, "worktree", "add", "-q", "--detach", child, "HEAD").CombinedOutput(); err != nil {
+				t.Fatalf("native child worktree: %v %s", err, out)
+			}
+			t.Cleanup(func() { _ = exec.Command("git", "-C", repo, "worktree", "remove", "--force", child).Run() })
+			if _, err := os.Stat(filepath.Join(child, map[string]string{"claude": ".claude", "codex": ".agents"}[agent], "skills", "native", "SKILL.md")); err != nil {
 				t.Fatal(err)
 			}
 			if err := Reassert(context.Background(), ex, db, p, agent, child); err != nil {
 				t.Fatal(err)
 			}
 			childLink := filepath.Join(child, map[string]string{"claude": ".claude", "codex": ".agents"}[agent], "skills", "native")
-			got, err := os.Readlink(childLink)
-			if err != nil || got != native {
-				t.Fatalf("child link=%q err=%v", got, err)
+			if info, err := os.Stat(childLink); err != nil || !info.IsDir() {
+				t.Fatalf("child native destination missing: info=%v err=%v", info, err)
+			}
+			childBody, err := os.ReadFile(filepath.Join(childLink, "SKILL.md"))
+			if err != nil || string(childBody) != "name: native\n" {
+				t.Fatalf("child native content changed: %q err=%v", childBody, err)
 			}
 			if err := Clean(context.Background(), ex, db, p, child); err != nil {
 				t.Fatal(err)
 			}
-			if _, err := os.Lstat(childLink); !os.IsNotExist(err) {
-				t.Fatalf("child link remains: %v", err)
+			if _, err := os.Stat(childLink); err != nil {
+				t.Fatalf("native child destination was removed: %v", err)
 			}
 			if _, err := os.Stat(native); err != nil {
 				t.Fatalf("native repository skill changed: %v", err)
 			}
 		})
+	}
+}
+
+func TestMaterializeRejectsSymlinkedSkillParent(t *testing.T) {
+	root := t.TempDir()
+	work := filepath.Join(root, "work")
+	source := filepath.Join(root, "source", "safe")
+	outside := filepath.Join(root, "outside")
+	if err := os.MkdirAll(work, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(source, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(source, "SKILL.md"), []byte("name: safe\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(outside, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, filepath.Join(work, ".agents")); err != nil {
+		t.Fatal(err)
+	}
+	_, _, err := Materialize(context.Background(), executor.NewLocal(), &store.Project{RepoPath: work}, Skill{Source: "configured:safe", SourcePath: source, EntryName: "safe"}, "codex", work, 1, false)
+	if err == nil {
+		t.Fatal("materialization followed a symlinked skill parent")
+	}
+	if _, err := os.Stat(filepath.Join(outside, "skills")); !os.IsNotExist(err) {
+		t.Fatalf("outside path was modified: %v", err)
+	}
+}
+
+func TestSkillDBErrorsAreReturned(t *testing.T) {
+	root := t.TempDir()
+	repo := filepath.Join(root, "repo")
+	if err := os.MkdirAll(repo, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := exec.Command("git", "init", "-q", repo).Run(); err != nil {
+		t.Fatal(err)
+	}
+	db, err := store.Open(filepath.Join(root, "state.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	target, err := db.InsertTarget(&store.Target{Name: "db-error-target", Kind: "local"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	p, err := db.InsertProject(&store.Project{Name: "db-error-project", TargetID: target.ID, RepoPath: repo, DefaultAgent: "codex"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := Reassert(context.Background(), executor.NewLocal(), db, p, "codex", repo); err == nil {
+		t.Fatal("Reassert swallowed a closed database error")
+	}
+	if err := Clean(context.Background(), executor.NewLocal(), db, p, repo); err == nil {
+		t.Fatal("Clean swallowed a closed database error")
+	}
+}
+
+func TestSiblingWorktreesRetainIndependentExcludeMarkers(t *testing.T) {
+	root := t.TempDir()
+	repo := filepath.Join(root, "repo")
+	source := filepath.Join(root, "source", "shared")
+	if err := os.MkdirAll(source, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(source, "SKILL.md"), []byte("name: shared\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(repo, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := exec.Command("git", "init", "-q", repo).Run(); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repo, "seed"), []byte("seed\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := exec.Command("git", "-C", repo, "add", "seed").Run(); err != nil {
+		t.Fatal(err)
+	}
+	if out, err := exec.Command("git", "-C", repo, "-c", "user.name=AgentDeck siblings", "-c", "user.email=agentdeck@example.invalid", "commit", "-qm", "seed").CombinedOutput(); err != nil {
+		t.Fatalf("commit: %v %s", err, out)
+	}
+	db, err := store.Open(filepath.Join(root, "state.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	target, err := db.InsertTarget(&store.Target{Name: "siblings-target", Kind: "local"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	p, err := db.InsertProject(&store.Project{Name: "siblings-project", TargetID: target.ID, RepoPath: repo, DefaultAgent: "codex", SkillSourcesJSON: store.J([]string{filepath.Dir(source)})})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ex := executor.NewLocal()
+	xs, err := Discover(context.Background(), ex, p, "codex")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var skill Skill
+	for _, candidate := range xs {
+		if candidate.SourcePath == source {
+			skill = candidate
+		}
+	}
+	attachment, err := db.InsertProjectSkill(&store.ProjectSkill{ProjectID: p.ID, TargetID: target.ID, Agent: "codex", SkillID: skill.ID, SourceID: skill.Source, SourcePath: source, EntryName: "shared", TargetRel: ".agents/skills/shared"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	w1, w2 := filepath.Join(root, "w1"), filepath.Join(root, "w2")
+	for _, work := range []string{w1, w2} {
+		if out, err := exec.Command("git", "-C", repo, "worktree", "add", "-q", "--detach", work, "HEAD").CombinedOutput(); err != nil {
+			t.Fatalf("worktree %s: %v %s", work, err, out)
+		}
+	}
+	t.Cleanup(func() {
+		_ = exec.Command("git", "-C", repo, "worktree", "remove", "--force", w1).Run()
+		_ = exec.Command("git", "-C", repo, "worktree", "remove", "--force", w2).Run()
+	})
+	for _, work := range []string{w1, w2} {
+		if err := Reassert(context.Background(), ex, db, p, "codex", work); err != nil {
+			t.Fatal(err)
+		}
+	}
+	info, err := exec.Command("git", "-C", w1, "rev-parse", "--git-path", "info/exclude").Output()
+	if err != nil {
+		t.Fatal(err)
+	}
+	excludePath := strings.TrimSpace(string(info))
+	if !filepath.IsAbs(excludePath) {
+		excludePath = filepath.Join(w1, excludePath)
+	}
+	before, err := os.ReadFile(excludePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m1, m2 := Marker(attachment.ID, w1), Marker(attachment.ID, w2)
+	if !strings.Contains(string(before), m1) || !strings.Contains(string(before), m2) {
+		t.Fatalf("sibling markers missing: %q", before)
+	}
+	if err := Clean(context.Background(), ex, db, p, w1); err != nil {
+		t.Fatal(err)
+	}
+	after, err := os.ReadFile(excludePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(after), m1) || !strings.Contains(string(after), m2) {
+		t.Fatalf("sibling cleanup removed wrong marker: %q", after)
 	}
 }
 

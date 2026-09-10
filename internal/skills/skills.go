@@ -111,6 +111,8 @@ def main(a):
   except FileNotFoundError: st=None
   if st:
    if os.path.abspath(src)==dst: os.close(fd); return {'preexisting':True}
+   if a.get('source_kind','').startswith('repo:') and not os.path.islink(dst) and os.path.isdir(dst) and os.path.isfile(os.path.join(dst,'SKILL.md')):
+    os.close(fd); return {'preexisting':True}
    if os.path.islink(dst) and os.path.realpath(dst)==src and a.get('owned'): os.close(fd); return {'already':True}
    os.close(fd); return {'error':'skill destination already exists'}
   try: os.symlink(src,name,dir_fd=fd)
@@ -229,7 +231,7 @@ func MaterializeState(ctx context.Context, ex executor.Executor, p *store.Projec
 	// roots. Worktrees link back to that source; this avoids silently turning a
 	// project skill into a missing path in a fresh worktree.
 	dst := filepath.Join(workdir, rel(agent, name))
-	out, err := run(ctx, ex, map[string]any{"op": "materialize", "source": source, "target": dst, "base": workdir, "owned": owned})
+	out, err := run(ctx, ex, map[string]any{"op": "materialize", "source": source, "source_kind": x.Source, "target": dst, "base": workdir, "owned": owned})
 	if err != nil {
 		return "", "", "pending", err
 	}
@@ -287,7 +289,7 @@ func Reassert(ctx context.Context, ex executor.Executor, db *store.DB, p *store.
 		return err
 	}
 	for _, x := range rows {
-		s := Skill{ID: x.SkillID, SourcePath: x.SourcePath, EntryName: x.EntryName}
+		s := Skill{ID: x.SkillID, Source: x.SourceID, SourcePath: x.SourcePath, EntryName: x.EntryName}
 		state := "pending"
 		mats, matErr := db.Materializations(x.ID)
 		if matErr != nil {
