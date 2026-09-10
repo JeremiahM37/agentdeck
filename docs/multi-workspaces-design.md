@@ -1,11 +1,9 @@
 # Multi-repository workspace implementation plan
 
-This is an internal staging design. Multi-repository execution and UI controls
-are not available yet. The planner and cleanup preflight are implemented and
-unit/integration tested. `check-create` resolves and validates the grouped plan
-on its target without changing Git or creating directories. `RunInteractive`
-still rejects grouped creation/removal until their worker exists, rather than
-accidentally creating only the primary repository.
+This is an internal staging design. Multi-repository UI and API selection are
+not available yet. The planner, target validation and grouped creation/removal
+worker exist, with real Git tests for successful/partial creation, all-repository
+cleanup preflight and supervisor death during checkout. This branch is not deployed.
 
 A workspace owns one root directory containing separately owned repository
 worktrees. `Interactive.Repositories` records each display name, optional project
@@ -47,3 +45,26 @@ The existing `check-remove` action validates ownership, branch, active terminals
 and dirty files without removing the worktree. Git status runs with optional
 locks disabled so preflight does not refresh the index; the test compares index
 bytes and confirms registration and allocation state remain unchanged.
+
+## Grouped worker evidence and limits
+
+The root records its full owned plan before the first child allocation, then
+fsyncs progress after each child. Each child starts behind a pipe gate: its process
+group is recorded before it may execute Git. An inherited operation lock and
+process-group receipt keep cleanup from racing an orphaned checkout. Linux zombie
+processes do not count as writers. A test kills the supervisor inside a waiting
+checkout hook, verifies refusal, releases the hook, and recovers the allocation.
+Hooks that intentionally daemonize outside their process group need further policy
+before reusable setup hooks are exposed; this is not universal descendant tracking.
+
+Removal checks active terminals at the shared root as well as child worktrees,
+checks every repository before removing any, rechecks each at removal, and retains
+branches. It leaves the owned root and durable receipt after removing children;
+it never recursively deletes the root. Additional root files block cleanup. A
+later repository failure preserves earlier worktrees and the failed tree's files.
+
+Remaining checks before release include target-side group execution over SSH,
+metadata replacement/corruption handling, concurrent launch/removal attempts,
+partial removal and full API/native-continuation/browser/PTY integration. The
+120-second caller deadline also needs a deliberate asynchronous lifecycle for
+slow multi-repository setup; cancellation safety alone is not a usable progress UI.

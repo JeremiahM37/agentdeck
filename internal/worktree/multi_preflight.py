@@ -76,10 +76,11 @@ def preflight(plan):
     return plan
 
 
-try:
-    if sys.argv[1] != 'check-create':
-        raise ValueError('Unknown workspace preflight operation')
-    print(json.dumps({'workspace': preflight(json.loads(sys.argv[2]))}))
-except (OSError, ValueError, KeyError, TypeError, subprocess.TimeoutExpired) as error:
-    print(json.dumps({'error': str(error)}))
-    sys.exit(1)
+if __name__ == "__main__":
+    try:
+        if sys.argv[1] != 'check-create':
+            raise ValueError('Unknown workspace preflight operation')
+        print(json.dumps({'workspace': preflight(json.loads(sys.argv[2]))}))
+    except (OSError, ValueError, KeyError, TypeError, subprocess.TimeoutExpired) as error:
+        print(json.dumps({'error': str(error)}))
+        sys.exit(1)

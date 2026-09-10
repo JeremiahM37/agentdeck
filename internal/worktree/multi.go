@@ -10,6 +10,9 @@ import (
 //go:embed multi_preflight.py
 var multiPreflightScript string
 
+//go:embed multi_worker.py
+var multiWorkerScript string
+
 // WorkspaceRepository records each allocation independently, including a failed
 // or removed one. The enclosing workspace owns the root directory separately.
 type WorkspaceRepository struct {

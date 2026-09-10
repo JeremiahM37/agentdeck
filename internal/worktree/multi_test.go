@@ -4,11 +4,13 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/JeremiahM37/agentdeck/internal/executor"
 )
@@ -165,5 +167,175 @@ func TestMultiWorkspacePlansSeparateOwnedRepositoriesAndBases(t *testing.T) {
 		if _, err := PlanMultiWorkspace(invalid, 1, InteractiveOptions{}); err == nil {
 			t.Fatal("invalid repository set accepted")
 		}
+	}
+}
+
+func TestMultiWorkspaceCreationFailureAndCleanup(t *testing.T) {
+	for _, bin := range []string{"git", "python3", "tmux"} {
+		if _, err := exec.LookPath(bin); err != nil {
+			t.Skip(bin + " unavailable")
+		}
+	}
+	socket, err := os.MkdirTemp("", "adk-group-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("TMUX_TMPDIR", socket)
+	t.Setenv("TMUX", "")
+	t.Cleanup(func() { exec.Command("tmux", "kill-server").Run(); os.RemoveAll(socket) })
+	root := t.TempDir()
+	git := func(repo string, args ...string) string {
+		t.Helper()
+		out, err := exec.Command("git", append([]string{"-C", repo}, args...)...).CombinedOutput()
+		if err != nil {
+			t.Fatalf("git %v: %s", args, out)
+		}
+		return strings.TrimSpace(string(out))
+	}
+	var sources []RepositorySource
+	for _, name := range []string{"api", "web"} {
+		repo := filepath.Join(root, name)
+		os.Mkdir(repo, 0700)
+		git(repo, "init", "-q")
+		os.WriteFile(filepath.Join(repo, "file"), []byte("original\n"), 0600)
+		git(repo, "add", ".")
+		git(repo, "-c", "user.name=Test", "-c", "user.email=test@example.invalid", "commit", "-qm", "base")
+		sources = append(sources, RepositorySource{Name: name, Repo: repo})
+	}
+	ex := executor.NewLocal()
+	ctx := context.Background()
+	for _, fails := range []bool{false, true} {
+		t.Run(fmt.Sprint(fails), func(t *testing.T) {
+			plan, err := PlanMultiWorkspace(sources, 21, InteractiveOptions{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			hook := filepath.Join(sources[1].Repo, ".git/hooks/post-checkout")
+			if fails {
+				os.WriteFile(hook, []byte("#!/bin/sh\nprintf artifact > setup-artifact\necho later-failure >&2\nexit 1\n"), 0700)
+				defer os.Remove(hook)
+			}
+			err = RunInteractive(ctx, ex, "create", plan)
+			if fails {
+				if err == nil || !strings.Contains(err.Error(), "later-failure") || plan.State != "failed" {
+					t.Fatalf("failure lost: %v %#v", err, plan)
+				}
+			} else if err != nil || plan.State != "ready" {
+				t.Fatalf("creation: %v %#v", err, plan)
+			}
+			for _, r := range plan.Repositories {
+				if _, err := os.Stat(filepath.Join(r.Worktree.Path, "file")); err != nil {
+					t.Fatal(err)
+				}
+			}
+			// A dirty last repository must prevent any removal of the first one.
+			artifact := filepath.Join(plan.Repositories[1].Worktree.Path, "setup-artifact")
+			os.WriteFile(artifact, []byte("keep"), 0600)
+			if err := RunInteractive(ctx, ex, "remove", plan); err == nil {
+				t.Fatal("dirty group removed")
+			}
+			if _, err := os.Stat(plan.Repositories[0].Worktree.Path); err != nil {
+				t.Fatal("first repository removed before later preflight")
+			}
+			os.Remove(artifact)
+			if out, err := exec.Command("tmux", "new-session", "-d", "-s", "group-root", "-c", plan.Path, "sleep 600").CombinedOutput(); err != nil {
+				t.Fatalf("tmux: %s", out)
+			}
+			if err := RunInteractive(ctx, ex, "remove", plan); err == nil || !strings.Contains(err.Error(), "terminal") {
+				t.Fatalf("active workspace root was not protected: %v", err)
+			}
+			exec.Command("tmux", "kill-session", "-t", "group-root").Run()
+			if err := RunInteractive(ctx, ex, "remove", plan); err != nil {
+				t.Fatal(err)
+			}
+			if plan.State != "removed" {
+				t.Fatal(plan.State)
+			}
+			for _, r := range plan.Repositories {
+				if _, err := os.Stat(r.Worktree.Path); !os.IsNotExist(err) {
+					t.Fatal("child still exists")
+				}
+				git(r.Worktree.Repo, "rev-parse", r.Worktree.Branch)
+			}
+			if _, err := os.Stat(filepath.Join(plan.Path, ".agentdeck-state.json")); err != nil {
+				t.Fatal("durable removal receipt lost")
+			}
+		})
+	}
+}
+
+func TestMultiWorkspaceSupervisorDeathKeepsCheckoutGuarded(t *testing.T) {
+	for _, bin := range []string{"git", "python3", "tmux"} {
+		if _, err := exec.LookPath(bin); err != nil {
+			t.Skip(bin + " unavailable")
+		}
+	}
+	socket, err := os.MkdirTemp("", "adk-orphan-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("TMUX_TMPDIR", socket)
+	t.Setenv("TMUX", "")
+	t.Cleanup(func() { exec.Command("tmux", "kill-server").Run(); os.RemoveAll(socket) })
+	root := t.TempDir()
+	repo := filepath.Join(root, "repo")
+	os.Mkdir(repo, 0700)
+	git := func(args ...string) {
+		t.Helper()
+		out, err := exec.Command("git", append([]string{"-C", repo}, args...)...).CombinedOutput()
+		if err != nil {
+			t.Fatalf("git: %s", out)
+		}
+	}
+	git("init", "-q")
+	os.WriteFile(filepath.Join(repo, "file"), []byte("base"), 0600)
+	git("add", ".")
+	git("-c", "user.name=Test", "-c", "user.email=test@example.invalid", "commit", "-qm", "base")
+	started, release := filepath.Join(root, "started"), filepath.Join(root, "release")
+	hook := "#!/bin/sh\ntouch " + executor.ShellQuote(started) + "\nwhile [ ! -f " + executor.ShellQuote(release) + " ]; do sleep 0.1; done\n"
+	os.WriteFile(filepath.Join(repo, ".git/hooks/post-checkout"), []byte(hook), 0700)
+	t.Cleanup(func() { os.WriteFile(release, []byte("release"), 0600) })
+	plan, err := PlanMultiWorkspace([]RepositorySource{{Name: "repo", Repo: repo}}, 33, InteractiveOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, _ := json.Marshal(plan)
+	cmd := exec.Command("python3", "-c", multiWorkerScript, "create", string(raw), multiPreflightScript, interactiveScript)
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer func() { cmd.Process.Kill() }()
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		if _, err := os.Stat(started); err == nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("checkout hook did not start")
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if err := cmd.Process.Kill(); err != nil {
+		t.Fatal(err)
+	}
+	cmd.Wait()
+	ex := executor.NewLocal()
+	if err := RunInteractive(context.Background(), ex, "remove", plan); err == nil {
+		t.Fatal("cleanup raced an orphaned checkout")
+	}
+	os.WriteFile(release, []byte("release"), 0600)
+	deadline = time.Now().Add(10 * time.Second)
+	for {
+		err = RunInteractive(context.Background(), ex, "remove", plan)
+		if err == nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("orphaned checkout did not become recoverable: %v", err)
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	if plan.State != "removed" {
+		t.Fatal(plan.State)
 	}
 }

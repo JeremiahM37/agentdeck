@@ -52,14 +52,17 @@ var interactiveScript string
 
 func RunInteractive(ctx context.Context, ex executor.Executor, action string, plan *Interactive) error {
 	script := interactiveScript
+	extra := ""
 	if len(plan.Repositories) > 0 {
-		if action != "check-create" {
-			return fmt.Errorf("multi-repository execution is not implemented yet")
+		if action == "check-create" {
+			script = multiPreflightScript
+		} else {
+			script = multiWorkerScript
+			extra = " " + executor.ShellQuote(multiPreflightScript) + " " + executor.ShellQuote(interactiveScript)
 		}
-		script = multiPreflightScript
 	}
 	data, _ := json.Marshal(plan)
-	result, err := ex.Run(ctx, "python3 -c "+executor.ShellQuote(script)+" "+executor.ShellQuote(action)+" "+executor.ShellQuote(string(data)), executor.RunOpts{Timeout: 120})
+	result, err := ex.Run(ctx, "python3 -c "+executor.ShellQuote(script)+" "+executor.ShellQuote(action)+" "+executor.ShellQuote(string(data))+extra, executor.RunOpts{Timeout: 120})
 	if err != nil {
 		return err
 	}
