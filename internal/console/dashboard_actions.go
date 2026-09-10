@@ -140,7 +140,7 @@ func (m *dashboard) rowActions() []dashboardAction {
 	switch kind {
 	case "sessions":
 		if r["archived_at"] != nil {
-			return []dashboardAction{{Label: "Unarchive record", Method: "DELETE", Path: path + "/archive"}, read("Archived terminal output", "/archive/history"), op("Saved conversations", "saved-history"), op("Rename", "rename"), op("Move to group", "group")}
+			return append([]dashboardAction{{Label: "Unarchive record", Method: "DELETE", Path: path + "/archive"}, read("Archived terminal output", "/archive/history"), op("Saved conversations", "saved-history"), op("Rename", "rename"), op("Move to group", "group")}, workspaceActions(r, path)...)
 		}
 		archive := dashboardAction{Label: "Stop and archive", Method: "POST", Path: path + "/archive", Body: map[string]any{"stop": true}, Warning: "Stop this terminal process and move its record to Archive? Captured output, saved conversations and worktree files are retained. Unarchiving will not restart it."}
 		if r["ended_at"] != nil {
@@ -148,12 +148,10 @@ func (m *dashboard) rowActions() []dashboardAction {
 			if r["can_restore"] == true {
 				actions = append([]dashboardAction{post("Track again", "/restore")}, actions...)
 			}
-			return actions
+			return append(actions, workspaceActions(r, path)...)
 		}
 		actions = []dashboardAction{op("Attach", "attach"), op("Companion shell", "shell"), op("Send message", "send"), op("Upload context file", "upload"), op("Review changes", "review"), op("Read history", "history"), op("Saved conversations", "saved-history"), op("Browse files", "files"), op("Rename", "rename"), op("Move / edit session", "edit"), op("Move to group", "group"), op("Request handoff", "handoff"), read("Handoff summaries", "/wraps")}
-		if ws, ok := r["workspace"].(map[string]any); ok && ws["state"] != "removed" {
-			actions = append(actions, dashboardAction{Label: "Remove worktree (keep branch)", Method: "DELETE", Path: path + "/worktree", Warning: "Remove " + str(ws["path"]) + "? End its sessions first. Changed, untracked or ignored files prevent removal. The branch is kept."})
-		}
+		actions = append(actions, workspaceActions(r, path)...)
 		actions = append(actions, archive)
 		actions = append(actions, dashboardAction{Label: "Interrupt agent", Method: "POST", Path: path + "/send", Body: map[string]any{"key": "C-c"}, Warning: "Send Ctrl-c to this session's current command?"})
 	case "tasks":
@@ -754,4 +752,11 @@ func workspaceBranch(r row) string {
 		return str(ws["branch"])
 	}
 	return ""
+}
+
+func workspaceActions(r row, path string) []dashboardAction {
+	if ws, ok := r["workspace"].(map[string]any); ok && ws["state"] != "removed" {
+		return []dashboardAction{{Label: "Remove worktree (keep branch)", Method: "DELETE", Path: path + "/worktree", Warning: "Remove " + str(ws["path"]) + "? End its sessions first. Changed, untracked or ignored files prevent removal. The branch is kept."}}
+	}
+	return nil
 }

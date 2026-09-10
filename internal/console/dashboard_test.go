@@ -206,6 +206,30 @@ func TestDashboardDestructiveActionsRequireConfirmationAndRetainIdentity(t *test
 		t.Fatal("confirmation did not run once")
 	}
 }
+
+func TestEndedAndArchivedWorktreesRemainRemovableWithConfirmation(t *testing.T) {
+	for _, archived := range []bool{false, true} {
+		m := sampleDashboard()
+		r := m.current()
+		r["ended_at"] = float64(1)
+		if archived {
+			r["archived_at"] = float64(1)
+		}
+		r["workspace"] = map[string]any{"state": "failed", "path": "/owned/failed"}
+		found := false
+		for _, action := range m.actions() {
+			if action.Method == "DELETE" && strings.HasSuffix(action.Path, "/worktree") {
+				found = true
+				if cmd := m.choose(action); cmd != nil || m.pending == nil {
+					t.Fatal("worktree removal bypassed confirmation")
+				}
+			}
+		}
+		if !found {
+			t.Fatalf("worktree cleanup missing for archived=%v", archived)
+		}
+	}
+}
 func TestDashboardDiffHistoryAndEmptyResourceViews(t *testing.T) {
 	got := formatDetail("Diff", []byte(`{"files":[{"path":"main.go","patch":"@@ -1 +1 @@\n-old\n+new"}]}`))
 	if !strings.Contains(got, "\n-old\n+new") {

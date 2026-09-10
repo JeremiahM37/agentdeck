@@ -318,6 +318,9 @@ func (m *dashboard) updatePreview() {
 			}
 			if ws, ok := r["workspace"].(map[string]any); ok {
 				content = "Worktree: " + str(ws["branch"]) + " · " + str(ws["state"]) + "\nBase: " + str(ws["base"]) + "\n\n" + content
+				if failure := str(ws["error"]); failure != "" {
+					content = "Setup error: " + failure + "\n\n" + content
+				}
 			}
 		case "tasks":
 			content = fmt.Sprintf("%s\n%s · %s\n\n%s", name(r), str(r["status"]), str(r["project_name"]), str(r["prompt"]))

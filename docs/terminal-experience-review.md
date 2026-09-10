@@ -271,3 +271,17 @@ in `docs/native-search.md` and shared memory. This is implementation evidence;
 final-head verification and deployment are still required. Named profiles, agent
 setup, multi-repo/hooks, portable isolation and comparative workflow testing
 remain part of the full goal.
+
+## Recover a failed Git checkout hook
+
+A failed Git post-checkout hook can leave a real worktree behind. AgentDeck now
+records ownership only after verifying that new allocation's repository, path,
+branch and revision. The session retains its failed state, setup error and base
+commit. The error appears in web worktree details and the terminal preview.
+
+Failed setup files remain in place; removal still refuses changed, untracked or
+ignored files and retains the branch. Ended and archived sessions now expose
+worktree removal in terminal actions as well as the web interface. Real Git,
+desktop/phone browser and PTY tests cover the failed-hook recovery path. This
+repairs existing Git-hook behavior; reusable AgentDeck setup-hook configuration
+and multi-repository workspaces remain separate work.

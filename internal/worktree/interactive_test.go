@@ -10,6 +10,61 @@ import (
 	"testing"
 )
 
+func TestFailedCheckoutHookRetainsRecoverableOwnedWorktree(t *testing.T) {
+	for _, bin := range []string{"git", "python3", "tmux"} {
+		if _, err := exec.LookPath(bin); err != nil {
+			t.Skip(bin + " unavailable")
+		}
+	}
+	socketRoot, err := os.MkdirTemp("", "adk-hook-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("TMUX_TMPDIR", socketRoot)
+	t.Setenv("TMUX", "")
+	t.Cleanup(func() { exec.Command("tmux", "kill-server").Run(); os.RemoveAll(socketRoot) })
+	repo := t.TempDir()
+	git := func(dir string, args ...string) string {
+		t.Helper()
+		out, err := exec.Command("git", append([]string{"-C", dir}, args...)...).CombinedOutput()
+		if err != nil {
+			t.Fatalf("git %v: %s", args, out)
+		}
+		return strings.TrimSpace(string(out))
+	}
+	git(repo, "init", "-q")
+	os.WriteFile(filepath.Join(repo, "source"), []byte("keep source\n"), 0600)
+	git(repo, "add", ".")
+	git(repo, "-c", "user.name=Test", "-c", "user.email=test@example.invalid", "commit", "-qm", "base")
+	head := git(repo, "rev-parse", "HEAD")
+	hook := filepath.Join(repo, ".git", "hooks", "post-checkout")
+	os.WriteFile(hook, []byte("#!/bin/sh\nprintf 'setup artifact' > setup-artifact\necho 'setup failure sentinel' >&2\nexit 1\n"), 0700)
+	plan := PlanInteractive(repo, 17, InteractiveOptions{Branch: "failed-setup"})
+	ex := executor.NewLocal()
+	if err := RunInteractive(context.Background(), ex, "create", plan); err == nil || !strings.Contains(err.Error(), "setup failure sentinel") {
+		t.Fatalf("hook failure was not reported: %v", err)
+	}
+	artifact := filepath.Join(plan.Path, "setup-artifact")
+	if plan.State != "failed" || plan.Commit != head || !strings.Contains(plan.Error, "setup failure sentinel") {
+		t.Fatal("failed allocation lost its revision or error details")
+	}
+	if body, _ := os.ReadFile(artifact); string(body) != "setup artifact" {
+		t.Fatal("failed setup files were lost")
+	}
+	if err := RunInteractive(context.Background(), ex, "remove", plan); err == nil {
+		t.Fatal("setup output was deleted without review")
+	}
+	if err := os.Remove(artifact); err != nil {
+		t.Fatal(err)
+	}
+	if err := RunInteractive(context.Background(), ex, "remove", plan); err != nil {
+		t.Fatalf("clean failed allocation is not recoverable: %v", err)
+	}
+	if git(repo, "rev-parse", "failed-setup") != head || git(repo, "status", "--porcelain") != "" {
+		t.Fatal("cleanup changed source or deleted branch")
+	}
+}
+
 func TestInteractiveIsolationOwnershipAndSafeRemoval(t *testing.T) {
 	for _, bin := range []string{"git", "python3", "tmux"} {
 		if _, err := exec.LookPath(bin); err != nil {

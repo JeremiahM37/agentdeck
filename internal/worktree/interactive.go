@@ -22,6 +22,7 @@ type Interactive struct {
 	Commit string `json:"commit"`
 	Token  string `json:"token,omitempty"`
 	State  string `json:"state"`
+	Error  string `json:"error,omitempty"`
 }
 type InteractiveOptions struct {
 	Base   string `json:"base"`
@@ -62,6 +63,9 @@ func RunInteractive(ctx context.Context, ex executor.Executor, action string, pl
 		return fmt.Errorf("worktree operation failed on target: %s", strings.TrimSpace(result.Stderr))
 	}
 	if !result.OK() {
+		if out.Workspace != nil {
+			*plan = *out.Workspace
+		}
 		return fmt.Errorf("%s", out.Error)
 	}
 	if out.Workspace == nil {

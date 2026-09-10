@@ -8,6 +8,15 @@ def git(repo,*args):
  return r.stdout.strip()
 def within(path,root):
  return os.path.commonpath([os.path.realpath(path),root])==root
+def claim_created_worktree(repo,dest,common,commit):
+ # A post-checkout hook can fail after Git has allocated a complete worktree.
+ # Claim only that exact new allocation, never an existing or substituted tree.
+ if git(dest,'rev-parse','--show-toplevel')!=dest:raise ValueError('Created directory is not the worktree root')
+ if git(dest,'rev-parse','--path-format=absolute','--git-common-dir')!=common:raise ValueError('Created worktree belongs to another repository')
+ if git(dest,'symbolic-ref','--quiet','--short','HEAD')!=p['branch']:raise ValueError('Created worktree branch does not match')
+ if git(dest,'rev-parse','HEAD')!=commit:raise ValueError('Created worktree revision does not match')
+ owner=pathlib.Path(git(dest,'rev-parse','--absolute-git-dir'))/'agentdeck-owner'
+ with owner.open('x') as file:file.write(p['token'])
 try:
  repo=os.path.realpath(p['repo']);dest=os.path.realpath(p['path'])
  if not os.path.isabs(p['repo']) or not os.path.isabs(p['path']):raise ValueError('Worktree paths must be absolute')
@@ -18,9 +27,20 @@ try:
   commit=git(repo,'rev-parse','--verify','--end-of-options',p['base']+'^{commit}')
   if os.path.lexists(p['path']):raise ValueError('Worktree path already exists; nothing was changed')
   pathlib.Path(dest).parent.mkdir(parents=True,exist_ok=True)
-  git(repo,'worktree','add','-b',p['branch'],'--',dest,commit)
+  try:
+   git(repo,'worktree','add','-b',p['branch'],'--',dest,commit)
+  except ValueError as failure:
+   if os.path.isdir(dest):
+    try:
+     claim_created_worktree(repo,dest,common,commit)
+     p.update(repo=repo,path=dest,commit=commit,state='failed',error=str(failure))
+    except (OSError,ValueError,subprocess.TimeoutExpired):
+     # Keep the original Git failure. An allocation whose identity cannot be
+     # proven stays unclaimed and must not be removed automatically.
+     pass
+   raise
   owner=pathlib.Path(git(dest,'rev-parse','--absolute-git-dir'))/'agentdeck-owner'
-  owner.write_text(p['token'])
+  with owner.open('x') as file:file.write(p['token'])
   p.update(repo=repo,path=dest,commit=commit,state='ready')
  elif operation=='remove':
   if not os.path.isdir(dest):
@@ -41,4 +61,6 @@ try:
  else:raise ValueError('Unknown worktree operation')
  print(json.dumps({'workspace':p}))
 except (OSError,ValueError,subprocess.TimeoutExpired) as e:
- print(json.dumps({'error':str(e)}));sys.exit(1)
+ out={'error':str(e)}
+ if p.get('state')=='failed' and p.get('error'):out['workspace']=p
+ print(json.dumps(out));sys.exit(1)
