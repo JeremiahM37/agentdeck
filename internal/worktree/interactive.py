@@ -2,9 +2,10 @@
 import json,os,pathlib,subprocess,sys
 operation,raw=sys.argv[1:3]
 p=json.loads(raw)
-inherited_lock=tuple([int(sys.argv[3])]) if len(sys.argv)>3 else ()
+inherited_lock=tuple([int(sys.argv[3])]) if len(sys.argv)>3 and sys.argv[3]!='-' else ()
+git_timeout=float(sys.argv[4]) if len(sys.argv)>4 else 90
 def git(repo,*args):
- r=subprocess.run(['git','-C',repo,*args],capture_output=True,text=True,timeout=90,pass_fds=inherited_lock)
+ r=subprocess.run(['git','-C',repo,*args],capture_output=True,text=True,timeout=git_timeout,pass_fds=inherited_lock)
  if r.returncode:raise ValueError(r.stderr.strip() or r.stdout.strip() or 'Git command failed')
  return r.stdout.strip()
 def within(path,root):

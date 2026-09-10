@@ -31,6 +31,9 @@ func (m *Manager) WorkspaceProgress(ctx context.Context, id int64) (*worktree.In
 }
 
 func (m *Manager) RemoveWorktree(ctx context.Context, id int64) error {
+	if m.setupActive(id) {
+		return fmt.Errorf("workspace setup is still running; inspect its progress before removing the worktree")
+	}
 	m.workspaceMu.Lock()
 	defer m.workspaceMu.Unlock()
 	row, ex, err := m.resolve(id)

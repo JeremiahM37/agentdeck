@@ -47,6 +47,32 @@ session database. It reports the last recorded state, not a guarantee that an
 orphaned process is still running. Background creation, automatic polling, and
 long-running setup remain separate work; this endpoint supplies their status read.
 
+## Background setup API
+
+An opt-in `POST /api/sessions` with `background:true` and `worktree` returns 202
+with a persisted session reservation before target setup. `setup_state` records
+`creating`, `ready`, or `failed`; `setup_error` retains the launch failure. The
+worker survives the initiating HTTP response or disconnect, with a 30-minute
+overall deadline. Nested Git and child-worker deadlines follow that budget.
+Existing synchronous callers keep their earlier timeout behavior.
+
+The poller does not interpret a missing terminal as a failed live setup. A
+reservation whose controller worker is gone becomes an interrupted failure,
+even if its SSH target is unavailable. Allocation files remain for inspection.
+Stop, archive and removal refuse an active setup instead of falsely reporting it
+stopped while its worker continues. Explicit cancellation and restart recovery
+beyond inspection are still pending. Normal browser/TUI creation has not yet
+opted into this API; automatic progress and terminal-ready navigation remain next.
+
+The real API lifecycle test returns while a Git hook is paused, observes setup
+past the poller's grace period, releases the hook, and verifies both success and
+retained failure. Opt-in elapsed-time proofs cross the old nested timeouts:
+
+```sh
+AGENTDECK_SLOW_SETUP_PROOF=1 go test ./internal/api -run TestBackgroundWorkspace -count=1
+AGENTDECK_SLOW_SETUP_PROOF=1 AGENTDECK_GROUPED_SETUP_PROOF=1 go test ./internal/api -run TestBackgroundWorkspace -count=1
+```
+
 ## Review and continuation
 
 The agent starts at the shared root. Web review offers a repository selector;

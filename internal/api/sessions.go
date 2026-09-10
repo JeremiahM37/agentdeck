@@ -86,15 +86,16 @@ func (s *Server) getSession(w http.ResponseWriter, r *http.Request) {
 }
 
 type sessionIn struct {
-	ProfileID int64                        `json:"profile_id"`
-	GroupPath string                       `json:"group_path"`
-	Worktree  *worktree.InteractiveOptions `json:"worktree"`
-	ProjectID *int64                       `json:"project_id"`
-	TargetID  int64                        `json:"target_id"`
-	Name      string                       `json:"name"`
-	Agent     string                       `json:"agent"`
-	Model     string                       `json:"model"`
-	Workdir   string                       `json:"workdir"`
+	Background bool                         `json:"background"`
+	ProfileID  int64                        `json:"profile_id"`
+	GroupPath  string                       `json:"group_path"`
+	Worktree   *worktree.InteractiveOptions `json:"worktree"`
+	ProjectID  *int64                       `json:"project_id"`
+	TargetID   int64                        `json:"target_id"`
+	Name       string                       `json:"name"`
+	Agent      string                       `json:"agent"`
+	Model      string                       `json:"model"`
+	Workdir    string                       `json:"workdir"`
 	// Resume picks the agent's own previous conversation back up, which is what
 	// you want when re-opening a project you were in yesterday.
 	Resume bool   `json:"resume"`
@@ -166,7 +167,11 @@ func (s *Server) createSession(w http.ResponseWriter, r *http.Request) {
 	if in.Yolo != nil {
 		yolo = *in.Yolo
 	}
-	sess, err := s.Sessions.Launch(r.Context(), sessions.LaunchOpts{
+	launch, status := s.Sessions.Launch, 201
+	if in.Background {
+		launch, status = s.Sessions.LaunchBackground, 202
+	}
+	sess, err := launch(r.Context(), sessions.LaunchOpts{
 		ProfileID: in.ProfileID,
 		GroupPath: in.GroupPath, Worktree: in.Worktree, ProjectID: in.ProjectID, TargetID: in.TargetID, Name: in.Name,
 		Agent: in.Agent, Model: in.Model, Workdir: in.Workdir,
@@ -177,7 +182,7 @@ func (s *Server) createSession(w http.ResponseWriter, r *http.Request) {
 		httpError(w, 409, "%s", err.Error())
 		return
 	}
-	writeJSON(w, 201, s.sessionView(sess))
+	writeJSON(w, status, s.sessionView(sess))
 }
 
 // onboardingDocs are the files a project uses to tell a newcomer where it is.
@@ -447,6 +452,10 @@ func (s *Server) attachSession(w http.ResponseWriter, r *http.Request) {
 func (s *Server) deleteSession(w http.ResponseWriter, r *http.Request) {
 	row, ok := s.sessionParam(w, r)
 	if !ok {
+		return
+	}
+	if row.SetupState == "creating" {
+		httpError(w, 409, "workspace setup is still running; inspect its progress before stopping the session")
 		return
 	}
 	kill := r.URL.Query().Get("kill") == "true"

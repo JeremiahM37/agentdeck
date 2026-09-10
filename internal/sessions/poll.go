@@ -29,6 +29,12 @@ func (m *Manager) poll(ctx context.Context, onlyTarget *int64) {
 		if onlyTarget != nil && s.TargetID != *onlyTarget {
 			continue
 		}
+		if s.SetupState == "creating" {
+			// Controller ownership is local information. An unreachable SSH
+			// target must not hide an interrupted background reservation.
+			m.applyPane(s, "", true)
+			continue
+		}
 		byTarget[s.TargetID] = append(byTarget[s.TargetID], s)
 	}
 	for targetID, group := range byTarget {
@@ -69,6 +75,24 @@ func (m *Manager) poll(ctx context.Context, onlyTarget *int64) {
 // applyPane folds one capture into a session row, publishing only on a real
 // change so the board's SSE stream stays quiet while nothing is happening.
 func (m *Manager) applyPane(s *store.Session, pane string, missing bool) {
+	if s.SetupState == "creating" {
+		if m.setupActive(s.ID) {
+			return
+		}
+		current, err := m.DB.Session(s.ID)
+		if err != nil || current.SetupState != "creating" {
+			return // A snapshot taken before setup completed is not an interruption.
+		}
+		// A persisted reservation without this process's worker was interrupted.
+		// Keep any target allocation for inspection; do not launch twice.
+		now := store.Now()
+		if err := m.DB.Update("sessions", s.ID, map[string]any{"setup_state": "failed", "setup_error": "Setup was interrupted; inspect the workspace before retrying", "status": StatusDead, "ended_at": now, "updated_at": now}); err == nil {
+			if fresh, err := m.DB.Session(s.ID); err == nil {
+				m.publish(fresh)
+			}
+		}
+		return
+	}
 	now := store.Now()
 	fields := map[string]any{"updated_at": now}
 	var status string

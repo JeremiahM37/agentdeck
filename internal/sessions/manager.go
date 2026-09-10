@@ -33,12 +33,13 @@ type Manager struct {
 	// before giving up and saying so.
 	HandoffTimeout time.Duration
 
-	lifecycleMu sync.Mutex
-	workspaceMu sync.RWMutex
-	sendMu      sync.Mutex
-	mu          sync.Mutex
-	transitions map[string]bool
-	handoffs    map[int64]bool // sessions with a wrap in flight
+	lifecycleMu  sync.Mutex
+	workspaceMu  sync.RWMutex
+	sendMu       sync.Mutex
+	mu           sync.Mutex
+	transitions  map[string]bool
+	activeSetups map[int64]bool
+	handoffs     map[int64]bool // sessions with a wrap in flight
 }
 
 // New builds a session manager.
@@ -60,7 +61,9 @@ func (m *Manager) publish(s *store.Session) {
 
 // LaunchOpts are the inputs of a new interactive session.
 type LaunchOpts struct {
-	ProfileID int64
+	OnReserved   func(*store.Session) error `json:"-"`
+	SetupTimeout float64                    `json:"-"`
+	ProfileID    int64
 	// Configuration is internal: native continuations keep the source launch settings.
 	Configuration *LaunchConfiguration
 	GroupPath     string
@@ -185,6 +188,12 @@ func (m *Manager) Launch(ctx context.Context, o LaunchOpts) (*store.Session, err
 		return nil, err
 	}
 	sess.TmuxSession = tmuxName
+	if o.OnReserved != nil {
+		if err := o.OnReserved(sess); err != nil {
+			m.end(sess.ID, StatusDead)
+			return nil, err
+		}
+	}
 
 	ex, err := m.Reg.For(target)
 	if err != nil {
@@ -252,7 +261,11 @@ func (m *Manager) Launch(ctx context.Context, o LaunchOpts) (*store.Session, err
 			m.end(sess.ID, StatusDead)
 			return nil, err
 		}
-		if err := worktree.RunInteractive(ctx, ex, "create", plan); err != nil {
+		setupTimeout := 120.0
+		if o.SetupTimeout > 0 {
+			setupTimeout = o.SetupTimeout
+		}
+		if err := worktree.RunInteractiveWithTimeout(ctx, ex, "create", plan, setupTimeout); err != nil {
 			plan.State = "failed"
 			plan.Error = err.Error()
 			m.DB.Update("sessions", sess.ID, map[string]any{"worktree_json": store.J(plan)})
@@ -563,6 +576,9 @@ func (m *Manager) SendKey(ctx context.Context, id int64, key string) error {
 
 // Kill ends a session's process and closes its record.
 func (m *Manager) Kill(ctx context.Context, id int64) error {
+	if m.setupActive(id) {
+		return fmt.Errorf("workspace setup is still running; inspect its progress before stopping the session")
+	}
 	sess, ex, err := m.resolve(id)
 	if err != nil {
 		return err
@@ -599,6 +615,9 @@ func (m *Manager) Kill(ctx context.Context, id int64) error {
 // to be non-destructive too, or "add it to the board" quietly becomes "hand its
 // life over to the board".
 func (m *Manager) Release(ctx context.Context, id int64) error {
+	if m.setupActive(id) {
+		return fmt.Errorf("workspace setup is still running; inspect its progress before stopping the session")
+	}
 	sess, err := m.DB.Session(id)
 	if err != nil {
 		return err

@@ -10,6 +10,7 @@ import stat
 import tempfile
 
 action, raw, validation, single = sys.argv[1:5]
+operation_timeout = float(sys.argv[5]) if len(sys.argv) > 5 else 105
 p = json.loads(raw)
 root = pathlib.Path(p['path'])
 lock = None
@@ -121,7 +122,7 @@ def run_child(entry, operation):
     try:
         child = subprocess.Popen(
             ['python3', '-c', wrapper, str(read_fd), single, operation,
-             json.dumps(child_plan), str(lock.fileno())],
+             json.dumps(child_plan), str(lock.fileno()), str(max(1, operation_timeout-15))],
             stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
             start_new_session=True, pass_fds=(read_fd, lock.fileno()),
         )
@@ -131,7 +132,7 @@ def run_child(entry, operation):
         os.close(read_fd)
         os.close(write_fd)
     try:
-        stdout, stderr = child.communicate(timeout=105)
+        stdout, stderr = child.communicate(timeout=operation_timeout)
     except subprocess.TimeoutExpired:
         os.killpg(child.pid, signal.SIGKILL)
         child.communicate()

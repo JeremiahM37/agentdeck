@@ -14,6 +14,9 @@ import (
 // Archive retains a record and terminal snapshot after proving the terminal has
 // stopped. A live tracked terminal requires an explicit stop request.
 func (m *Manager) Archive(ctx context.Context, id int64, stop bool) (*store.Session, error) {
+	if m.setupActive(id) {
+		return nil, fmt.Errorf("workspace setup is still running; inspect its progress before archiving")
+	}
 	s, ex, err := m.resolve(id)
 	if err != nil {
 		return nil, err

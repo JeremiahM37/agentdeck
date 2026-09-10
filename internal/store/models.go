@@ -148,6 +148,8 @@ type Memory struct {
 // which is work they hand OFF. Its tmux session is the process; this row is the
 // durable record that outlives it.
 type Session struct {
+	SetupState       string   `json:"setup_state,omitempty"`
+	SetupError       string   `json:"setup_error,omitempty"`
 	LaunchConfigJSON string   `json:"-"`
 	ArchivedAt       *float64 `json:"archived_at"`
 	ResumeID         string   `json:"resume_id,omitempty"`

@@ -57,18 +57,22 @@ func PlanInteractive(repo string, id int64, o InteractiveOptions) *Interactive {
 var interactiveScript string
 
 func RunInteractive(ctx context.Context, ex executor.Executor, action string, plan *Interactive) error {
+	return RunInteractiveWithTimeout(ctx, ex, action, plan, 120)
+}
+
+func RunInteractiveWithTimeout(ctx context.Context, ex executor.Executor, action string, plan *Interactive, timeout float64) error {
 	script := interactiveScript
-	extra := ""
+	extra := fmt.Sprintf(" - %.0f", max(1, timeout-30))
 	if len(plan.Repositories) > 0 {
 		if action == "check-create" {
 			script = multiPreflightScript
+			extra = ""
 		} else {
 			script = multiWorkerScript
-			extra = " " + executor.ShellQuote(multiPreflightScript) + " " + executor.ShellQuote(interactiveScript)
+			extra = " " + executor.ShellQuote(multiPreflightScript) + " " + executor.ShellQuote(interactiveScript) + fmt.Sprintf(" %.0f", max(1, timeout-15))
 		}
 	}
 	data, _ := json.Marshal(plan)
-	timeout := 120.0
 	if action == "status" {
 		timeout = 10
 	}

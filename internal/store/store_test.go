@@ -395,3 +395,46 @@ func TestLaunchConfigurationMigrationPrivacyAndReopen(t *testing.T) {
 		t.Fatalf("listing lost snapshot: %v", err)
 	}
 }
+
+func TestBackgroundSetupStateMigratesAndPersists(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "state.db")
+	db, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	target, err := db.InsertTarget(&Target{Name: "setup", Kind: "local"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	row, err := db.InsertSession(&Session{TargetID: target.ID, Name: "legacy"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, column := range []string{"setup_state", "setup_error"} {
+		if _, err := db.Exec("ALTER TABLE sessions DROP COLUMN " + column); err != nil {
+			t.Fatal(err)
+		}
+	}
+	db.Close()
+	db, err = Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	legacy, err := db.Session(row.ID)
+	if err != nil || legacy.SetupState != "" || legacy.SetupError != "" {
+		t.Fatalf("legacy setup state: %v", err)
+	}
+	if err := db.Update("sessions", row.ID, map[string]any{"setup_state": "failed", "setup_error": "checkout failed"}); err != nil {
+		t.Fatal(err)
+	}
+	db.Close()
+	db, err = Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	loaded, err := db.Session(row.ID)
+	if err != nil || loaded.SetupState != "failed" || loaded.SetupError != "checkout failed" {
+		t.Fatalf("setup result was not durable: %v", err)
+	}
+}
