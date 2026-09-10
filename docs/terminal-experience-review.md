@@ -52,7 +52,7 @@ in this document is not a substitute for that evidence.
 | Branch a conversation / isolated parallel work | Native Claude/Codex workspace conversation picker, paginated reader, and exact-ID resume/fork implemented in TUI/web. API, real tmux/PTY and mobile browser tests cover boundaries, unchanged original history and explicit confirmation. Installed Codex fork persisted a distinct ID; installed Claude loaded saved history with its native fork flag (no new turn). Fresh interactive worktree creation/removal now exists in both interfaces, with durable allocation, ownership checks, retained branches, local/SSH Git proof and mobile/desktop/PTy tests. Native forks now optionally allocate an isolated worktree in both interfaces. Real Git/tmux API, browser and PTY tests cover committed-base isolation, preserved parent changes/history, directory-aware continuation and cleanup protection. Installed Codex and Claude CLIs were verified with distinct child IDs and worktree directories; Claude persistence used a synthetic response-only turn with no tool calls. Current native identity is detected from verified Linux process evidence; unsupported/legacy cases retain manual selection. |
 | Organize large fleets | Named group paths now persist across projects/targets and inherit on forks/handoffs. TUI and web have nested collapse/counts; terminal search reveals folded children and selection/collapse survive refresh. Web keeps per-tab display state. TUI grouping is remembered per section/server and folded named groups survive restarts, with real PTY restart coverage. Adopted sessions can restore their original record after stopping tracking, gated by a persistent tmux identity marker; real API, PTY and mobile/desktop tests cover retained metadata, concurrent requests and reused-name rejection. Unmarked live records capture identity when released; already-released records without identity still require explicit discovery. Archive now retains terminal snapshots and metadata, with explicit stop confirmation and unarchive without restart; exact native continuation is available separately. Named launch profiles and global conversation search are implemented; broader native identity and fleet-profile partitioning still need comparison. |
 | Agent setup | Custom commands, named agent settings, project MCP controls and installed-agent discovery exist. MCP editing is available in web, TUI and API; Claude supports private strict MCP documents, while Codex receives additive overrides and rejects strict mode. Skills management, reusable setup hooks and broader lifecycle comparison remain. |
-| Workspace setup | Grouped interactive workspaces now support 1–8 repositories, per-repository bases, native forks, asynchronous creation, cancellation and interrupted-allocation recovery in TUI/web. Real Git/tmux/API/PTY and mobile/desktop tests cover ownership, dirty-file preservation and restart recovery. Adding repositories to an existing group, converting older single-repository allocations, and reusable setup hooks remain. Revision `203850f` is deployed from a clean, stamped standalone artifact; the post-deployment full verify is a separate active gate. |
+| Workspace setup | Grouped interactive workspaces now support 1–8 repositories, per-repository bases, native forks, asynchronous creation, cancellation and interrupted-allocation recovery in TUI/web. Real Git/tmux/API/PTY and mobile/desktop tests cover ownership, dirty-file preservation and restart recovery. Adding repositories to an existing group and create-time `setup_cmd` commands are shipped; converting older single-repository allocations and repository-owned launch/destroy hooks remain. Revision `203850f` is deployed from a clean, stamped standalone artifact. |
 | Sandbox choices | Existing Proxmox sandbox path is not equivalent to portable Docker/Podman sandboxing; portability gap remains. |
 | Web everyday management | Global command search now reaches sessions, tasks, projects, settings and common actions from desktop/mobile; real browser/tmux tests cover attachment, retained terminal identity, keyboard selection, draft/focus restoration, and refresh failures. Mobile terminals now default to focused navigation with a one-button return, retained frames, visible file/tool controls, and Esc/Tab/arrows/Ctrl-C keys in focused, expanded and standalone phone terminals. Real tmux tests cover height gained, application cursor keys, offline recovery, rotation, and restored preferences. Internal terminal tabs, structured chat, PDFs, routines/takeover and approvals exist. Global search now includes native conversation content with context paging and validated forks. Benchmark the same create/find/attach/review/send/recover workflows against AoE desktop and phone; improve discoverability and consistency before claiming superiority. |
 | Installation and keyboard UX | Linux and Windows SSH clients exist; the installed client opens the dashboard by default, while `agentdeck serve` starts the control plane. Installation portability, help consistency, terminal compatibility and first-run flows need further audit. |
@@ -218,7 +218,8 @@ conversation and its launch configuration stay intact.
 Codex receives an explicit directory override: changing only the outer shell's
 directory opens a native picker that defaults to the parent directory. The
 saved configuration uses a directory template so later resumes/forks use their
-own recorded workspace. Unsupported native resume capability stays unsupported.
+own recorded workspace. Agents without exact-ID argument templates remain
+unsupported rather than falling back to an unrelated conversation.
 A resumed session also prevents removal of its still-active worktree. Once a
 worktree is removed, a continuation fails clearly until its directory is restored.
 
@@ -309,13 +310,29 @@ mobile workflow cells remain unverified in this pass.
 
 ## Bounded comparison report — 2026-09-10
 
-This document is the [terminal experience comparison report](terminal-experience-review.md)
-and evidence ledger. The shipped `203850f` slice adds exact-ID Claude/Codex
-resume and fork, private MCP configuration controls, routine launch-policy
-snapshots, and simultaneous browser/native terminal use. The listed tests and
-source checks support those claims. AoE mobile cells, skills management and
-whole-goal feature parity remain unverified or out of scope; this report makes
-no superiority claim.
+This bounded comparison report covers three common workflows. The actual cell
+results were:
+
+| App / viewport | Find named session | Attach → dashboard → reattach | Review tracked diff |
+| --- | --- | --- | --- |
+| AgentDeck 1440 | PASS | PASS | PASS |
+| AgentDeck 390 | PASS | PASS | PASS |
+| AoE 1440 | PASS | PASS | PASS* |
+| AoE 390 | PASS | UNVERIFIED | UNVERIFIED |
+
+The matrix is from the c2 comparison run (`AgentDeck`
+`c2c3c96a6d55a70063ea19709aed2b761db634ca`, AoE `5687bbd`). `PASS*` is the
+visible AoE desktop diff screenshot; its virtualized renderer did not expose the
+rows through `inner_text`. AoE's 390px terminal view timed out after search, so
+no mobile continuity or diff claim is made. This is an evidence summary, not a
+claim of whole-goal parity: skills management, broader comparison workflows and
+other parity work remain incomplete or unproven.
+
+The earlier terminal features already supplied exact-ID Claude/Codex resume and
+fork plus browser/native coexistence. The `203850f` MCP lifecycle slice adds
+private runtime publication, provider-specific MCP forwarding and routine
+launch-policy snapshots. Its source checks and lifecycle tests support those
+claims; this report makes no superiority claim.
 
 
 A follow-up creation-form inspection at both viewport sizes found unassociated
