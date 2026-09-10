@@ -3,8 +3,10 @@ package api_test
 import (
 	"bufio"
 	"fmt"
+	"io"
 	"net/http"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -97,5 +99,50 @@ func TestTaskStreamCarriesAgentEvents(t *testing.T) {
 		case <-deadline:
 			t.Fatal("no agent event reached the task stream")
 		}
+	}
+}
+
+func TestDrainStreamsClosesLiveResponsesAndRejectsNewStreams(t *testing.T) {
+	h := newHarness(t)
+	client := &http.Client{Timeout: 2 * time.Second}
+	resp, err := client.Get(h.URL + "/api/stream")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 {
+		t.Fatalf("stream status %d", resp.StatusCode)
+	}
+	h.App.Server.DrainStreams()
+	var drains sync.WaitGroup
+	for i := 0; i < 8; i++ {
+		drains.Add(1)
+		go func() { defer drains.Done(); h.App.Server.DrainStreams() }()
+	}
+	drains.Wait() // safe across signal handling and final cleanup
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("stream did not drain: %v", err)
+	}
+	if !strings.Contains(string(body), ": connected") {
+		t.Fatal("stream never connected")
+	}
+	for _, path := range []string{"/api/stream", "/api/tasks/1/stream"} {
+		next, err := client.Get(h.URL + path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		next.Body.Close()
+		if next.StatusCode != http.StatusServiceUnavailable {
+			t.Fatalf("%s status %d", path, next.StatusCode)
+		}
+	}
+	health, err := client.Get(h.URL + "/api/health")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer health.Body.Close()
+	if health.StatusCode != 200 {
+		t.Fatal("draining streams stopped ordinary requests")
 	}
 }

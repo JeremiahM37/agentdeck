@@ -323,3 +323,20 @@ initial focus is preserved. Phone/desktop tests cover forward/backward wrapping,
 nested profile editing with a retained draft, and Escape restoration; regression
 flows cover task dispatch, approvals, routine editing, handoffs and task links.
 These are browser keyboard/accessibility checks, not a manual screen-reader audit.
+
+
+## Graceful restart with live browsers
+
+Open board/task EventSource connections are indefinite. Waiting for them during
+HTTP shutdown consumed the entire ten-second grace period whenever a browser
+remained open. The service now drains those streams before waiting for ordinary
+HTTP requests. New streams receive 503 while draining; repeated/concurrent drain
+calls are safe. Other requests keep their normal lifetime. Terminal-manager
+cleanup still closes attachment clients, leaving persistent tmux sessions intact.
+
+A real browser/tmux regression test reproduces the old shutdown exceeding three
+seconds, then verifies prompt shutdown, automatic browser reconnection after a
+restart, retained output and the exact same tmux session ID. API integration
+checks cover stream EOF, rejected reconnects while draining, continuing health
+requests and concurrent drain calls under the race detector. This addresses a
+shutdown delay; it does not shorten the grace period for ordinary requests.

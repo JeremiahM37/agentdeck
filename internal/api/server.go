@@ -45,6 +45,10 @@ type Server struct {
 	Cfg       *config.Config
 	Log       *slog.Logger
 
+	streamsOnce   sync.Once
+	streamsCtx    context.Context
+	streamsCancel context.CancelFunc
+
 	searchMu    sync.Mutex
 	searchJobs  map[string]*conversationSearchJob
 	searchSlots chan struct{}
@@ -324,7 +328,28 @@ func (s *Server) taskStream(w http.ResponseWriter, r *http.Request) {
 	s.sse(w, r, fmt.Sprintf("task:%d", id))
 }
 
+// DrainStreams ends open-ended live updates before HTTP graceful shutdown waits
+// for requests. Ordinary requests retain their own lifetime and drain normally.
+func (s *Server) DrainStreams() {
+	s.streamDone()
+	s.streamsCancel()
+}
+
+func (s *Server) streamDone() <-chan struct{} {
+	s.streamsOnce.Do(func() {
+		s.streamsCtx, s.streamsCancel = context.WithCancel(context.Background())
+	})
+	return s.streamsCtx.Done()
+}
+
 func (s *Server) sse(w http.ResponseWriter, r *http.Request, channel string) {
+	draining := s.streamDone()
+	select {
+	case <-draining:
+		httpError(w, http.StatusServiceUnavailable, "Server is restarting")
+		return
+	default:
+	}
 	flusher, ok := w.(http.Flusher)
 	if !ok {
 		httpError(w, 500, "streaming unsupported")
@@ -347,6 +372,8 @@ func (s *Server) sse(w http.ResponseWriter, r *http.Request, channel string) {
 	defer keepalive.Stop()
 	for {
 		select {
+		case <-draining:
+			return
 		case <-ctx.Done():
 			return
 		case msg, ok := <-ch:
@@ -364,6 +391,7 @@ func (s *Server) sse(w http.ResponseWriter, r *http.Request, channel string) {
 
 // Shutdown releases everything the server owns.
 func (s *Server) Shutdown(ctx context.Context) {
+	s.DrainStreams()
 	s.Terminals.Shutdown()
 	s.Sched.Stop()
 	s.Notifier.Wait()

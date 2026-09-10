@@ -106,6 +106,7 @@ func main() {
 	log.Info("shutting down")
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
+	a.Server.DrainStreams()
 	_ = srv.Shutdown(ctx)
 }
 
