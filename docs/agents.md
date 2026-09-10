@@ -9,7 +9,7 @@ you pick.
 | Agent | Status | Gated approvals | Session resume | Credentials pushed to remote targets |
 |---|---|---|---|---|
 | `claude` | first-class | ✅ | ✅ | `~/.claude/.credentials.json` |
-| `codex` | first-class | ❌ | ❌ | `~/.codex/auth.json` |
+| `codex` | first-class | ❌ | ✅ | `~/.codex/auth.json` |
 | `gemini` | experimental | ❌ | ❌ | — |
 
 ## Choosing one
@@ -50,8 +50,23 @@ The staged context bundle reaches every agent — it is prepended to the prompt,
 it needs no CLI support. Per-project MCP servers and permission rules are written
 for Claude (`--mcp-config`, `--settings`) and MCP servers are passed additively
 to Codex with `-c` overrides; Codex keeps its normal `~/.codex` home. The same
-project MCP declaration reaches fresh, resumed, and forked interactive sessions.
+project MCP declaration reaches fresh, resumed, and forked interactive sessions
+for Claude and Codex. Claude receives a private absolute MCP document and can
+enforce `strict_mcp`; Codex receives additive overrides and rejects `strict_mcp`,
+including when the declaration is empty. Gemini and custom agents receive no
+automatic MCP translation unless their custom launch definition supplies it.
+
+Project MCP is managed from PWA project settings, the terminal dashboard's MCP
+action, or `PUT /api/projects/ID/mcp` through the CLI API. Responses redact
+credential values; the target-side runtime document is private to its session or
+task. The declaration is snapshotted before a background attempt starts, so
+routine takeover keeps the original MCP policy when project settings change.
 See [context-parity.md](context-parity.md).
+
+Claude and Codex support exact-ID resume and fork in the interactive web and
+terminal clients. Gemini and custom agents expose those actions only when their
+definition provides the corresponding argument templates; AgentDeck never falls
+back to an unrelated last conversation.
 
 ## Binary not found
 

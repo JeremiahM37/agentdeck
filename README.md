@@ -89,7 +89,8 @@ docker compose -f deploy/docker-compose.yml up -d    # → http://localhost:9110
 
 ```bash
 go build -o agentdeck ./cmd/agentdeck
-./agentdeck                                # → http://<host>:9110
+./agentdeck serve                          # → http://<host>:9110
+# In an interactive terminal, a bare `agentdeck` opens the terminal dashboard.
 ```
 
 One static binary with the PWA, the agent-side hook scripts and a pure-Go SQLite
@@ -101,7 +102,7 @@ Kick the tires with **zero setup** — mock mode ships a full demo board with fa
 agents (no git/tmux/claude needed):
 
 ```bash
-AGENTDECK_MOCK=1 ./agentdeck
+AGENTDECK_MOCK=1 ./agentdeck serve
 ```
 
 Then register a target + project in the **Targets** tab (or `POST /api/targets` /
@@ -321,7 +322,10 @@ shell alongside it. A file drawer previews text, images and PDFs and downloads
 artifacts. Uploads insert the path on the agent's machine without pressing Enter.
 
 **Open in terminal** opens your device's default terminal on the same session,
-keeping the browser attached. Connection setup is available under Tools.
+keeping the browser attached; either view can remain open and both use the same
+tmux process. Connection setup is available under Tools. The installed client
+opens the terminal dashboard when run without a subcommand; use `agentdeck serve`
+for the control-plane process.
 The shared tmux screen fits the smaller connected terminal, so a larger native
 window cannot crop the browser into a blank view. Attachments open as tabs inside
 AgentDeck; **Pop out** remains available.
@@ -369,4 +373,6 @@ forms. Tasks, routines, targets, approvals, context uploads and worktree diff
 review are available without opening the browser. Ctrl-b then d returns from an
 attached session. Use `agentdeck serve` to run the server explicitly, or
 `agentdeck console --plain` for the line-oriented client.
-See [terminal client](docs/terminal-client.md) for installation and shortcuts.
+See [terminal client](docs/terminal-client.md) for installation and shortcuts,
+and the [bounded terminal experience comparison](docs/terminal-experience-review.md)
+for the current evidence ledger.
