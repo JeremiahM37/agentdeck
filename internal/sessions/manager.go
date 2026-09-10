@@ -246,7 +246,7 @@ func (m *Manager) Launch(ctx context.Context, o LaunchOpts) (*store.Session, err
 	// agent here, on purpose, is the answer. Best-effort — a CLI that changes
 	// where it keeps this must not stop a session from launching.
 	if probe := spec.TrustProbe(workdir); probe != "" {
-		if r, err := ex.Run(ctx, envPrefix+"sh -c "+shellq.Quote(probe), executor.RunOpts{Timeout: 20}); err != nil || !r.OK() {
+		if r, err := ex.Run(ctx, envPrefix+"bash -c "+shellq.Quote(probe), executor.RunOpts{Timeout: 20}); err != nil || !r.OK() {
 			m.Log.Warn("could not pre-trust the working directory",
 				"agent", agent, "dir", workdir, "err", err)
 		}

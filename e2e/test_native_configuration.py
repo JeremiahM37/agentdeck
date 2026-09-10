@@ -20,7 +20,7 @@ def test_project_history_and_launch_configuration_survive_settings_edits(real_te
     home=str(t['root']/'native-home');wrong=str(t['root']/'wrong-home')
     stub=t['root']/'configured-agent.py'
     stub.write_text('import os,sys,json,time\nfrom pathlib import Path\nPath("runtime.json").write_text(json.dumps({"argv":sys.argv[1:],"home":os.getenv('+repr(key)+'),"marker":os.getenv("CONFIG_MARKER"),"introduced":os.getenv("NEW_SETTING")}))\nprint("CONFIG READY",flush=True)\nwhile True:time.sleep(1)\n')
-    spec={'name':agent,'command':'python3 '+str(stub),'env':{key:wrong,'CONFIG_MARKER':'global'},'fork_args':['--resume','{id}','--fork-session'] if agent=='claude' else ['fork','{id}'],'resume_id_args':['--resume','{id}'] if agent=='claude' else ['resume','{id}'],'trust_command':'printf "%s" "$CONFIG_MARKER" > '+str(t['root']/'trust-marker')}
+    spec={'name':agent,'command':'python3 '+str(stub),'env':{key:wrong,'CONFIG_MARKER':'global'},'fork_args':['--resume','{id}','--fork-session'] if agent=='claude' else ['fork','{id}'],'resume_id_args':['--resume','{id}'] if agent=='claude' else ['resume','{id}'],'trust_command':'[[ -n "$CONFIG_MARKER" ]] && printf "%s" "$CONFIG_MARKER" > '+str(t['root']/'trust-marker')}
     assert request(t,'PUT','/agents',[spec])[0]==200
     project=t['api']('/projects',{'name':'Configured project','target_id':t['target_id'],'repo_path':str(t['root']),'env':{key:home,'CONFIG_MARKER':'project','FAKE_CONFIG_SECRET':'private-fixture-value'}})
     assert request(t,'PATCH',f"/sessions/{t['id']}",{'project_id':project['id']})[0]==200
