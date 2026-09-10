@@ -53,6 +53,14 @@ type searchWorkerReply struct {
 	More     bool           `json:"more"`
 	Error    string         `json:"error"`
 }
+type searchLaunchChoice struct {
+	ID            string `json:"id"`
+	Label         string `json:"label"`
+	Model         string `json:"model"`
+	Supported     bool   `json:"supported"`
+	configuration *sessions.LaunchConfiguration
+	signature     string
+}
 type conversationSearchScope struct {
 	ID       string         `json:"id"`
 	TargetID int64          `json:"target_id"`
@@ -66,6 +74,7 @@ type conversationSearchScope struct {
 	prefix   string
 	profile  string
 	matches  []searchMatch
+	launches []searchLaunchChoice
 }
 type conversationSearchJob struct {
 	mu        sync.Mutex
@@ -111,7 +120,7 @@ func (s *Server) conversationSearchScopes(targetID int64, agent string) ([]*conv
 	if targetID != 0 && byID[targetID] == nil {
 		return nil, fmt.Errorf("target not found")
 	}
-	seen := map[string]bool{}
+	seen := map[string]*conversationSearchScope{}
 	scopes := []*conversationSearchScope{}
 	add := func(row *store.Session) {
 		if (agent != "" && row.Agent != agent) || (row.Agent != "claude" && row.Agent != "codex") || (targetID != 0 && row.TargetID != targetID) {
@@ -130,11 +139,42 @@ func (s *Server) conversationSearchScopes(targetID int64, agent string) ([]*conv
 		if err != nil {
 			key = fmt.Sprintf("%d/%s/invalid/%d", target.ID, row.Agent, row.ID)
 		}
-		if seen[key] {
+		scope, exists := seen[key]
+		if !exists {
+			scope = &conversationSearchScope{ID: strconv.Itoa(len(scopes) + 1), TargetID: target.ID, Target: target.Name, Agent: row.Agent, State: "queued", target: target, prefix: prefix}
+			seen[key] = scope
+		}
+		if cfg != nil && err == nil {
+			raw, _ := json.Marshal(cfg)
+			signature := string(raw) + "\x00" + row.Model
+			duplicate := false
+			for _, choice := range scope.launches {
+				if choice.signature == signature {
+					duplicate = true
+					break
+				}
+			}
+			if !duplicate {
+				label := "Current agent settings"
+				if row.ID != 0 {
+					label = "Current settings for session: " + row.Name
+					if row.LaunchConfigJSON != "" {
+						label = "Saved settings from session: " + row.Name
+					}
+				} else if row.ProjectID != nil {
+					for _, project := range projects {
+						if project.ID == *row.ProjectID {
+							label = "Project settings: " + project.Name
+							break
+						}
+					}
+				}
+				scope.launches = append(scope.launches, searchLaunchChoice{ID: scope.ID + "-" + strconv.Itoa(len(scope.launches)+1), Label: label, Model: row.Model, Supported: len(cfg.Spec.ForkArgs) > 0, configuration: cfg, signature: signature})
+			}
+		}
+		if exists {
 			return
 		}
-		seen[key] = true
-		scope := &conversationSearchScope{ID: strconv.Itoa(len(scopes) + 1), TargetID: target.ID, Target: target.Name, Agent: row.Agent, State: "queued", target: target, prefix: prefix}
 		if err != nil {
 			scope.State = "error"
 			scope.Error = "Saved agent configuration is unavailable"
@@ -397,23 +437,7 @@ func (s *Server) readConversationSearchResult(w http.ResponseWriter, r *http.Req
 	if job == nil {
 		return
 	}
-	var chosen *conversationSearchScope
-	var match searchMatch
-	job.mu.Lock()
-	for _, scope := range job.scopes {
-		for _, m := range scope.matches {
-			if searchResultID(scope, m) == r.PathValue("result") {
-				copy := *scope
-				chosen = &copy
-				match = m
-				break
-			}
-		}
-		if chosen != nil {
-			break
-		}
-	}
-	job.mu.Unlock()
+	chosen, match := lookupSearchMatch(job, r.PathValue("result"))
 	if chosen == nil {
 		httpError(w, 404, "search result changed; refresh the search")
 		return
@@ -445,10 +469,20 @@ func (s *Server) readConversationSearchResult(w http.ResponseWriter, r *http.Req
 			}
 		}
 	}
+	reply, status, err := s.readSearchMatch(r.Context(), job, chosen, match, mode, anchor)
+	if err != nil {
+		httpError(w, status, "%s", err)
+		return
+	}
+	reply["fork_options"], _ = json.Marshal(searchForkOptions(job, chosen))
+	w.Header().Set("Cache-Control", "no-store")
+	writeJSON(w, 200, reply)
+}
+
+func (s *Server) readSearchMatch(parent context.Context, job *conversationSearchJob, chosen *conversationSearchScope, match searchMatch, mode, anchor string) (map[string]json.RawMessage, int, error) {
 	ex, err := s.Reg.For(chosen.target)
 	if err != nil {
-		httpError(w, 502, "could not connect to this target")
-		return
+		return nil, 502, fmt.Errorf("could not connect to this target")
 	}
 	script := "NATIVE_SEARCH_LIBRARY=True\n" + nativeRecordsScript + "\n" + nativeSearchScript + "\n" + nativeSearchReadScript
 	args := []string{chosen.Agent, strconv.FormatInt(match.Document, 10), match.CID, match.Cwd, strconv.FormatInt(match.Offset, 10), match.Fingerprint, chosen.profile, job.query}
@@ -460,25 +494,61 @@ func (s *Server) readConversationSearchResult(w http.ResponseWriter, r *http.Req
 	for _, arg := range args {
 		cmd += " " + shellq.Quote(arg)
 	}
-	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
+	ctx, cancel := context.WithTimeout(parent, 15*time.Second)
 	defer cancel()
 	select {
 	case s.searchSlots <- struct{}{}:
 	case <-ctx.Done():
-		httpError(w, 408, "conversation read canceled")
-		return
+		return nil, 408, fmt.Errorf("conversation read canceled")
 	}
 	defer func() { <-s.searchSlots }()
 	result, err := ex.Run(ctx, cmd, executor.RunOpts{Timeout: 15})
 	var reply map[string]json.RawMessage
 	if err != nil || json.Unmarshal([]byte(result.Stdout), &reply) != nil {
-		httpError(w, 502, "could not read the matching conversation")
-		return
+		return nil, 502, fmt.Errorf("could not read the matching conversation")
 	}
 	if !result.OK() {
-		httpError(w, 409, "conversation or native profile changed; run the search again")
-		return
+		return nil, 409, fmt.Errorf("conversation or native profile changed; run the search again")
 	}
-	w.Header().Set("Cache-Control", "no-store")
-	writeJSON(w, 200, reply)
+	return reply, 200, nil
+}
+
+func searchForkOptions(job *conversationSearchJob, chosen *conversationSearchScope) []searchLaunchChoice {
+	job.mu.Lock()
+	defer job.mu.Unlock()
+	choices := []searchLaunchChoice{}
+	seen := map[string]bool{}
+	for _, scope := range job.scopes {
+		if scope.TargetID != chosen.TargetID || scope.Agent != chosen.Agent || scope.profile != chosen.profile {
+			continue
+		}
+		for _, choice := range scope.launches {
+			if !seen[choice.signature] {
+				seen[choice.signature] = true
+				choices = append(choices, choice)
+			}
+		}
+	}
+	return choices
+}
+
+func lookupSearchMatch(job *conversationSearchJob, resultID string) (*conversationSearchScope, searchMatch) {
+	var chosen *conversationSearchScope
+	var match searchMatch
+	job.mu.Lock()
+	for _, scope := range job.scopes {
+		for _, m := range scope.matches {
+			if searchResultID(scope, m) == resultID {
+				copy := *scope
+				chosen = &copy
+				match = m
+				break
+			}
+		}
+		if chosen != nil {
+			break
+		}
+	}
+	job.mu.Unlock()
+	return chosen, match
 }

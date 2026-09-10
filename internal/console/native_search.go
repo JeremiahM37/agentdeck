@@ -34,7 +34,18 @@ type nativeSearchData struct {
 	Results        []nativeSearchHit
 	Scopes         []nativeSearchScope
 }
+type nativeForkOption struct {
+	ID, Label, Model string
+	Supported        bool
+}
+type nativeSearchForkMsg struct {
+	owner *nativeSearchState
+	data  []byte
+	err   error
+}
 type nativeSearchState struct {
+	forkOptions                                 []nativeForkOption
+	forking                                     bool
 	before, after                               *int64
 	readerJob, readerHit                        string
 	data                                        nativeSearchData
@@ -223,7 +234,8 @@ func (m *dashboard) receiveNativeSearchRead(v nativeSearchReadMsg) {
 	} else {
 		var page struct {
 			Before, After *int64
-			Mode          string `json:"page_mode"`
+			ForkOptions   []nativeForkOption `json:"fork_options"`
+			Mode          string             `json:"page_mode"`
 			Messages      []struct {
 				Role, Text         string
 				Matched, Truncated bool
@@ -234,6 +246,7 @@ func (m *dashboard) receiveNativeSearchRead(v nativeSearchReadMsg) {
 		if err := json.Unmarshal(v.data, &page); err != nil {
 			s.reader = "Could not parse matching context"
 		} else {
+			s.forkOptions = page.ForkOptions
 			s.before = page.Before
 			s.after = page.After
 			label := map[string]string{"before": "Earlier messages", "after": "Later messages", "latest": "Latest indexed messages", "match": "Matching context"}[page.Mode]
@@ -321,6 +334,9 @@ func (m *dashboard) renderNativeSearch() {
 }
 func (m *dashboard) updateNativeSearch(k tea.KeyMsg) tea.Cmd {
 	s := m.nativeSearch
+	if s.forking {
+		return nil
+	}
 	switch k.String() {
 	case "ctrl+c", "q":
 		return tea.Sequence(m.cancelNativeSearch(s), tea.Quit)
@@ -364,6 +380,11 @@ func (m *dashboard) updateNativeSearch(k tea.KeyMsg) tea.Cmd {
 			m.renderNativeSearch()
 		}
 		s.viewport.GotoBottom()
+		return nil
+	case "f":
+		if s.mode == "reader" {
+			return m.nativeSearchForkForm()
+		}
 		return nil
 	case "O":
 		if s.mode == "reader" && s.before != nil {
@@ -421,7 +442,7 @@ func (m *dashboard) updateNativeSearch(k tea.KeyMsg) tea.Cmd {
 	return cmd
 }
 
-const nativeSearchHelp = "↑↓ choose/scroll · Enter read · O/N earlier/later · L latest indexed · M match · p progress · s stop · r retry · R rebuild · n new · Esc back · q quit"
+const nativeSearchHelp = "↑↓ choose/scroll · Enter read · O/N earlier/later · L latest indexed · M match · f fork · p progress · s stop · r retry · R rebuild · n new · Esc back · q quit"
 
 func (m *dashboard) nativeSearchView() string {
 	if m.width < 35 || m.height < 12 {
@@ -438,6 +459,9 @@ func (m *dashboard) nativeSearchView() string {
 	if s.starting {
 		state = "Starting search…"
 	}
+	if s.forking {
+		state = "Starting fork…"
+	}
 	if s.failure != "" {
 		state = s.failure + " · r retries"
 	}
@@ -453,4 +477,62 @@ func (m *dashboard) nativeSearchView() string {
 		}
 	}
 	return accent.Bold(true).Render(" Search saved conversations") + "\n" + ansi.Truncate(oneLine(s.query), max(1, m.width-2), "…") + "\n" + ansi.Truncate(oneLine(summary), max(1, m.width-2), "…") + "\n\n" + s.viewport.View() + "\n" + ansi.Wrap(nativeSearchHelp, max(1, m.width-2), "")
+}
+
+func (m *dashboard) nativeSearchForkForm() tea.Cmd {
+	s := m.nativeSearch
+	choices := []choice{}
+	for _, option := range s.forkOptions {
+		if option.Supported {
+			label := option.Label
+			if option.Model != "" {
+				label += " · " + option.Model
+			}
+			choices = append(choices, choice{label, option.ID})
+		}
+	}
+	if len(choices) == 0 {
+		s.failure = "Forking is not configured for this native profile"
+		return nil
+	}
+	return m.openForm("Fork whole saved conversation (original stays intact)", []field{
+		{Key: "configuration", Label: "Launch settings", Value: choices[0].Value, Options: choices},
+		{Key: "name", Label: "Session name", Value: "Conversation fork", Required: true},
+		{Key: "workspace", Label: "Workspace (shared uses the same files)", Value: "shared", Options: []choice{{"Use same workspace files", "shared"}, {"New isolated Git worktree", "isolated"}}},
+		{Key: "branch", Label: "Isolated branch (blank = automatic)"},
+		{Key: "base", Label: "Isolated base commit (blank = HEAD; excludes uncommitted changes)"},
+	}, func(values map[string]any) tea.Cmd {
+		body := map[string]any{"configuration_id": values["configuration"], "name": values["name"]}
+		if values["workspace"] == "isolated" {
+			body["worktree"] = map[string]any{"branch": values["branch"], "base": values["base"]}
+		}
+		path := "/conversation-search/" + url.PathEscape(s.readerJob) + "/results/" + url.PathEscape(s.readerHit) + "/fork"
+		m.form = nil
+		s.forking = true
+		s.failure = ""
+		c := m.client
+		return func() tea.Msg { data, err := c.JSON("POST", path, body); return nativeSearchForkMsg{s, data, err} }
+	})
+}
+func (m *dashboard) receiveNativeSearchFork(v nativeSearchForkMsg) tea.Cmd {
+	v.owner.forking = false
+	if v.err != nil {
+		if m.nativeSearch == v.owner {
+			v.owner.failure = clean(v.err.Error())
+		}
+		return nil
+	}
+	var session row
+	if json.Unmarshal(v.data, &session) != nil {
+		if m.nativeSearch == v.owner {
+			v.owner.failure = "Fork started but response could not be read; check Sessions"
+		}
+		return nil
+	}
+	m.nativeSearch = nil
+	m.archived = false
+	m.ended = false
+	m.focusSessionID = id(session)
+	m.notice = "Fork started: " + name(session) + ". The original conversation stays intact."
+	return tea.Batch(m.cancelNativeSearch(v.owner), m.switchSection(0), m.references())
 }

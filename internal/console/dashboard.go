@@ -85,6 +85,7 @@ type resultMsg struct {
 }
 type attachedMsg struct{ err error }
 type dashboard struct {
+	focusSessionID                 string
 	client                         *Client
 	attach                         func(string, string) error
 	section                        int
@@ -363,6 +364,8 @@ func (m *dashboard) switchSection(i int) tea.Cmd {
 }
 func (m *dashboard) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch v := msg.(type) {
+	case nativeSearchForkMsg:
+		return m, m.receiveNativeSearchFork(v)
 	case nativeSearchMsg:
 		return m, m.receiveNativeSearch(v)
 	case nativeSearchReadMsg:
@@ -404,6 +407,17 @@ func (m *dashboard) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.updated = time.Now()
 		m.rows = v.rows
 		m.filter()
+		if m.focusSessionID != "" && v.section == "sessions" {
+			for i, r := range m.visible {
+				if id(r) == m.focusSessionID {
+					m.selected = i
+					m.ensureSelection()
+					m.updatePreview()
+					m.focusSessionID = ""
+					break
+				}
+			}
+		}
 		return m, nil
 	case refsMsg:
 		m.projects = v.projects
@@ -486,7 +500,7 @@ func (m *dashboard) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, tea.Batch(cmds...)
 		}
-		if m.nativeSearch != nil {
+		if m.nativeSearch != nil && m.form == nil {
 			return m, m.updateNativeSearch(v)
 		}
 		if v.String() == "ctrl+c" {
@@ -665,7 +679,7 @@ func (m *dashboard) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, m.uploadForm()
 		}
 	case tea.MouseMsg:
-		if m.nativeSearch != nil {
+		if m.nativeSearch != nil && m.form == nil {
 			var cmd tea.Cmd
 			m.nativeSearch.viewport, cmd = m.nativeSearch.viewport.Update(v)
 			return m, cmd
@@ -752,7 +766,7 @@ var chosen = lipgloss.NewStyle().Foreground(lipgloss.Color("255")).Background(li
 
 func clip(s string, w int) string { return ansi.Truncate(s, max(0, w), "…") }
 func (m *dashboard) View() string {
-	if m.nativeSearch != nil {
+	if m.nativeSearch != nil && m.form == nil {
 		return m.nativeSearchView()
 	}
 	if m.review != nil {

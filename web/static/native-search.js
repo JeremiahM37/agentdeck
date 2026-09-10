@@ -1,4 +1,4 @@
-export function openNativeSearch({api, targets = []}) {
+export function openNativeSearch({api, targets = [], onFork}) {
   const prior = document.activeElement;
   const root = document.createElement('dialog');
   root.className = 'native-history native-search';
@@ -9,13 +9,14 @@ export function openNativeSearch({api, targets = []}) {
     <button class="ns-retry" hidden>Retry connection</button><details class="ns-progress" hidden><summary>Target progress</summary><div></div></details>
     <div class="ns-results" aria-label="Saved conversation results"></div>
     <details class="ns-advanced"><summary>Search options</summary><p>If a transcript was rewritten, rebuild its search index. Saved conversations remain unchanged.</p><button class="ns-rebuild">Rebuild and search</button></details></section>
-    <section class="ns-reader" hidden><div class="ns-reader-head"><button class="ns-back">Back to results</button><p class="ns-location"></p></div><div class="ns-page-controls"><button class="ns-older">Earlier messages</button><button class="ns-newer">Later messages</button><button class="ns-latest">Latest indexed</button><button class="ns-jump-match">Back to match</button></div><p class="ns-read-status" role="status"></p><div class="nh-messages"></div></section>`;
+    <section class="ns-reader" hidden><div class="ns-reader-head"><button class="ns-back">Back to results</button><p class="ns-location"></p></div><div class="ns-page-controls"><button class="ns-older">Earlier messages</button><button class="ns-newer">Later messages</button><button class="ns-latest">Latest indexed</button><button class="ns-jump-match">Back to match</button><button class="ns-fork" hidden>Fork conversation</button></div><p class="ns-read-status" role="status"></p><div class="nh-messages"></div><form class="ns-fork-form" hidden><h3>Fork saved conversation</h3><p class="ns-fork-warning"></p><label>Launch settings<select class="ns-fork-config" aria-label="Launch settings" required></select></label><label>Session name<input class="ns-fork-name" value="Conversation fork" maxlength="160"></label><label>Workspace<select class="ns-fork-workspace" aria-label="Fork workspace"><option value="shared">Use the same workspace files</option><option value="isolated">New isolated Git worktree</option></select></label><div class="ns-fork-isolated" hidden><label>Branch (blank = automatic)<input class="ns-fork-branch"></label><label>Base commit or branch (blank = HEAD)<input class="ns-fork-base"></label></div><p class="ns-fork-status" role="status"></p><button type="submit">Create fork</button><button type="button" class="ns-fork-cancel">Cancel fork</button></form></section>`;
   const $ = selector => root.querySelector(selector);
   for (const target of targets) {
     const option = document.createElement('option'); option.value = target.id; option.textContent = target.name;
     $('.ns-target').append(option);
   }
   let closed = false, generation = 0, readGeneration = 0, job = null, timer = null, starting = false;
+  let forkPending = false, forkContext = null;
   let lastResult = null, pollGeneration = 0, selectedResult = null;
   const fit = () => root.style.setProperty('--search-height', `${window.visualViewport?.height || innerHeight}px`);
   fit(); window.visualViewport?.addEventListener('resize', fit);
@@ -92,7 +93,7 @@ export function openNativeSearch({api, targets = []}) {
   async function read(hit, id, query = '') {
     const version = ++readGeneration; selectedResult = hit.id;
     for (const button of root.querySelectorAll('.ns-page-controls button')) button.disabled = true;
-    $('.ns-browse').hidden = true; $('.ns-reader').hidden = false;
+    $('.ns-browse').hidden = true; $('.ns-reader').hidden = false; $('.ns-fork-form').hidden = true; $('.nh-messages').hidden = false; $('.ns-page-controls').hidden = false;
     $('.ns-location').textContent = `${hit.target} · ${hit.agent} · ${hit.cwd}`;
     $('.ns-read-status').textContent = 'Loading matching message…'; $('.nh-messages').replaceChildren(); $('.ns-back').focus();
     try {
@@ -110,6 +111,8 @@ export function openNativeSearch({api, targets = []}) {
       }
       $('.ns-older').disabled = page.before == null; $('.ns-newer').disabled = page.after == null;
       $('.ns-latest').disabled = false; $('.ns-jump-match').disabled = false;
+      forkContext = {hit,id,choices:(page.fork_options || []).filter(option => option.supported)};
+      $('.ns-fork').hidden = !forkContext.choices.length; $('.ns-fork').disabled = false;
       $('.ns-older').onclick = () => read(hit,id,'?before='+page.before);
       $('.ns-newer').onclick = () => read(hit,id,'?after='+page.after);
       $('.ns-latest').onclick = () => read(hit,id,'?latest=1');
@@ -121,6 +124,35 @@ export function openNativeSearch({api, targets = []}) {
       if (!closed && version === readGeneration) $('.ns-read-status').textContent = `${error.message}. Return to results and search again.`;
     }
   }
+  function forkWarning() {
+    const isolated = $('.ns-fork-workspace').value === 'isolated';
+    $('.ns-fork-isolated').hidden = !isolated;
+    $('.ns-fork-warning').textContent = 'Fork the whole saved conversation, including messages after the match. '+(isolated ? 'Start in a new Git worktree from the selected committed base; uncommitted changes stay in the original workspace.' : 'Both conversations will use the same workspace files.')+' The original conversation and terminal stay intact.';
+  }
+  $('.ns-fork').onclick = () => {
+    if (!forkContext?.choices.length) return;
+    const select = $('.ns-fork-config'); select.replaceChildren();
+    if (forkContext.choices.length > 1) { const option=document.createElement('option'); option.value=''; option.textContent='Choose launch settings'; select.append(option); }
+    for (const choice of forkContext.choices) { const option=document.createElement('option'); option.value=choice.id; option.textContent=choice.label+(choice.model ? ' · '+choice.model : ''); select.append(option); }
+    $('.ns-fork-status').textContent=''; $('.ns-fork-form').hidden=false; $('.nh-messages').hidden=true; $('.ns-page-controls').hidden=true; forkWarning(); select.focus();
+  };
+  $('.ns-fork-workspace').onchange=forkWarning;
+  $('.ns-fork-cancel').onclick=()=>{ $('.ns-fork-form').hidden=true; $('.nh-messages').hidden=false; $('.ns-page-controls').hidden=false; $('.ns-fork').focus(); };
+  $('.ns-fork-form').onsubmit=async event=>{
+    event.preventDefault(); if(forkPending || !forkContext) return;
+    const context=forkContext;
+    const body={configuration_id:$('.ns-fork-config').value,name:$('.ns-fork-name').value};
+    if($('.ns-fork-workspace').value==='isolated') body.worktree={branch:$('.ns-fork-branch').value,base:$('.ns-fork-base').value};
+    forkPending=true; const disabled=[];
+    for(const control of root.querySelectorAll('button,input,select')){disabled.push([control,control.disabled]);control.disabled=true;}
+    $('.ns-fork-status').textContent='Starting fork…';
+    try {
+      const session=await api(`/conversation-search/${context.id}/results/${context.hit.id}/fork`,{method:'POST',body});
+      root.close(); onFork?.(session);
+    } catch(error) {if(!closed) $('.ns-fork-status').textContent=error.message;}
+    finally {forkPending=false;for(const [control,value] of disabled)control.disabled=value;}
+  };
+  root.addEventListener('cancel',event=>{if(forkPending)event.preventDefault();});
   $('.ns-form').onsubmit = event => { event.preventDefault(); start(); };
   $('.ns-rebuild').onclick = () => start(true);
   $('.ns-retry').onclick = () => { if (job) { clearTimeout(timer); poll(job, generation); } };

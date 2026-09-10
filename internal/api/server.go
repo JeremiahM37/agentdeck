@@ -121,6 +121,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/conversation-search/{search}", s.getConversationSearch)
 	mux.HandleFunc("DELETE /api/conversation-search/{search}", s.cancelConversationSearch)
 	mux.HandleFunc("GET /api/conversation-search/{search}/results/{result}", s.readConversationSearchResult)
+	mux.HandleFunc("POST /api/conversation-search/{search}/results/{result}/fork", s.forkConversationSearchResult)
 
 	// ---- sessions: the interactive half of the board ----
 	mux.HandleFunc("GET /api/agents", s.listAgents)

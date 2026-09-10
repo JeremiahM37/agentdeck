@@ -819,7 +819,7 @@ $("#saved-conversations").onclick=()=>openNativeHistory({id,name:info?.workdir,a
 $("#search-conversations").onclick=async()=>{
   try {
     const targets=await (await request("/api/targets")).json();
-    openNativeSearch({targets,api:async(path,options={})=>{
+    openNativeSearch({targets,onFork:()=>notice("Fork started. Find it in Sessions; this terminal stays attached."),api:async(path,options={})=>{
       const opts={...options};if(opts.body){opts.body=JSON.stringify(opts.body);opts.headers={"Content-Type":"application/json"};}
       return (await request("/api"+path,opts)).json();
     }});

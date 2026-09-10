@@ -118,6 +118,33 @@ rendering. Late replies cannot replace a newer query or reopen a closed view.
 Retrying an expired job works in both interfaces; cancellation uses a bounded
 request before quitting the dashboard.
 
+## Fork from a global result (development branch)
+
+The result reader returns `fork_options` containing opaque configuration IDs,
+labels, model names and native-fork support. Commands, environment values and
+configuration snapshots stay private. Identical environments share one indexing
+scope while retaining distinct launch configurations; canonical profile aliases
+also share result identity. Saved snapshots are labeled as saved settings, and
+legacy/adopted records using current settings are labeled accordingly.
+
+`POST /api/conversation-search/{id}/results/{result}/fork` requires
+`configuration_id` and accepts a session name plus optional isolated-worktree
+options. It revalidates the original match using the selected launch environment
+before calling the ordinary session launcher with the exact native conversation
+ID and validated workspace. A profile alias that changed since search is rejected.
+No placeholder tracking record or arbitrary client-supplied source path is used.
+The fork includes the whole native conversation, not just messages through the
+search match. An isolated worktree starts from committed state; shared mode uses
+the original workspace files. The source history and terminal remain intact.
+
+Web: Fork conversation opens a settings/workspace form. Multiple configurations
+require an explicit selection; the form explains shared versus isolated files.
+Submitting keeps the form pending until the API responds. The main app opens the
+child in another internal terminal tab while retaining the original frame. The
+standalone terminal reports where to find the child without replacing its view.
+TUI: `f` from the reader opens the equivalent form; Ctrl-S creates the fork and
+returns to active Sessions with the child selected, ready for Enter to attach.
+
 ## Evidence
 
 Twenty-six index and reader tests cover old text beyond the reader's recent window, long text,
@@ -160,9 +187,20 @@ case passed earlier/later/latest/match navigation after adding Home/End support.
 Actual API-to-SSH forward/latest paging passed with owned fixtures. The terminal
 reader also keeps the original result identity when progress changes the list.
 
+Global-fork tests cover explicit saved/current configuration choice despite later
+settings edits, shared and real Git-worktree launches, no placeholder sessions,
+private responses, stale-source rejection and changed profile aliases. Browser
+cases cover desktop shared and phone isolated forks, pending controls, original
+iframe retention and automatic child attachment. A real PTY case covers the
+settings form, isolated fork, child selection, attachment and detach/quit.
+Installed Codex and Claude both passed the global API path into isolated forks
+with distinct native identities, copied history and unchanged parents, without
+a model turn. A real SSH target also passed the new fork route into an owned
+private tmux server using a recording agent fixture; all owned artifacts were
+cleaned. The mobile fork form screenshot was inspected.
+
 ## Remaining integration
 
-- Add validated native fork actions to global search results in both interfaces.
 - Support native histories outside an existing session's recorded workspace
   through validated provider metadata, rather than accepting arbitrary file paths.
 - Test actual local/SSH flows, large histories, failures and desktop/mobile UX;

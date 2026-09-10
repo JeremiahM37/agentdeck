@@ -257,3 +257,17 @@ the copied parent header could overwrite the child's header before its first
 message was read. The reader now treats the first native header as authoritative.
 Regression coverage includes this nested-header structure and verifies the child
 remains readable from its worktree without appearing as the parent conversation.
+
+
+## Global saved-conversation search and forks (pending rollout)
+
+The development branch now searches native conversation content through private,
+incremental indexes on local/SSH targets. Web and TUI expose progress, target/agent
+filters, cancellation, retry/rebuild, exact match reading, context paging and
+explicit whole-conversation forks. Forks offer captured launch settings and shared
+or isolated workspaces, without needing a tracked record for the source history.
+Real local/SSH, Git/tmux, browser/PTY and installed-native-CLI evidence is recorded
+in `docs/native-search.md` and shared memory. This is implementation evidence;
+final-head verification and deployment are still required. Named profiles, agent
+setup, multi-repo/hooks, portable isolation and comparative workflow testing
+remain part of the full goal.

@@ -158,3 +158,24 @@ func TestSearchShortcutKeepsQuitHintVisible(t *testing.T) {
 		}
 	}
 }
+
+func TestNativeSearchForkFormAcceptsOpaqueConfigurationAndFocusesChild(t *testing.T) {
+	m := searchDashboard()
+	s := m.nativeSearch
+	s.forkOptions = []nativeForkOption{{ID: "1-2", Label: "Saved settings", Supported: true}}
+	m.nativeSearchForkForm()
+	body, err := formBody(m.form.fields)
+	if err != nil || body["configuration"] != "1-2" {
+		t.Fatal("opaque configuration rejected", body, err)
+	}
+	m.form = nil
+	m.archived = true
+	m.receiveNativeSearchFork(nativeSearchForkMsg{owner: s, data: []byte(`{"id":42,"name":"Fork child"}`)})
+	if m.archived || m.nativeSearch != nil || m.focusSessionID != "42" {
+		t.Fatal("fork did not return to active sessions")
+	}
+	m.Update(rowsMsg{section: "sessions", generation: m.generation, rows: []row{{"id": 1, "name": "A parent"}, {"id": 42, "name": "Fork child"}}})
+	if m.current() == nil || id(m.current()) != "42" {
+		t.Fatal("new child was not selected")
+	}
+}
