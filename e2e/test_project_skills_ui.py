@@ -176,6 +176,7 @@ def test_project_skills_browser_catalog_search_retry_and_provider_race(page, ser
         card.locator(".skills-source-clear").click()
         expect(card.locator(".skills-source-status")).to_contain_text("Unsaved directory changes")
         card.locator(".skills-source-save").click()
+        expect(card.locator(".skills-source-status")).to_have_text("Directories saved. Reload the provider to discover them.")
         assert state["sources"] == []
         assert page.evaluate("document.body.scrollWidth <= window.innerWidth")
         page.screenshot(path=f"/tmp/agentdeck-skills-{page.viewport_size['width']}.png", full_page=True)
