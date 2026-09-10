@@ -66,7 +66,9 @@ def test_command_search_keyboard_drafts_empty_results_and_refresh_error(page,rea
     page.keyboard.press('Escape');expect(field).to_have_value('Keep this draft');expect(field).to_be_focused()
     expect(page.locator('#sheet')).to_be_visible()
     page.keyboard.press('Escape')
-    page.route('**/api/sessions',lambda route:route.abort())
+    # Exercise actual offline fetches, including when the service worker has
+    # already taken control; page.route cannot reliably intercept that path.
+    page.context.set_offline(True)
     dialog=search(page,'real terminal')
     expect(dialog.get_by_role('status')).to_contain_text('Could not refresh')
     expect(dialog.get_by_role('option')).to_have_count(1)

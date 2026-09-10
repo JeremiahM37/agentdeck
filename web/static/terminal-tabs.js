@@ -10,15 +10,20 @@ function terminalPath(url) {
 }
 
 export class TerminalTabs {
-  constructor(root, {activate, browse}) {
+  constructor(root, {activate, browse, search}) {
     this.root = root;
     this.root.inert = true;
     this.activate = activate;
     this.tabs = new Map();
     this.active = null;
+    this.mobile = matchMedia('(max-width:1023px)');
+    this.compact = true;
+    try { this.compact = localStorage.getItem('adk-terminal-compact') !== '0'; } catch {}
     root.innerHTML = `<div class="terminal-tabbar">
       <div class="terminal-tablist" role="tablist" aria-label="Open terminals"></div>
       <a class="b terminal-popout" target="_blank" rel="noopener" title="Open this terminal in a separate browser tab" hidden>Pop out ↗</a>
+      <button class="terminal-search" aria-label="Search sessions and actions" title="Search sessions and actions">⌕</button>
+      <button class="terminal-focus" aria-label="Show navigation" title="Show navigation">☰</button>
     </div><div class="terminal-panels"></div>
     <div class="terminal-empty"><h2>No open terminals</h2>
       <p>Attach a session or open a project shell. Its terminal stays here while you switch around AgentDeck.</p>
@@ -28,6 +33,14 @@ export class TerminalTabs {
     this.panels = root.querySelector('.terminal-panels');
     this.popout = root.querySelector('.terminal-popout');
     this.empty = root.querySelector('.terminal-empty');
+    this.focusButton = root.querySelector('.terminal-focus');
+    this.focusButton.onclick = () => {
+      this.compact = !this.compact;
+      try { localStorage.setItem('adk-terminal-compact', this.compact ? '1' : '0'); } catch {}
+      this.applyLayout();
+    };
+    root.querySelector('.terminal-search').onclick = () => search?.();
+    this.mobile.addEventListener('change', () => this.applyLayout());
     try {
       const saved = JSON.parse(sessionStorage.getItem(STORAGE) || '{}');
       for (const tab of (Array.isArray(saved.tabs) ? saved.tabs : []).slice(0, 30)) {
@@ -59,6 +72,7 @@ export class TerminalTabs {
     this.root.hidden = false;
     this.root.inert = false;
     this.render();
+    this.applyLayout();
     const tab = this.tabs.get(this.active);
     if (!tab) return;
     if (!tab.frame) {
@@ -85,10 +99,20 @@ export class TerminalTabs {
     this.notifyVisible(tab);
     this.list.querySelector('[aria-selected="true"]')?.scrollIntoView({block:'nearest', inline:'nearest'});
   }
-  hide() { this.root.hidden = true; this.root.inert = true; }
+  hide() { this.root.hidden = true; this.root.inert = true; this.applyLayout(); }
+  applyLayout() {
+    const compact = this.mobile.matches && this.compact && !this.root.hidden && !!this.active;
+    document.body.classList.toggle('terminal-compact', compact);
+    this.focusButton.textContent = compact ? '☰' : '⤢';
+    this.focusButton.setAttribute('aria-label', compact ? 'Show navigation' : 'Focus terminal');
+    this.focusButton.title = compact ? 'Show navigation' : 'Focus terminal';
+    this.focusButton.setAttribute('aria-pressed', String(compact));
+    this.focusButton.hidden = !this.active;
+    for (const tab of this.tabs.values()) this.notifyVisible(tab);
+  }
   notifyVisible(tab) {
     if (!this.root.hidden && tab.path === this.active)
-      tab.frame?.contentWindow?.postMessage({type:'adk-terminal-visible'}, location.origin);
+      tab.frame?.contentWindow?.postMessage({type:'adk-terminal-visible', compact:this.mobile.matches && this.compact}, location.origin);
   }
   close(path) {
     const tab = this.tabs.get(path);

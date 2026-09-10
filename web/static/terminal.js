@@ -89,6 +89,11 @@ function select(p) {
   $("#pause").setAttribute("aria-pressed", String(p.paused));
   $('#terminal-tools-summary').textContent = p.paused ? 'Paused · Tools' : 'Tools';
   $("#connection").textContent = p.connected ? "Connected" : "Reconnecting…";
+  p.el.classList.toggle('connected', p.connected);
+  $('#compact-status').classList.toggle('connected', p.connected);
+  $('#compact-status').title = p.connected ? 'Connected' : 'Reconnecting…';
+  $('#compact-status').setAttribute('aria-label', p.connected ? 'Terminal connected' : 'Terminal reconnecting');
+  document.querySelectorAll('[data-terminal-key]').forEach(button => button.disabled = !p.connected || p.paused);
 }
 class Pane {
   constructor(el, url) {
@@ -215,6 +220,9 @@ class Pane {
     this.ws?.close();
     this.ws = null;
     this.connected = false;
+    this.el.classList.remove('connected');
+    const status = this.el.querySelector('.pane-status');
+    if (!status.textContent || status.textContent === 'Connected') status.textContent = 'Connecting…';
     this.term.options.disableStdin = true;
     if (active === this) select(this);
     try {
@@ -238,6 +246,7 @@ class Pane {
         this.pending = 0;
         this.flowPaused = false;
         this.connected = true;
+        this.el.classList.add('connected');
         this.retry = 500;
         this.term.options.disableStdin = this.paused;
         this.send(JSON.stringify({AuthToken: t.token, columns: this.term.cols, rows: this.term.rows}));
@@ -270,14 +279,15 @@ class Pane {
       ws.onerror = () => ws.close();
     } catch (e) {
       if (!current()) return;
-      this.el.querySelector(".pane-status").textContent = e.message;
-      this.reconnect();
+      this.reconnect(e.message);
     }
   }
-  reconnect() {
+  reconnect(error = '') {
     // Invalidate all callbacks immediately, including xterm write completions.
     ++this.generation;
     this.connected = false;
+    this.el.classList.remove('connected');
+    this.el.querySelector('.pane-status').textContent = error || 'Reconnecting…';
     this.term.options.disableStdin = true;
     if (active === this) select(this);
     if (this.stopped) return;
@@ -369,8 +379,22 @@ document.fonts?.ready.then(fitPanes);
 window.addEventListener("focus", fitPanes);
 window.addEventListener("pageshow", fitPanes);
 window.addEventListener("message", (e) => {
-  if (embedded && e.source === parent && e.origin === location.origin && e.data?.type === "adk-terminal-visible")
+  if (embedded && e.source === parent && e.origin === location.origin && e.data?.type === "adk-terminal-visible") {
+    document.body.classList.toggle('compact-terminal', e.data.compact === true);
     fitPanes();
+  }
+});
+const terminalKeys = {escape:'\x1b',tab:'\t',left:'\x1b[D',up:'\x1b[A',down:'\x1b[B',right:'\x1b[C',interrupt:'\x03'};
+document.querySelectorAll('[data-terminal-key]').forEach(button => {
+  button.addEventListener('pointerdown', event => event.preventDefault());
+  button.onclick = () => {
+    if (!active?.connected || active.paused) return;
+    let key = terminalKeys[button.dataset.terminalKey];
+    if (active.term.modes.applicationCursorKeysMode && /^\x1b\[[ABCD]$/.test(key)) key = key.replace('[', 'O');
+    active.input(key);
+    active.term.scrollToBottom();
+    active.term.focus();
+  };
 });
 document.addEventListener("visibilitychange", () => {
   if (!document.hidden) fitPanes();
@@ -713,7 +737,7 @@ if (/Win/i.test(navigator.userAgentData?.platform || navigator.platform)) {
   $('#cli-install-command').textContent = 'powershell -ExecutionPolicy Bypass -File .\\install-agentdeck-cli.ps1 -Server agentdeck';
 }
 $('#terminal-tools .action-menu-panel').addEventListener('click', e => {
-  if (e.target.closest('button')) $('#terminal-tools').open = false;
+  if (e.target.closest('button,a')) $('#terminal-tools').open = false;
 });
 $("#desktop-copy").onclick = act(async () => {
   await navigator.clipboard.writeText(info.desktop_command);
@@ -756,6 +780,8 @@ window.addEventListener("pagehide", (event) => {
 act(async () => {
   info = await api("/info");
   $("#desktop").href = info.desktop_uri;
+  $('#compact-desktop').href = info.desktop_uri;
+  $('#compact-workspace').textContent = info.workdir;
   $("#identity").textContent = info.tmux_session + " · " + info.target;
   document.title = info.tmux_session + " · AgentDeck";
   $("#workspace-path").textContent = info.workdir;

@@ -2263,6 +2263,7 @@ $$('[data-nav-target]').forEach(b => b.onclick = () => switchTab(b.dataset.navTa
 const terminalTabs = new TerminalTabs($("#terminal-workspace"), {
   activate: () => switchTab("terminals"),
   browse: () => switchTab("sessions"),
+  search: () => commandPalette.open(),
 });
 function openTerminal(url, label) {
   closeSheet();

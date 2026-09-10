@@ -22,7 +22,7 @@ steps:
       - shell:
           cmd: /home/admin/projects/agentdeck/.venv/bin/python -m pytest -q e2e
           # The expanded real tmux/browser suite reaches ~300s including teardown.
-          # Keep individual Playwright deadlines; allow headroom for all 124 flows.
+          # Keep individual Playwright deadlines; allow headroom for the complete suite.
           timeout: 450
     expect:
       no_log_contains: "failed"

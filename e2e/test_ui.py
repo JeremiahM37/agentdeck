@@ -7,6 +7,8 @@ from conftest import DESKTOP, PHONE
 
 
 def _tab(page, name):
+    if page.get_by_role('button',name='Show navigation',exact=True).is_visible():
+        page.get_by_role('button',name='Show navigation',exact=True).click()
     button=page.locator(f'.tab[data-tab="{name}"]')
     if not button.is_visible():
         page.locator('#nav-overflow > summary').click()

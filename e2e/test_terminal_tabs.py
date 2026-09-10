@@ -15,6 +15,10 @@ def frame(page, id):
 
 
 def ready(f):
+    # Visibility inside a retained iframe does not establish that its parent
+    # panel is visible. Wait for the actual frame before interacting with chrome.
+    expect(f.owner).to_be_visible(timeout=15000)
+    expect(f.locator('#agent-terminal .xterm-screen')).to_be_visible(timeout=15000)
     expect(f.locator('#connection')).to_have_text('Connected',timeout=15000)
     expect(f.locator('#agent-terminal .xterm-screen')).to_contain_text('$',timeout=10000)
 
@@ -66,6 +70,7 @@ def test_terminals_stay_connected_across_tabs_and_close_only_the_view(page,real_
 def test_terminal_tabs_restore_and_fit_on_mobile(page,real_terminal):
     t=real_terminal;page.set_viewport_size({'width':390,'height':844})
     page.goto(t['url']+'/#sessions');attach(page,'Real terminal');one=frame(page,t['id']);ready(one)
+    page.get_by_role('button',name='Show navigation',exact=True).click()
     one.locator('#agent-terminal').click();page.keyboard.type('echo BEFORE-PAGE-RELOAD');page.keyboard.press('Enter')
     expect(one.locator('#agent-terminal .xterm-screen')).to_contain_text('BEFORE-PAGE-RELOAD')
     page.reload()

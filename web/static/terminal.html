@@ -20,6 +20,7 @@
       ><span id="connection" role="status">Connecting</span>
     </header>
     <nav aria-label="Terminal tools">
+      <span id="compact-status" role="status" aria-label="Terminal connecting" title="Connecting"></span>
       <button id="upload">Attach files</button
       ><input id="file-input" type="file" multiple hidden />
       <button id="files">Files</button>
@@ -27,6 +28,8 @@
       <details id="terminal-tools" class="action-menu">
         <summary id="terminal-tools-summary">Tools</summary>
         <div class="action-menu-panel">
+          <a id="compact-desktop" class="button">Open in terminal</a>
+          <span id="compact-workspace"></span>
           <button id="saved-conversations">Saved conversations</button><button id="review">Review changes</button><button id="find">Find in terminal</button><button id="history">Session history</button>
           <button id="desktop-setup">Terminal connection setup</button>
           <button id="shell">Split shell</button><button id="preferences">Appearance</button>
@@ -53,6 +56,15 @@
         <pre class="frozen" hidden></pre>
       </section>
     </main>
+    <div id="terminal-keybar" role="group" aria-label="Terminal keys">
+      <button data-terminal-key="escape" aria-label="Send Escape" disabled>Esc</button>
+      <button data-terminal-key="tab" aria-label="Send Tab" disabled>Tab</button>
+      <button data-terminal-key="left" aria-label="Send Left arrow" disabled>←</button>
+      <button data-terminal-key="up" aria-label="Send Up arrow" disabled>↑</button>
+      <button data-terminal-key="down" aria-label="Send Down arrow" disabled>↓</button>
+      <button data-terminal-key="right" aria-label="Send Right arrow" disabled>→</button>
+      <button data-terminal-key="interrupt" aria-label="Send Ctrl-C" disabled>^C</button>
+    </div>
     <footer>
       <span id="workspace-path"></span
       ><span

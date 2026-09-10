@@ -115,3 +115,15 @@
 }
 .action-menu-panel { max-height:min(420px,calc(100dvh - 32px)); overflow-y:auto; }
 .action-menu.menu-above>.action-menu-panel { top:auto; bottom:calc(100% + 6px); }
+
+/* Mobile reading mode keeps the frame mounted; only surrounding chrome folds. */
+.terminal-focus,.terminal-search { display:none; flex:none; width:44px; height:44px; border:1px solid var(--line); border-radius:7px; background:var(--panel); color:var(--ink); font-size:22px; cursor:pointer; }
+@media(max-width:1023px) {
+ .terminal-focus { display:block; }
+ body.terminals-open.terminal-compact #topbar,body.terminals-open.terminal-compact #tabbar { display:none; }
+ body.terminals-open.terminal-compact #terminal-workspace { top:0; bottom:0; }
+ body.terminals-open.terminal-compact .terminal-tabbar { padding-top:calc(3px + env(safe-area-inset-top)); gap:4px; padding-bottom:3px; }
+ body.terminals-open.terminal-compact .terminal-popout { display:none; }
+ body.terminals-open.terminal-compact .terminal-search { display:block; }
+}
+.terminal-focus[hidden] { display:none !important; }
