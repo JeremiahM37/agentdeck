@@ -1420,6 +1420,9 @@ function projectCard(p) {
       next[name] = type === "http" ? {url: command, ...extra} : {command, ...extra};
     }
     if (invalid) { mcpStatus.textContent = invalid; return; }
+    // Capture the form values before the request so a conflict can redraw the
+    // same draft after refreshing only its retention references.
+    Object.keys(draft).forEach(k => delete draft[k]); Object.assign(draft, JSON.parse(JSON.stringify(next)));
     const btn = $(".project-mcp-save", mcpSection); btn.disabled = true; mcpStatus.textContent = "Saving…";
     try {
       const saved = await api(`/projects/${p.id}/mcp`, {method:"PUT", body:{mcp: next, revision:mcpRevision, strict_mcp: $(".project-mcp-strict", mcpSection).value === "true"}});
@@ -1437,6 +1440,9 @@ function projectCard(p) {
         try {
           const latest = await api(`/projects/${p.id}/mcp`);
           mcpRevision = latest.revision || mcpRevision;
+          sourceMCP = latest.mcp || sourceMCP;
+          for (const key of Object.keys(draft)) draft[key] = syncRetained(draft[key], sourceMCP[key]);
+          drawMCP();
           mcpStatus.textContent = "MCP settings changed elsewhere; your draft is preserved. Review it, then Save again to replace the newer copy.";
         } catch (refreshError) {
           mcpStatus.textContent = "MCP settings changed elsewhere; your draft is preserved, but the new revision could not be loaded: " + refreshError.message;
@@ -1456,6 +1462,20 @@ function projectCard(p) {
       $(".project-mcp-strict", mcpSection).value = loaded.strict_mcp ? "true" : "false";
       drawMCP(); mcpStatus.textContent = "MCP settings loaded.";
     } catch (e) { mcpStatus.textContent = "Could not load MCP settings: " + e.message; }
+  };
+  const syncRetained = (draftValue, latestValue) => {
+    if (latestValue && typeof latestValue === "object" && !Array.isArray(latestValue) &&
+        Object.keys(latestValue).length === 1 && Object.prototype.hasOwnProperty.call(latestValue, "__agentdeck_retained")) {
+      return JSON.parse(JSON.stringify(latestValue));
+    }
+    if (Array.isArray(draftValue) && Array.isArray(latestValue)) {
+      return draftValue.map((value, i) => syncRetained(value, latestValue[i]));
+    }
+    if (draftValue && typeof draftValue === "object" && !Array.isArray(draftValue) &&
+        latestValue && typeof latestValue === "object" && !Array.isArray(latestValue)) {
+      return Object.fromEntries(Object.entries(draftValue).map(([key, value]) => [key, syncRetained(value, latestValue[key])]));
+    }
+    return draftValue;
   };
   $(".project-mcp-reload", mcpSection).onclick = () => {
     if (mcpStatus.textContent.startsWith("Unsaved") || mcpStatus.textContent.includes("draft")) {
