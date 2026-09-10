@@ -205,3 +205,16 @@ cleaned. The mobile fork form screenshot was inspected.
   through validated provider metadata, rather than accepting arbitrary file paths.
 - Test actual local/SSH flows, large histories, failures and desktop/mobile UX;
   run final-head verification before deployment.
+
+## Fair scheduling across profiles
+
+Each profile receives one bounded indexing pass before any unfinished profile
+receives another. Four large histories therefore cannot occupy all four workers
+for the entire search while later profiles remain queued. Reset runs only on
+each profile's first pass. Completed and failed profiles leave subsequent rounds;
+cancellation keeps unfinished indexing resumable. The existing four-command
+limit, command deadlines and total search budget still apply.
+
+An API regression uses four incomplete profiles and a fifth ready profile,
+checking actual worker invocation order and exactly-once resets. It failed on
+the previous scheduler and passes with round scheduling.

@@ -265,22 +265,37 @@ func (s *Server) startConversationSearch(w http.ResponseWriter, r *http.Request)
 }
 func (s *Server) runConversationSearch(ctx context.Context, job *conversationSearchJob, reset bool) {
 	defer job.cancel()
-	var wg sync.WaitGroup
-	queue := make(chan *conversationSearchScope, len(job.scopes))
-	for _, scope := range job.scopes {
-		queue <- scope
-	}
-	close(queue)
-	for i := 0; i < 4; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			for scope := range queue {
-				s.runConversationSearchScope(ctx, job, scope, reset)
+	// Give every profile one bounded pass before revisiting large histories.
+	// Otherwise four cold profiles can occupy all workers for the whole job.
+	pending := append([]*conversationSearchScope(nil), job.scopes...)
+	for len(pending) > 0 {
+		var wg sync.WaitGroup
+		queue := make(chan *conversationSearchScope, len(pending))
+		for _, scope := range pending {
+			queue <- scope
+		}
+		close(queue)
+		for i := 0; i < 4; i++ {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				for scope := range queue {
+					s.runConversationSearchScope(ctx, job, scope, reset)
+				}
+			}()
+		}
+		wg.Wait()
+		reset = false
+		job.mu.Lock()
+		next := make([]*conversationSearchScope, 0, len(pending))
+		for _, scope := range pending {
+			if scope.State == "indexing" {
+				next = append(next, scope)
 			}
-		}()
+		}
+		job.mu.Unlock()
+		pending = next
 	}
-	wg.Wait()
 	job.mu.Lock()
 	job.done = true
 	job.mu.Unlock()
@@ -318,51 +333,45 @@ func (s *Server) runConversationSearchScope(ctx context.Context, job *conversati
 		fail("Could not connect to this target")
 		return
 	}
-	for {
-		select {
-		case s.searchSlots <- struct{}{}:
-		case <-ctx.Done():
-			fail("")
-			return
-		}
-		if ctx.Err() != nil {
-			<-s.searchSlots
-			fail("")
-			return
-		}
-		job.mu.Lock()
-		scope.State = "indexing"
-		job.mu.Unlock()
-		flags := ""
-		if reset {
-			flags = " --reset"
-		}
-		reset = false
-		cmd := scope.prefix + "python3 -c " + shellq.Quote(nativeRecordsScript+"\n"+nativeSearchScript) + flags + " " + shellq.Quote(scope.Agent) + " -- " + shellq.Quote(job.query)
-		result, err := ex.Run(ctx, cmd, executor.RunOpts{Timeout: 15})
-		<-s.searchSlots
-		if err != nil {
-			fail("Could not search this target")
-			return
-		}
-		var reply searchWorkerReply
-		if json.Unmarshal([]byte(result.Stdout), &reply) != nil || !result.OK() || reply.Profile == "" {
-			fail("Native search failed on this target; check Python 3 and the native profile")
-			return
-		}
-		job.mu.Lock()
-		scope.Progress = reply.Progress
-		scope.More = reply.More
-		scope.profile = reply.Profile
-		scope.matches = reply.Matches
-		if reply.Progress.Complete {
-			scope.State = "complete"
-		}
-		job.mu.Unlock()
-		if reply.Progress.Complete {
-			return
-		}
+	select {
+	case s.searchSlots <- struct{}{}:
+	case <-ctx.Done():
+		fail("")
+		return
 	}
+	if ctx.Err() != nil {
+		<-s.searchSlots
+		fail("")
+		return
+	}
+	job.mu.Lock()
+	scope.State = "indexing"
+	job.mu.Unlock()
+	flags := ""
+	if reset {
+		flags = " --reset"
+	}
+	cmd := scope.prefix + "python3 -c " + shellq.Quote(nativeRecordsScript+"\n"+nativeSearchScript) + flags + " " + shellq.Quote(scope.Agent) + " -- " + shellq.Quote(job.query)
+	result, err := ex.Run(ctx, cmd, executor.RunOpts{Timeout: 15})
+	<-s.searchSlots
+	if err != nil {
+		fail("Could not search this target")
+		return
+	}
+	var reply searchWorkerReply
+	if json.Unmarshal([]byte(result.Stdout), &reply) != nil || !result.OK() || reply.Profile == "" {
+		fail("Native search failed on this target; check Python 3 and the native profile")
+		return
+	}
+	job.mu.Lock()
+	scope.Progress = reply.Progress
+	scope.More = reply.More
+	scope.profile = reply.Profile
+	scope.matches = reply.Matches
+	if reply.Progress.Complete {
+		scope.State = "complete"
+	}
+	job.mu.Unlock()
 }
 func searchResultID(scope *conversationSearchScope, m searchMatch) string {
 	sum := sha256.Sum256([]byte(fmt.Sprintf("%d/%s/%s/%s/%s/%d/%s", scope.TargetID, scope.Agent, scope.profile, m.CID, m.Cwd, m.Offset, m.Fingerprint)))
