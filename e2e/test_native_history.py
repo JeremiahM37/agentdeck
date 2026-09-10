@@ -27,7 +27,7 @@ def prepare(t,agent='claude'):
             else:records.append({'type':role,'sessionId':ident,'cwd':cwd,'message':{'role':role,'content':text}})
         (folder/(ident+'.jsonl')).write_text(''.join(json.dumps(r)+'\n' for r in records))
     stub=t['root']/'agent.py';stub.write_text('import sys,json,time\nfrom pathlib import Path\nPath("fork-argv.json").write_text(json.dumps(sys.argv[1:]))\nprint("FORK READY",flush=True)\nwhile True:time.sleep(1)\n')
-    req=urllib.request.Request(t['url']+'/api/agents',method='PUT',data=json.dumps([{'name':agent,'command':'python3 '+str(stub),'env':env,'fork_args':args}]).encode(),headers={'Content-Type':'application/json'})
+    req=urllib.request.Request(t['url']+'/api/agents',method='PUT',data=json.dumps([{'name':agent,'command':'python3 '+str(stub),'env':env,'fork_args':args,'resume_id_args':['--resume','{id}'] if agent=='claude' else ['resume','{id}']}]).encode(),headers={'Content-Type':'application/json'})
     urllib.request.urlopen(req).close()
     return cid,folder/(cid+'.jsonl'),other
 

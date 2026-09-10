@@ -65,6 +65,7 @@ func (s *Server) nativeConversations(w http.ResponseWriter, r *http.Request) {
 	}
 	spec, _ := sessions.Find(s.agentSpecs(), row.Agent)
 	out["fork_supported"], _ = json.Marshal(len(spec.ForkArgs) > 0)
+	out["resume_supported"], _ = json.Marshal(len(spec.ResumeIDArgs) > 0 && row.EndedAt != nil)
 	w.Header().Set("Cache-Control", "no-store")
 	writeJSON(w, 200, out)
 }
@@ -103,6 +104,38 @@ func (s *Server) forkConversation(w http.ResponseWriter, r *http.Request) {
 	next, err := s.Sessions.Launch(r.Context(), sessions.LaunchOpts{GroupPath: row.GroupPath, ProjectID: row.ProjectID, TargetID: row.TargetID, Name: name, Agent: row.Agent, Model: row.Model, Workdir: row.Workdir, ForkID: in.ConversationID})
 	if err != nil {
 		httpError(w, 502, "%s", err)
+		return
+	}
+	writeJSON(w, 201, s.sessionView(next))
+}
+
+// resumeConversation continues one explicitly selected native history. It never
+// guesses from recency or falls back to starting a fresh conversation.
+func (s *Server) resumeConversation(w http.ResponseWriter, r *http.Request) {
+	row, ok := s.sessionParam(w, r)
+	if !ok {
+		return
+	}
+	var in struct {
+		ConversationID string `json:"conversation_id"`
+		Name           string `json:"name"`
+	}
+	if err := decodeBody(r, &in); err != nil || in.ConversationID == "" {
+		httpError(w, 422, "choose the exact saved conversation to resume")
+		return
+	}
+	name := strings.TrimSpace(in.Name)
+	if len(name) > 160 {
+		httpError(w, 422, "name exceeds 160 bytes")
+		return
+	}
+	if _, err := s.nativeConversationData(r, row, in.ConversationID); err != nil {
+		httpError(w, 409, "%s", err)
+		return
+	}
+	next, err := s.Sessions.ResumeConversation(r.Context(), row.ID, in.ConversationID, name)
+	if err != nil {
+		httpError(w, 409, "%s", err)
 		return
 	}
 	writeJSON(w, 201, s.sessionView(next))

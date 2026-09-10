@@ -108,3 +108,26 @@ Real-command regression tests reproduce the previous false deaths and exercise
 blank, long Unicode and missing panes. Adoption and Track again refresh only
 the affected target; an integration test verifies they never contact an
 unrelated target with a stalled SSH handshake.
+
+## Continue a stopped conversation
+
+In Sessions, include ended/untracked records, open **Saved conversations**, select
+an exact history, and choose **Resume conversation**. The web interface opens the
+new terminal inside AgentDeck. In the terminal dashboard use `z`, select the old
+record, press `H`, choose the conversation and Resume action, then confirm.
+Scripts can POST `/api/sessions/ID/resume` with `conversation_id` and optional
+`name` (or `agentdeck api POST /sessions/ID/resume '{...}'`).
+
+This continues the selected Claude/Codex history in its original workspace;
+**Fork** creates an independent conversation. The old record is retained. The
+original terminal must have stopped: merely stopping tracking does not suffice.
+Failed or incomplete remote checks refuse the launch. The selected ID persists
+on the new record, allowing later requests to check previous resumed terminals,
+including released records, before launching again. Concurrent continuation
+requests for the same target/agent/conversation are serialized by rejection.
+There is no fallback to `--last`, `--continue`, or fresh history on an error.
+
+Selection is explicit because a workspace can contain multiple conversations.
+This does not automatically infer IDs for agents launched outside AgentDeck,
+or detect a writer on an unrelated machine. Automatic authoritative identity
+capture, archive lifecycle, profiles and broader comparison workflows remain.

@@ -1,10 +1,10 @@
-export function openNativeHistory({id, name, api, onFork}) {
+export function openNativeHistory({id, name, api, onFork, onResume}) {
   const prior=document.activeElement, root=document.createElement('dialog');
   root.className='native-history';root.setAttribute('aria-label','Saved conversations');
-  root.innerHTML=`<header><div><h2>Saved conversations</h2><p class="nh-name"></p></div><button class="nh-close" aria-label="Close saved conversations">×</button></header><p class="nh-explain">Choose a saved conversation from this workspace. This selection does not change the running terminal.</p><div class="nh-controls"><select aria-label="Conversation" class="nh-select"></select><button class="nh-refresh">Refresh</button><button class="nh-fork">Fork conversation</button></div><p class="nh-status" role="status"></p><div class="nh-confirm" hidden><p>Create an independent conversation with this history? Both agents will use the same workspace files. The original keeps running.</p><label>New session name <input class="nh-fork-name"></label><button class="nh-create">Create fork</button><button class="nh-cancel">Cancel</button></div><div class="nh-messages" tabindex="0" aria-label="Conversation messages"></div><button class="nh-older" hidden>Load earlier messages</button>`;
+  root.innerHTML=`<header><div><h2>Saved conversations</h2><p class="nh-name"></p></div><button class="nh-close" aria-label="Close saved conversations">×</button></header><p class="nh-explain">Choose a saved conversation from this workspace. This selection does not change the running terminal.</p><div class="nh-controls"><select aria-label="Conversation" class="nh-select"></select><button class="nh-refresh">Refresh</button><button class="nh-fork">Fork conversation</button><button class="nh-resume" hidden>Resume conversation</button></div><p class="nh-status" role="status"></p><div class="nh-confirm" hidden><p>Create an independent conversation with this history? Both agents will use the same workspace files. The original keeps running.</p><label>New session name <input class="nh-fork-name"></label><button class="nh-create">Create fork</button><button class="nh-cancel">Cancel</button></div><div class="nh-messages" tabindex="0" aria-label="Conversation messages"></div><button class="nh-older" hidden>Load earlier messages</button>`;
   const $=s=>root.querySelector(s);$('.nh-name').textContent=name;$('.nh-fork-name').value=(name||'Session')+' · fork';
-  let closed=false, version=0, cid='', before=null, pending=false, loading=false, forkSupported=false;
-  function controls(){ $('.nh-fork').disabled=!cid||loading||pending||!forkSupported;$('.nh-create').disabled=pending||loading||!cid||!forkSupported;$('.nh-older').disabled=pending||loading;$('.nh-select').disabled=pending;$('.nh-refresh').disabled=pending;$('.nh-close').disabled=pending;$('.nh-cancel').disabled=pending; }
+  let closed=false, version=0, cid='', before=null, pending=false, loading=false, forkSupported=false, resumeSupported=false, action='fork';
+  function controls(){ $('.nh-fork').disabled=!cid||loading||pending||!forkSupported;$('.nh-resume').disabled=!cid||loading||pending||!resumeSupported;$('.nh-create').disabled=pending||loading||!cid||!(action==='resume'?resumeSupported:forkSupported);$('.nh-older').disabled=pending||loading;$('.nh-select').disabled=pending;$('.nh-refresh').disabled=pending;$('.nh-close').disabled=pending;$('.nh-cancel').disabled=pending; }
   function render(messages,prepend=false){
     const log=$('.nh-messages'),fragment=document.createDocumentFragment();
     for(const message of messages){
@@ -18,7 +18,7 @@ export function openNativeHistory({id, name, api, onFork}) {
     if(!log.children.length)log.textContent='No readable messages in this window.';
   }
   async function read(older=false){
-    if(!cid){version++;loading=false;before=null;$('.nh-messages').replaceChildren();$('.nh-older').hidden=true;$('.nh-status').textContent='Choose the conversation you want to read or fork.';controls();return;}const generation=++version, chosen=cid;loading=true;controls();$('.nh-status').textContent='Loading saved messages…';
+    if(!cid){version++;loading=false;before=null;$('.nh-messages').replaceChildren();$('.nh-older').hidden=true;$('.nh-status').textContent='Choose a saved conversation to see available actions.';controls();return;}const generation=++version, chosen=cid;loading=true;controls();$('.nh-status').textContent='Loading saved messages…';
     try{
       const page=await api(`/sessions/${id}/conversations/${chosen}${older?'?before='+before:''}`);
       if(closed||generation!==version)return;
@@ -28,24 +28,25 @@ export function openNativeHistory({id, name, api, onFork}) {
     finally{if(generation===version){loading=false;controls();}}
   }
   async function list(){
-    const generation=++version;loading=true;forkSupported=false;$('.nh-confirm').hidden=true;$('.nh-older').hidden=true;controls();$('.nh-status').textContent='Finding saved conversations…';
+    const generation=++version;loading=true;forkSupported=false;resumeSupported=false;$('.nh-confirm').hidden=true;$('.nh-older').hidden=true;controls();$('.nh-status').textContent='Finding saved conversations…';
     try{
       const data=await api(`/sessions/${id}/conversations`);if(closed||generation!==version)return;
-      forkSupported=!!data.fork_supported;$('.nh-select').replaceChildren();const placeholder=document.createElement('option');placeholder.value='';placeholder.textContent='Choose a saved conversation';$('.nh-select').appendChild(placeholder);
+      forkSupported=!!data.fork_supported;resumeSupported=!!data.resume_supported;$('.nh-resume').hidden=!resumeSupported;$('.nh-select').replaceChildren();const placeholder=document.createElement('option');placeholder.value='';placeholder.textContent='Choose a saved conversation';$('.nh-select').appendChild(placeholder);
       for(const c of data.conversations){const option=document.createElement('option');option.value=c.id;option.textContent=`${new Date(c.modified*1000).toLocaleString()} · ${c.title} · ${c.id.slice(0,8)}`;$('.nh-select').appendChild(option);}
       if(data.conversations.some(c=>c.id===cid))$('.nh-select').value=cid;
       cid=$('.nh-select').value;loading=false;controls();
-      if(cid)await read();else{$('.nh-status').textContent=data.conversations.length?'Choose the conversation you want to read or fork.':'No saved conversations found in this workspace.';$('.nh-messages').replaceChildren();}
+      if(cid)await read();else{$('.nh-status').textContent=data.conversations.length?'Choose a saved conversation to see available actions.':'No saved conversations found in this workspace.';$('.nh-messages').replaceChildren();}
       if(data.scan_limited)$('.nh-explain').textContent='Showing conversations discovered among the 500 most recently changed transcript files. Choose one explicitly; the running terminal is unchanged.';
     }catch(e){if(!closed&&generation===version){$('.nh-status').textContent=e.message;loading=false;controls();}}
   }
   $('.nh-select').onchange=()=>{cid=$('.nh-select').value;$('.nh-confirm').hidden=true;read();};
   $('.nh-refresh').onclick=list;$('.nh-older').onclick=()=>read(true);
-  $('.nh-fork').onclick=()=>{$('.nh-confirm').hidden=false;$('.nh-fork-name').focus();};
+  function confirmAction(kind){action=kind;$('.nh-confirm p').textContent=kind==='resume'?'Continue this same saved conversation in its original workspace? The previous terminal must be stopped.':'Create an independent conversation with this history? Both agents will use the same workspace files. The original keeps running.';$('.nh-create').textContent=kind==='resume'?'Start resumed session':'Create fork';$('.nh-fork-name').value=(name||'Session')+(kind==='resume'?' · resumed':' · fork');$('.nh-confirm').hidden=false;controls();$('.nh-fork-name').focus();}
+  $('.nh-fork').onclick=()=>confirmAction('fork');$('.nh-resume').onclick=()=>confirmAction('resume');
   $('.nh-cancel').onclick=()=>{$('.nh-confirm').hidden=true;};
   $('.nh-create').onclick=async()=>{
-    if(pending||loading||!cid||!forkSupported)return;pending=true;controls();$('.nh-status').textContent='Starting fork…';
-    try{const session=await api(`/sessions/${id}/fork`,{method:'POST',body:{conversation_id:cid,name:$('.nh-fork-name').value}});if(!closed){root.close();onFork?.(session);}}
+    if(pending||loading||!cid||!(action==='resume'?resumeSupported:forkSupported))return;pending=true;controls();$('.nh-status').textContent=action==='resume'?'Resuming conversation…':'Starting fork…';
+    try{const session=await api(`/sessions/${id}/${action}`,{method:'POST',body:{conversation_id:cid,name:$('.nh-fork-name').value}});if(!closed){root.close();if(action==='resume')onResume?.(session);else onFork?.(session);}}
     catch(e){if(!closed)$('.nh-status').textContent=e.message;}
     finally{pending=false;controls();}
   };

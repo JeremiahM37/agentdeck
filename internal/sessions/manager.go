@@ -37,6 +37,7 @@ type Manager struct {
 	workspaceMu sync.RWMutex
 	sendMu      sync.Mutex
 	mu          sync.Mutex
+	resuming    map[string]bool
 	handoffs    map[int64]bool // sessions with a wrap in flight
 }
 
@@ -142,7 +143,7 @@ func (m *Manager) Launch(ctx context.Context, o LaunchOpts) (*store.Session, err
 		sess, err = m.DB.Session(o.ReservedID)
 	} else {
 		sess, err = m.DB.InsertSession(&store.Session{
-			GroupPath: group, ProjectID: o.ProjectID, TargetID: o.TargetID, Name: name, Agent: agent,
+			ResumeID: o.ResumeID, GroupPath: group, ProjectID: o.ProjectID, TargetID: o.TargetID, Name: name, Agent: agent,
 			Model: o.Model, Workdir: workdir, Status: StatusStarting, Origin: "agentdeck",
 		})
 	}
@@ -154,7 +155,7 @@ func (m *Manager) Launch(ctx context.Context, o LaunchOpts) (*store.Session, err
 	// `adk-<attempt>` sessions a dispatched task owns
 	tmuxName := fmt.Sprintf("adk-s%d", sess.ID)
 	if err := m.DB.Update("sessions", sess.ID, map[string]any{
-		"tmux_session": tmuxName}); err != nil {
+		"tmux_session": tmuxName, "resume_id": o.ResumeID}); err != nil {
 		return nil, err
 	}
 	sess.TmuxSession = tmuxName
@@ -173,6 +174,7 @@ func (m *Manager) Launch(ctx context.Context, o LaunchOpts) (*store.Session, err
 		return nil, fmt.Errorf("agent %q does not support forking", agent)
 	}
 	if o.ResumeID != "" && len(spec.ResumeIDArgs) == 0 {
+		m.end(sess.ID, "dead")
 		return nil, fmt.Errorf("agent %q does not support resuming an exact conversation", agent)
 	}
 

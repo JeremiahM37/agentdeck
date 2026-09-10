@@ -269,3 +269,33 @@ func TestGroupMigrationPreservesWorktreeMetadata(t *testing.T) {
 		t.Fatalf("migration changed existing session: %+v", got)
 	}
 }
+
+func TestNativeResumeIdentitySurvivesDatabaseReopen(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "resume.db")
+	db, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	target, err := db.InsertTarget(&Target{Name: "resume", Kind: "local"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	s, err := db.InsertSession(&Session{TargetID: target.ID, Name: "resumed", ResumeID: "11111111-1111-4111-8111-111111111111"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	db.Close()
+	db, err = Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	got, err := db.Session(s.ID)
+	if err != nil || got.ResumeID != s.ResumeID {
+		t.Fatalf("resume identity lost: %+v %v", got, err)
+	}
+	rows, err := db.Sessions(true)
+	if err != nil || len(rows) != 1 || rows[0].ResumeID != s.ResumeID {
+		t.Fatalf("list identity lost: %+v %v", rows, err)
+	}
+}

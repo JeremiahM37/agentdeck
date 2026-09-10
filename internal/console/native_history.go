@@ -45,8 +45,9 @@ func (m *dashboard) nativePicker(v nativeListMsg) tea.Cmd {
 			ID, Title string
 			Modified  float64
 		} `json:"conversations"`
-		Limited       bool `json:"scan_limited"`
-		ForkSupported bool `json:"fork_supported"`
+		Limited         bool `json:"scan_limited"`
+		ForkSupported   bool `json:"fork_supported"`
+		ResumeSupported bool `json:"resume_supported"`
 	}
 	if err := json.Unmarshal(v.data, &data); err != nil {
 		m.notice = err.Error()
@@ -64,12 +65,19 @@ func (m *dashboard) nativePicker(v nativeListMsg) tea.Cmd {
 	if data.ForkSupported {
 		actions = append(actions, choice{"Fork into a new conversation", "fork"})
 	}
-	fields := []field{{Key: "conversation", Label: "Saved conversation (this workspace)", Value: choices[0].Value, Options: choices}, {Key: "action", Label: "Action", Value: "read", Options: actions}, {Key: "name", Label: "Fork name", Value: str(m.current()["name"]) + " · fork"}}
+	if data.ResumeSupported {
+		actions = append(actions, choice{"Resume this conversation", "resume"})
+	}
+	fields := []field{{Key: "conversation", Label: "Saved conversation (this workspace)", Value: choices[0].Value, Options: choices}, {Key: "action", Label: "Action", Value: "read", Options: actions}, {Key: "name", Label: "New session name", Value: ""}}
 	return m.openForm("Saved conversations", fields, func(values map[string]any) tea.Cmd {
 		cid := str(values["conversation"])
 		m.form = nil
 		if str(values["action"]) == "fork" {
 			m.pending = &dashboardAction{Label: "Fork conversation", Method: "POST", Path: "/sessions/" + v.session + "/fork", Body: map[string]any{"conversation_id": cid, "name": values["name"]}, Warning: "Create a new conversation from " + cid + "? Both agents share the workspace files. The original keeps running."}
+			return nil
+		}
+		if str(values["action"]) == "resume" {
+			m.pending = &dashboardAction{Label: "Resume conversation", Method: "POST", Path: "/sessions/" + v.session + "/resume", Body: map[string]any{"conversation_id": cid, "name": values["name"]}, Warning: "The previous terminal must be stopped. Continue this same saved history in its original workspace? Conversation: " + cid}
 			return nil
 		}
 		m.native = &nativeSelection{key: v.key, session: v.session, conversation: cid}

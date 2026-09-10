@@ -126,6 +126,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/sessions/{id}/conversations", s.nativeConversations)
 	mux.HandleFunc("GET /api/sessions/{id}/conversations/{conversation}", s.nativeConversations)
 	mux.HandleFunc("POST /api/sessions/{id}/fork", s.forkConversation)
+	mux.HandleFunc("POST /api/sessions/{id}/resume", s.resumeConversation)
 	mux.HandleFunc("DELETE /api/sessions/{id}/worktree", s.removeSessionWorktree)
 	mux.HandleFunc("PATCH /api/sessions/{id}", s.patchSession)
 	mux.HandleFunc("DELETE /api/sessions/{id}", s.deleteSession)

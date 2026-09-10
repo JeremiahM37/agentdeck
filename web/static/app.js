@@ -534,7 +534,7 @@ function sessionCard(s) {
   actionRow = panel;
   act("Move to group", "", ()=>{state.sheet={kind:"session-group",session:s};renderSheet();});
   if (["claude", "codex"].includes(s.agent)) {
-    act("Saved conversations", "", () => openNativeHistory({id:s.id,name:s.name,api,onFork:()=>{refreshSessions();toast("Fork started. The original session keeps running.");}}));
+    act("Saved conversations", "", () => openNativeHistory({id:s.id,name:s.name,api,onResume:session=>{refreshSessions();attachSession(session);toast("Resumed the selected conversation.");},onFork:()=>{refreshSessions();toast("Fork started. The original session keeps running.");}}));
   }
   if (s.workspace) {
     const info=document.createElement('details');info.className='session-worktree';const heading=document.createElement('summary');heading.textContent=`Worktree · ${s.workspace.branch} · ${s.workspace.state}`;const location=document.createElement('code');location.textContent=s.workspace.path;const base=document.createElement('small');base.textContent=`Base: ${s.workspace.base} · ${s.workspace.commit?.slice(0,12)||'not created'}`;info.append(heading,location,base);el.insertBefore(info,row);

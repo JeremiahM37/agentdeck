@@ -770,7 +770,7 @@ func (m *dashboard) View() string {
 	case m.form != nil:
 		body = m.formView()
 	case m.pending != nil:
-		body = "\n " + m.pending.Label + "?\n\n " + m.pending.Warning + "\n\n y Confirm · n / Esc Cancel"
+		body = "\n " + m.pending.Label + "?\n\n " + ansi.Wrap(m.pending.Warning, max(10, m.width-2), "") + "\n\n y Confirm · n / Esc Cancel"
 	case m.help:
 		body = dashboardHelp
 	case m.menu:

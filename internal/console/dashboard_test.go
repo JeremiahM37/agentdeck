@@ -290,3 +290,19 @@ func TestDashboardNamedGroupsAndWorkspaceSearch(t *testing.T) {
 		t.Fatal("branch search missing")
 	}
 }
+
+func TestConfirmationWrapsConversationIdentity(t *testing.T) {
+	m := sampleDashboard()
+	m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+	cid := "11111111-1111-4111-8111-111111111111"
+	m.pending = &dashboardAction{Label: "Resume conversation", Warning: "The previous terminal must be stopped. Continue this same saved history in its original workspace? Conversation: " + cid}
+	view := ansi.Strip(m.View())
+	if !strings.Contains(view, cid) || !strings.Contains(view, "y Confirm") {
+		t.Fatalf("confirmation clipped essential details:\n%s", view)
+	}
+	for _, line := range strings.Split(view, "\n") {
+		if ansi.StringWidth(line) > 80 {
+			t.Fatal("confirmation wrapped outside screen")
+		}
+	}
+}
