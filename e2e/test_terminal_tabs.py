@@ -77,6 +77,11 @@ def test_terminal_tabs_restore_and_fit_on_mobile(page,real_terminal):
     one=frame(page,t['id']);ready(one)
     expect(one.locator('#agent-terminal .xterm-screen')).to_contain_text('BEFORE-PAGE-RELOAD')
     expect(page.get_by_role('tab',name='Real terminal',exact=True)).to_have_attribute('aria-selected','true')
+    # Opening the root in this same browser tab restores its retained terminal.
+    page.goto(t['url'])
+    one=frame(page,t['id']);ready(one)
+    expect(one.locator('#agent-terminal .xterm-screen')).to_contain_text('BEFORE-PAGE-RELOAD')
+    expect(page.get_by_role('tab',name='Real terminal',exact=True)).to_have_attribute('aria-selected','true')
     for size in [{'width':844,'height':390},{'width':390,'height':600},{'width':390,'height':844}]:
         page.set_viewport_size(size)
         page.locator('.tab[data-tab="board"]').click()

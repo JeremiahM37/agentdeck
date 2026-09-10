@@ -2350,7 +2350,8 @@ function safeParse(s) { try { return JSON.parse(s || "{}"); } catch { return {};
 const TABS = ["board", "sessions", "terminals", "deck", "approvals", "targets"];
 
 function applyHash() {
-  const raw = decodeURIComponent(location.hash.replace(/^#/, ""));
+  let raw;
+  try { raw = decodeURIComponent(location.hash.replace(/^#/, "")); } catch { return false; }
   if (!raw) return false;
   const [kind, id, terminalID] = raw.split("/");
   if (kind === "terminals" && /^(session|attempt|project)$/.test(id) && /^[1-9]\d*$/.test(terminalID)) {
@@ -2373,6 +2374,9 @@ addEventListener("hashchange", applyHash);
 
 function switchTab(tab, opts = {}) {
   state.tab = tab;
+  if (!opts.fromHash) {
+    try { localStorage.setItem('adk-last-view', tab); } catch {}
+  }
   const terminal = tab === "terminals";
   $("#view").hidden = terminal;
   $("#fab").hidden = tab !== 'board';
@@ -2450,7 +2454,19 @@ if ("serviceWorker" in navigator) navigator.serviceWorker.register("/sw.js");
 (async function boot() {
   connectSSE();
   await Promise.all([refreshMeta(), refreshTasks(), refreshApprovals(), refreshSessions()]);
-  if (!applyHash()) renderBoard();
+  if (!applyHash()) {
+    let tab = 'board';
+    if (!location.hash) {
+      try {
+        const saved = localStorage.getItem('adk-last-view');
+        if (TABS.includes(saved)) tab = saved;
+      } catch {}
+      // Terminal frames belong to this browser tab. A fresh browser tab should
+      // open the session list rather than an empty terminal workspace.
+      if (tab === 'terminals' && !terminalTabs.active) tab = 'sessions';
+    }
+    switchTab(tab, {fromHash: true});
+  }
   setInterval(()=>pollWorkspaceSetups().catch(()=>{}),4000);
   setInterval(refreshTasks, 30000);   // safety net if SSE hiccups
   // sessions carry a live idle clock, so the list is re-rendered on a cadence

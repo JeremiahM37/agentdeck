@@ -82,3 +82,33 @@ def test_open_in_terminal_keeps_browser_terminal_alive(page,real_terminal,link):
         if (t['root']/'click-proof.txt').exists():break
         time.sleep(.1)
     assert (t['root']/'click-proof.txt').read_text()=='click-survived'
+
+
+@pytest.mark.parametrize('page', [PHONE, DESKTOP], indirect=True)
+def test_root_remembers_view_but_explicit_links_win(page, server):
+    errors = []
+    page.on("pageerror", lambda error: errors.append(str(error)))
+    page.goto(server)
+    page.locator('.tab[data-tab="sessions"]').click()
+    expect(page.locator('#sess-search')).to_be_visible()
+    page.goto(server)
+    expect(page.locator('#sess-search')).to_be_visible()
+    assert page.evaluate('location.hash') == ''
+    page.goto(server + '/#board')
+    expect(page.locator('#fab')).to_be_visible()
+    page.goto(server)
+    expect(page.locator('#sess-search')).to_be_visible()
+    # Terminal frame history is per tab; a new tab still reaches useful work.
+    page.evaluate("localStorage.setItem('adk-last-view', 'terminals')")
+    other = page.context.new_page()
+    try:
+        other.goto(server)
+        expect(other.locator('#sess-search')).to_be_visible()
+    finally:
+        other.close()
+    page.evaluate("localStorage.setItem('adk-last-view', 'unknown-view')")
+    page.goto(server)
+    expect(page.locator('#fab')).to_be_visible()
+    page.goto(server + '/#%E0%A4%A')
+    expect(page.locator('#fab')).to_be_visible()
+    assert not errors

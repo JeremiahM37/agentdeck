@@ -286,3 +286,21 @@ worktree removal in terminal actions as well as the web interface. Real Git,
 desktop/phone browser and PTY tests cover the failed-hook recovery path. This
 repairs existing Git-hook behavior; reusable AgentDeck setup-hook configuration
 and multi-repository workspaces remain separate work.
+
+
+## Browser entry workflow check — 2026-09-10
+
+Rendered the locally built AoE revision `5687bbd` and AgentDeck `3021a70` at
+390×900 and 1440×900 in isolated profiles. Neither entry page had JavaScript
+errors or page-level horizontal overflow. AoE presents session creation and
+repository cloning as its initial actions. AgentDeck initially shows its task
+board. AgentDeck used its mock backend here; these are entry-page observations,
+not evidence of complete workflow parity or performance superiority.
+
+AgentDeck now remembers the last explicitly selected view on this browser and
+origin. Opening the root URL returns there. Explicit task/session/tab links take
+priority without replacing that preference. Terminal frames remain per browser
+tab; opening a fresh tab with no retained frames falls back to Sessions. Invalid
+saved views and malformed links fall back to the board. Desktop and phone E2E
+coverage checks return visits, explicit links, new-tab fallback and bad input.
+This change is separate from the staged workspace release.
