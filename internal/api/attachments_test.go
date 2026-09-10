@@ -99,7 +99,13 @@ func TestRealAttachmentUploadAndTmuxDelivery(t *testing.T) {
 	if code != 201 {
 		t.Fatalf("empty file: %d", code)
 	}
-	h.App.DB.Update("sessions", sess.ID, map[string]any{"status": "dead"})
+	// End the actual process and let the normal poll observe it. Writing only
+	// the DB status races a poll that correctly still sees a live tmux shell.
+	mustRun(t, dir, "tmux", "kill-session", "-t", "=attachment-test")
+	h.waitUntil("session is observed dead", func() bool {
+		row, err := h.App.DB.Session(sess.ID)
+		return err == nil && row.Status == "dead"
+	})
 	code, _ = upload(t, url, "ended.pdf", data, "")
 	if code != 409 {
 		t.Fatalf("ended: %d", code)
