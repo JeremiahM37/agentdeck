@@ -627,7 +627,7 @@ func TestDiscoveryFindsARealTmuxSession(t *testing.T) {
 // completed file may do those things.
 func TestRealHandoffWaitsForCompletedPublication(t *testing.T) {
 	r := newInteractiveRig(t)
-	sess := r.launchSession(map[string]any{"project_id": r.project, "name": "handoff-real"})
+	sess := r.launchSession(map[string]any{"project_id": r.project, "name": "handoff-real", "group_path": "Work/Handoffs"})
 	r.waitForLog(r.repo, "cwd:", 5*time.Second)
 	code, raw := r.do("POST", fmt.Sprintf("/api/sessions/%d/handoff", sess.ID), map[string]any{"successor": true, "kill_old": true})
 	if code != 202 {
@@ -679,6 +679,9 @@ func TestRealHandoffWaitsForCompletedPublication(t *testing.T) {
 	t.Cleanup(func() { exec.Command("tmux", "kill-session", "-t", next.TmuxSession).Run() })
 	if tmuxAlive(sess.TmuxSession) || !tmuxAlive(next.TmuxSession) {
 		t.Fatal("completion did not transfer the session")
+	}
+	if next.GroupPath != "Work/Handoffs" {
+		t.Fatal("successor lost its group")
 	}
 	if strings.Contains(wraps[0].Summary, "agentdeck:complete") {
 		t.Fatal("protocol marker leaked into saved memory")

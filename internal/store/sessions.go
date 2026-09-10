@@ -7,13 +7,13 @@ import (
 
 const sessionCols = `s.id, s.project_id, s.target_id, s.name, s.agent, s.model,
 	s.workdir, s.tmux_session, s.status, s.origin, s.pane_hash, s.pane_tail,
-	s.context_pct, s.last_activity_at, s.created_at, s.updated_at, s.ended_at, s.worktree_json`
+	s.context_pct, s.last_activity_at, s.created_at, s.updated_at, s.ended_at, s.worktree_json, s.group_path`
 
 func scanSession(sc interface{ Scan(...any) error }, withJoin bool) (*Session, error) {
 	var s Session
 	dest := []any{&s.ID, &s.ProjectID, &s.TargetID, &s.Name, &s.Agent, &s.Model,
 		&s.Workdir, &s.TmuxSession, &s.Status, &s.Origin, &s.PaneHash, &s.PaneTail,
-		&s.ContextPct, &s.LastActivityAt, &s.CreatedAt, &s.UpdatedAt, &s.EndedAt, &s.WorktreeJSON}
+		&s.ContextPct, &s.LastActivityAt, &s.CreatedAt, &s.UpdatedAt, &s.EndedAt, &s.WorktreeJSON, &s.GroupPath}
 	if withJoin {
 		var projectName sql.NullString
 		dest = append(dest, &projectName, &s.TargetName, &s.TargetKind)
@@ -99,10 +99,10 @@ func (db *DB) SessionByTmux(targetID int64, tmuxName string) (*Session, error) {
 func (db *DB) InsertSession(s *Session) (*Session, error) {
 	now := Now()
 	res, err := db.Exec(`INSERT INTO sessions(project_id, target_id, name, agent, model,
-		workdir, tmux_session, status, origin, last_activity_at, created_at, updated_at)
-		VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`,
+		workdir, tmux_session, status, origin, last_activity_at, created_at, updated_at, group_path)
+		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 		s.ProjectID, s.TargetID, s.Name, nz(s.Agent, "claude"), s.Model, s.Workdir,
-		s.TmuxSession, nz(s.Status, "starting"), nz(s.Origin, "agentdeck"), now, now, now)
+		s.TmuxSession, nz(s.Status, "starting"), nz(s.Origin, "agentdeck"), now, now, now, s.GroupPath)
 	if err != nil {
 		return nil, err
 	}

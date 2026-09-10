@@ -273,3 +273,20 @@ func TestDashboardNativeEditorsCanClearOptionalFields(t *testing.T) {
 		t.Fatal("could not clear webhook")
 	}
 }
+
+func TestDashboardNamedGroupsAndWorkspaceSearch(t *testing.T) {
+	m := sampleDashboard()
+	m.rows[0]["group_path"] = "Work/Client"
+	m.rows[0]["workspace"] = map[string]any{"branch": "feature/reader"}
+	m.grouping = 3
+	m.query.SetValue("Work/Client")
+	m.filter()
+	if len(m.visible) != 1 || m.group(m.current()) != "Work/Client" {
+		t.Fatal(m.visible)
+	}
+	m.query.SetValue("feature/reader")
+	m.filter()
+	if len(m.visible) != 1 {
+		t.Fatal("branch search missing")
+	}
+}

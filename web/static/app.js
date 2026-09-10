@@ -1,3 +1,4 @@
+import { renderSessionGroups } from "/session-groups.js";
 import { openNativeHistory } from "/native-history.js";
 import { openReview } from "/review.js";
 import { TerminalTabs } from "/terminal-tabs.js";
@@ -19,7 +20,7 @@ const state = {
   mobileColPinned: false, // ...and whether the user chose it themselves
   showAllDone: false,     // phone: finished lists are capped until asked
   diffWrap: localStorage.getItem("adk-diffwrap") === "1",
-  sessionFilter: "", showEndedSessions: false, endedSessions: [], settingsSection: sessionStorage.getItem('adk-settings-section') || "machines",
+  sessionFilter: "", sessionGrouping: sessionStorage.getItem("adk-session-grouping") || "none", showEndedSessions: false, endedSessions: [], settingsSection: sessionStorage.getItem('adk-settings-section') || "machines",
 };
 
 // Rotating a phone or dragging a desktop window across the breakpoint has to
@@ -121,6 +122,7 @@ async function refreshApprovals() {
   if (state.tab === "approvals") renderApprovals();
   if (state.sheet?.kind === "task") renderSheet();
 }
+const collapsedSessionGroups = new Set((()=>{try{const value=JSON.parse(sessionStorage.getItem('adk-collapsed-session-groups')||'[]');return Array.isArray(value)?value:[];}catch{return [];}})());
 let sessionRefreshVersion=0;
 async function refreshSessions() {
   const generation=++sessionRefreshVersion;
@@ -481,6 +483,7 @@ function sessionCard(s) {
     <div class="spane"></div>
     <div class="btnrow"></div>`;
   $(".nm", el).textContent = s.name;
+  if(s.group_path){const tag=document.createElement("span");tag.className="chip";tag.textContent=s.group_path;$(".smeta",el).appendChild(tag);}
   // an agent's working directory is often a scratch dir, so which project it
   // belongs to is a judgement only you can make — and one you can change later
   const projSel = document.createElement("select");
@@ -528,6 +531,7 @@ function sessionCard(s) {
   // running — and killing it is a separate, explicit choice.
   const adopted = s.origin === "discovered";
   actionRow = panel;
+  act("Move to group", "", ()=>{state.sheet={kind:"session-group",session:s};renderSheet();});
   if (["claude", "codex"].includes(s.agent)) {
     act("Saved conversations", "", () => openNativeHistory({id:s.id,name:s.name,api,onFork:()=>{refreshSessions();toast("Fork started. The original session keeps running.");}}));
   }
@@ -735,7 +739,8 @@ function renderSessions() {
         <button class="b" id="sess-discover">⌕ Find running agents</button>
         <button class="b ok" id="sess-new">+ New session</button>
       </div>
-      <input id="sess-search" class="f" type="search" placeholder="Find a session or project" aria-label="Find a session or project">
+      <input id="sess-search" class="f" type="search" placeholder="Search sessions, groups, branches or folders" aria-label="Find a session or project">
+      <label class="session-grouping">Group by <select class="f" id="sess-grouping" aria-label="Group sessions by"><option value="none">None</option><option value="group">Named group</option><option value="project">Project</option><option value="target">Target</option></select></label>
       <label class="check"><input type="checkbox" id="sess-ended"> Include ended and untracked sessions</label>
       <div id="sesslist"></div>
     </div>`;
@@ -744,6 +749,8 @@ function renderSessions() {
 
   $('#sess-ended').checked=state.showEndedSessions;
   $('#sess-ended').onchange=async e=>{state.showEndedSessions=e.target.checked;try{await refreshSessions();}catch(err){toast(err.message,true);}};
+  $('#sess-grouping').value=state.sessionGrouping;
+  $('#sess-grouping').onchange=e=>{state.sessionGrouping=e.target.value;sessionStorage.setItem('adk-session-grouping',state.sessionGrouping);renderSessionList();};
   $('#sess-search').value = state.sessionFilter;
   $('#sess-search').oninput = (e) => { state.sessionFilter = e.target.value; renderSessionList(); };
   renderSessionList();
@@ -760,9 +767,9 @@ function renderSessionList() {
     return;
   }
   const query = state.sessionFilter.toLowerCase().trim();
-  const items = live.filter(s => [s.name,s.project_name,s.target_name,s.agent].join(' ').toLowerCase().includes(query));
+  const items = live.filter(s => {const text=[s.name,s.project_name,s.target_name,s.agent,s.group_path,s.workdir,s.workspace?.branch].join(' ').toLowerCase();return query.split(/\s+/).every(word=>text.includes(word));});
   items.sort((a,b) => (SESSION_ORDER[a.status] ?? 9) - (SESSION_ORDER[b.status] ?? 9) || a.idle_seconds-b.idle_seconds);
-  items.forEach(s => list.appendChild(sessionCard(s)));
+  renderSessionGroups(list,items,{mode:state.sessionGrouping,query,collapsed:collapsedSessionGroups,renderCard:sessionCard,onToggle:()=>sessionStorage.setItem('adk-collapsed-session-groups',JSON.stringify([...collapsedSessionGroups]))});
   if (!items.length) list.innerHTML = '<div class="hint">No sessions match your search.</div>';
 }
 
@@ -782,6 +789,7 @@ function renderNewSession(sheet) {
     <div class="subhint" id="ns-proj-hint"></div>
     <label class="f">Name</label>
     <input class="f" id="ns-name" placeholder="what you're working on">
+    <label class="f" for="ns-group">Group (optional)</label><input class="f" id="ns-group" placeholder="Work/Client">
     <label class="f">Agent</label>
     <select class="f" id="ns-agent"></select>
     <div class="subhint" id="ns-agent-hint"></div>
@@ -927,6 +935,7 @@ function renderNewSession(sheet) {
         scratch: projectID === null,
         worktree: $("#ns-worktree").checked ? {base:$("#ns-worktree-base").value.trim(),branch:$("#ns-worktree-branch").value.trim()} : null,
         name: $("#ns-name").value.trim(),
+        group_path: $("#ns-group").value.trim(),
         agent: agentBox.value,
         model: $("#ns-model").value.trim(),
         resume: mode === "resume",
@@ -1802,6 +1811,7 @@ function renderSheet() {
   const sheet = $("#sheet");
   sheet.hidden = false; $("#sheet-backdrop").hidden = false;
   if (state.sheet.kind === "new") return renderNewTask(sheet);
+  if (state.sheet.kind === "session-group") return renderSessionGroup(sheet);
   if (state.sheet.kind === "new-session") return renderNewSession(sheet);
   if (state.sheet.kind === "discover") return renderDiscover(sheet);
   if (state.sheet.kind === "routines") return renderRoutines(sheet);
@@ -2289,3 +2299,17 @@ if ("serviceWorker" in navigator) navigator.serviceWorker.register("/sw.js");
   // even when nothing changed — "quiet for 40 minutes" is the number you act on
   setInterval(() => { if (state.tab === "sessions") renderSessions(); }, 5000);
 })();
+
+function renderSessionGroup(sheet) {
+ const session=state.sheet.session, editorState=state.sheet;
+ sheet.innerHTML=`<div class="sheet-head"><h2>Move to group</h2><button class="x" aria-label="Close group editor">✕</button></div><p id="sg-name"></p><label class="f" for="sg-path">Group path</label><input class="f" id="sg-path" list="sg-existing" placeholder="Work/Client"><datalist id="sg-existing"></datalist><p class="subhint">Use / for nested groups. Leave blank to ungroup.</p><p id="sg-error" role="status"></p><button class="b ok" id="sg-save">Save group</button>`;
+ $('#sg-name',sheet).textContent=session.name;$('#sg-path',sheet).value=session.group_path||'';
+ for(const group of [...new Set([...state.sessions,...state.endedSessions].map(s=>s.group_path).filter(Boolean))].sort()){const option=document.createElement('option');option.value=group;$('#sg-existing',sheet).appendChild(option);}
+ $('.x',sheet).onclick=closeSheet;
+ $('#sg-save',sheet).onclick=async()=>{
+  const button=$('#sg-save',sheet),error=$('#sg-error',sheet);button.disabled=true;
+  try{await api(`/sessions/${session.id}`,{method:'PATCH',body:{group_path:$('#sg-path',sheet).value}});if(state.sheet===editorState)closeSheet();await refreshSessions();toast('Group saved');}
+  catch(e){error.textContent=e.message;button.disabled=false;}
+ };
+ $('#sg-path',sheet).focus();
+}

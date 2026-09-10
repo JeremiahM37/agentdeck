@@ -31,11 +31,11 @@ func TestInteractiveSessionWorktreeLifecycle(t *testing.T) {
 	target, _ := h.App.DB.InsertTarget(&store.Target{Name: "local worktree", Kind: "local"})
 	h.decode("PUT", "/api/agents", []obj{{"name": "test-worktree", "command": "sleep 600"}}, 200, nil)
 	var row obj
-	input := obj{"name": "isolated session", "target_id": target.ID, "workdir": repo, "agent": "test-worktree", "worktree": obj{"branch": "feature/api"}, "yolo": false}
+	input := obj{"group_path": "Work/Worktrees", "name": "isolated session", "target_id": target.ID, "workdir": repo, "agent": "test-worktree", "worktree": obj{"branch": "feature/api"}, "yolo": false}
 	h.decode("POST", "/api/sessions", input, 201, &row)
 	ws := row["workspace"].(map[string]any)
 	dir := ws["path"].(string)
-	if row["workdir"] != dir || dir == repo || ws["token"] != nil {
+	if row["group_path"] != "Work/Worktrees" || row["workdir"] != dir || dir == repo || ws["token"] != nil {
 		t.Fatal(row)
 	}
 	base := fmt.Sprintf("/api/sessions/%d", int64(row.num("id")))

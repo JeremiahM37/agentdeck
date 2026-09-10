@@ -58,6 +58,8 @@ func (m *dashboard) choose(a dashboardAction) tea.Cmd {
 		return m.attachSelected(false)
 	case "shell":
 		return m.attachSelected(true)
+	case "group":
+		return m.groupForm()
 	case "rename":
 		return m.renameForm()
 	case "edit":
@@ -109,7 +111,7 @@ func (m *dashboard) actions() []dashboardAction {
 	var actions []dashboardAction
 	switch kind {
 	case "sessions":
-		actions = []dashboardAction{op("Attach", "attach"), op("Companion shell", "shell"), op("Send message", "send"), op("Upload context file", "upload"), op("Review changes", "review"), op("Read history", "history"), op("Saved conversations / fork", "saved-history"), op("Browse files", "files"), op("Rename", "rename"), op("Move / edit session", "edit"), op("Request handoff", "handoff"), read("Handoff summaries", "/wraps")}
+		actions = []dashboardAction{op("Attach", "attach"), op("Companion shell", "shell"), op("Send message", "send"), op("Upload context file", "upload"), op("Review changes", "review"), op("Read history", "history"), op("Saved conversations / fork", "saved-history"), op("Browse files", "files"), op("Rename", "rename"), op("Move / edit session", "edit"), op("Move to group", "group"), op("Request handoff", "handoff"), read("Handoff summaries", "/wraps")}
 		if ws, ok := r["workspace"].(map[string]any); ok && ws["state"] != "removed" {
 			actions = append(actions, dashboardAction{Label: "Remove worktree (keep branch)", Method: "DELETE", Path: path + "/worktree", Warning: "Remove " + str(ws["path"]) + "? End its sessions first. Changed, untracked or ignored files prevent removal. The branch is kept."})
 		}
@@ -359,7 +361,7 @@ func (m *dashboard) newForm() tea.Cmd {
 	var fields []field
 	switch kind {
 	case "sessions":
-		fields = []field{{Key: "name", Label: "Session name", Required: true}, optionField("project_id", "Project", project, projects, false), optionField("target_id", "Target", target, targets, false), agent, {Key: "model", Label: "Model (blank uses default)"}, {Key: "workdir", Label: "Directory (blank uses project or scratch)"}, {Key: "prime", Label: "Initial prompt", Multiline: true}, boolField("isolated", "Isolate files in a new Git worktree", false), {Key: "worktree_base", Label: "Worktree base (blank = committed HEAD)"}, {Key: "worktree_branch", Label: "New branch (blank = unique name)"}, boolField("resume", "Resume latest conversation", false), boolField("brief", "Include project brief", true), boolField("yolo", "Skip agent permission prompts", false)}
+		fields = []field{{Key: "name", Label: "Session name", Required: true}, optionField("project_id", "Project", project, projects, false), optionField("target_id", "Target", target, targets, false), agent, {Key: "model", Label: "Model (blank uses default)"}, {Key: "workdir", Label: "Directory (blank uses project or scratch)"}, {Key: "prime", Label: "Initial prompt", Multiline: true}, boolField("isolated", "Isolate files in a new Git worktree", false), {Key: "worktree_base", Label: "Worktree base (blank = committed HEAD)"}, {Key: "worktree_branch", Label: "New branch (blank = unique name)"}, boolField("resume", "Resume latest conversation", false), boolField("brief", "Include project brief", true), boolField("yolo", "Skip agent permission prompts", false), {Key: "group_path", Label: "Group path (optional, e.g. Work/Client)"}}
 	case "tasks":
 		fields = []field{{Key: "title", Label: "Task title", Required: true}, optionField("project_id", "Project", project, options(m.projects, ""), true), {Key: "prompt", Label: "Task prompt", Multiline: true, Required: true}, agent, {Key: "model", Label: "Model"}, {Key: "base_branch", Label: "Base branch (blank uses project default)"}, boolField("dispatch", "Dispatch now in an isolated worktree", true)}
 	case "routines":
@@ -688,4 +690,24 @@ func (m *dashboard) notificationForm(data []byte) tea.Cmd {
 		}
 		return m.request("Save settings", "PUT", "/settings", body, false)
 	})
+}
+
+func (m *dashboard) groupForm() tea.Cmd {
+	r := m.current()
+	if r == nil || sections[m.section] != "sessions" {
+		return nil
+	}
+	endpoint := "/sessions/" + id(r)
+	return m.openForm("Move to group", []field{{Key: "group_path", Label: "Group path (Work/Client; blank ungroups)", Value: str(r["group_path"])}}, func(body map[string]any) tea.Cmd {
+		if body["group_path"] == nil {
+			body["group_path"] = ""
+		}
+		return m.request("Move to group", "PATCH", endpoint, body, false)
+	})
+}
+func workspaceBranch(r row) string {
+	if ws, ok := r["workspace"].(map[string]any); ok {
+		return str(ws["branch"])
+	}
+	return ""
 }

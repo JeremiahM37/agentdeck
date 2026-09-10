@@ -188,12 +188,17 @@ func (m *dashboard) group(r row) string {
 		return "All"
 	}
 	field := "project_name"
+	if m.grouping == 3 {
+		field = "group_path"
+	}
 	if m.grouping == 1 {
 		field = "target_name"
 	}
 	s := str(r[field])
 	if s == "" {
-		if m.grouping == 1 {
+		if m.grouping == 3 {
+			s = "Ungrouped"
+		} else if m.grouping == 1 {
 			s = "Local / unassigned"
 		} else {
 			s = "Unassigned"
@@ -220,7 +225,7 @@ func (m *dashboard) filter() {
 		if status != "" && s != status {
 			continue
 		}
-		if !fuzzy(q, name(r)+" "+str(r["project_name"])+" "+str(r["target_name"])+" "+str(r["agent"])+" "+str(r["workdir"])+" "+id(r)) {
+		if !fuzzy(q, name(r)+" "+str(r["project_name"])+" "+str(r["target_name"])+" "+str(r["agent"])+" "+str(r["workdir"])+" "+str(r["group_path"])+" "+workspaceBranch(r)+" "+id(r)) {
 			continue
 		}
 		m.visible = append(m.visible, r)
@@ -499,6 +504,8 @@ func (m *dashboard) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		switch v.String() {
 		case "q":
 			return m, tea.Quit
+		case "G":
+			return m, m.groupForm()
 		case "H":
 			return m, m.savedConversations()
 		case "O":
@@ -559,7 +566,7 @@ func (m *dashboard) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.updatePreview()
 			}
 		case "g":
-			m.grouping = (m.grouping + 1) % 3
+			m.grouping = (m.grouping + 1) % 4
 			m.filter()
 		case "w":
 			m.attention = !m.attention
@@ -704,7 +711,7 @@ func (m *dashboard) View() string {
 		tabs = []string{chosen.Render(fmt.Sprintf(" ‹ %d %s › ", m.section+1, strings.Title(sections[m.section]))), muted.Render(" 1–6 sections · ←/→ switch")}
 	}
 	header := clip(title, m.width) + "\n" + clip(strings.Join(tabs, ""), m.width) + "\n" + clip(m.query.View(), m.width-1) + "\n"
-	group := []string{"project", "target", "none"}[m.grouping]
+	group := []string{"project", "target", "none", "named group"}[m.grouping]
 	meta := fmt.Sprintf(" %d/%d items · group: %s", len(m.visible), len(m.rows), group)
 	if m.attention {
 		meta += " · needs attention"
@@ -827,7 +834,8 @@ const dashboardHelp = ` Keyboard shortcuts
  ↑/k ↓/j       Select item       Enter/a  Attach (Ctrl-b d returns)
  1–6 / ←→      Change section    Tab/p    Focus list / preview
  /             Fuzzy search     @ ! # &  Search prefix: waiting/running/idle/failed
- g             Group by project/target   w  Needs attention only
+ G             Move to named group
+ g             Group by project/target/name   w  Needs attention only
  n             New item         e        Rename   u Upload context
  m             All actions      f        Find and track running agents
  h             Full history     v        Review task diff

@@ -35,6 +35,7 @@ def prepare(t,agent='claude'):
 @pytest.mark.parametrize('agent',['claude','codex'])
 def test_saved_conversation_reader_and_native_fork(page,real_terminal,agent):
     t=real_terminal;cid,file,other=prepare(t,agent);original=hashlib.sha256(file.read_bytes()).hexdigest()
+    req=urllib.request.Request(t['url']+f'/api/sessions/{t["id"]}',method='PATCH',data=json.dumps({'group_path':'Work/Forks'}).encode(),headers={'Content-Type':'application/json'});urllib.request.urlopen(req).close()
     page.set_viewport_size({'width':390,'height':844});open_terminal(page,t);terminal_tool(page,'#saved-conversations')
     dialog=page.get_by_role('dialog',name='Saved conversations');expect(dialog).to_be_visible()
     expect(dialog.locator('.nh-fork')).to_be_disabled()
@@ -62,7 +63,7 @@ def test_saved_conversation_reader_and_native_fork(page,real_terminal,agent):
     argv=json.loads((t['root']/'fork-argv.json').read_text())
     assert cid in argv and '--last' not in argv and '--continue' not in argv
     assert ('--fork-session' in argv) if agent=='claude' else argv[0]=='fork'
-    assert any(s['name']=='Forked history proof' for s in t['api']('/sessions'))
+    assert any(s['name']=='Forked history proof' and s['group_path']=='Work/Forks' for s in t['api']('/sessions'))
     assert hashlib.sha256(file.read_bytes()).hexdigest()==original
     expect(page.locator('#connection')).to_have_text('Connected')
 

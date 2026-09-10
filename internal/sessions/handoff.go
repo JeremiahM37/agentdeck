@@ -200,6 +200,7 @@ func (m *Manager) runHandoff(ctx context.Context, sess *store.Session, o Handoff
 	if o.Successor {
 		prime := ResumePrompt(projectName, wrap, m.projectPrime(ctx, projectName))
 		next, err := m.Launch(ctx, LaunchOpts{
+			GroupPath: sess.GroupPath,
 			ProjectID: sess.ProjectID, TargetID: sess.TargetID,
 			Name:    sess.Name,
 			Agent:   firstNonEmpty(o.Agent, sess.Agent),

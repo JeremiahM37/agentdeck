@@ -73,6 +73,7 @@ func (s *Server) getSession(w http.ResponseWriter, r *http.Request) {
 }
 
 type sessionIn struct {
+	GroupPath string                       `json:"group_path"`
 	Worktree  *worktree.InteractiveOptions `json:"worktree"`
 	ProjectID *int64                       `json:"project_id"`
 	TargetID  int64                        `json:"target_id"`
@@ -152,7 +153,7 @@ func (s *Server) createSession(w http.ResponseWriter, r *http.Request) {
 		yolo = *in.Yolo
 	}
 	sess, err := s.Sessions.Launch(r.Context(), sessions.LaunchOpts{
-		Worktree: in.Worktree, ProjectID: in.ProjectID, TargetID: in.TargetID, Name: in.Name,
+		GroupPath: in.GroupPath, Worktree: in.Worktree, ProjectID: in.ProjectID, TargetID: in.TargetID, Name: in.Name,
 		Agent: in.Agent, Model: in.Model, Workdir: in.Workdir,
 		Resume: in.Resume, Prime: prime, Scratch: in.Scratch, Yolo: yolo,
 		// a project's env is how a session reaches a local model, exactly as it
@@ -274,6 +275,7 @@ func (s *Server) previewBrief(w http.ResponseWriter, r *http.Request) {
 }
 
 type sessionPatch struct {
+	GroupPath *string `json:"group_path"`
 	// ProjectID reassigns a session. Raw, because "move it to project 4",
 	// "unassign it" (an explicit null) and "leave it alone" (absent) are three
 	// different requests, and a *int64 collapses the last two — an agent's
@@ -295,6 +297,14 @@ func (s *Server) patchSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	fields := map[string]any{}
+	if p.GroupPath != nil {
+		group, err := sessions.NormalizeGroup(*p.GroupPath)
+		if err != nil {
+			httpError(w, 422, "%s", err)
+			return
+		}
+		fields["group_path"] = group
+	}
 	if len(p.ProjectID) > 0 {
 		if string(p.ProjectID) == "null" {
 			fields["project_id"] = nil

@@ -187,3 +187,23 @@ This is separate from saved-conversation forking: native conversation forks
 currently share their original directory. Interactive worktrees are not yet a
 multi-repository workspace, and setup hooks/profile templates remain separate
 work on the parity roadmap.
+
+## Named session groups
+
+Groups organize sessions across projects and targets. Press `G` or choose
+**Actions → Move to group**; use a path such as `Work/Client`, or clear it to
+ungroup. `g` cycles project, target, none and named-group ordering. Search also
+matches group paths and worktree branches/directories. New-session forms accept
+a group, and conversation forks and handoff successors inherit it.
+
+On the web, **More → Move to group** offers existing names and keeps a failed
+edit open for correction. **Group by** selects named group, project, target or
+none. Named groups form collapsible nested sections with session/waiting counts.
+The selected grouping and collapsed sections survive reloads in that browser
+tab; searching opens matching sections. The API's `group_path` is shared across
+clients, while these display preferences are local to the browser.
+
+`PATCH /api/sessions/{id}` accepts `{"group_path":"Work/Client"}` or
+`{"group_path":""}`. Names are normalized by trimming each level; empty levels,
+control characters and more than eight levels are rejected. Moving a group
+label does not move files, change the project, or restart the agent.

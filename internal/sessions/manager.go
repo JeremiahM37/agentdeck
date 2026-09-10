@@ -58,6 +58,7 @@ func (m *Manager) publish(s *store.Session) {
 
 // LaunchOpts are the inputs of a new interactive session.
 type LaunchOpts struct {
+	GroupPath string
 	Worktree  *worktree.InteractiveOptions
 	ProjectID *int64
 	TargetID  int64
@@ -93,6 +94,10 @@ type LaunchOpts struct {
 
 // Launch starts an interactive agent and records it.
 func (m *Manager) Launch(ctx context.Context, o LaunchOpts) (*store.Session, error) {
+	group, err := NormalizeGroup(o.GroupPath)
+	if err != nil {
+		return nil, err
+	}
 	m.workspaceMu.RLock()
 	defer m.workspaceMu.RUnlock()
 	target, err := m.DB.Target(o.TargetID)
@@ -136,7 +141,7 @@ func (m *Manager) Launch(ctx context.Context, o LaunchOpts) (*store.Session, err
 		sess, err = m.DB.Session(o.ReservedID)
 	} else {
 		sess, err = m.DB.InsertSession(&store.Session{
-			ProjectID: o.ProjectID, TargetID: o.TargetID, Name: name, Agent: agent,
+			GroupPath: group, ProjectID: o.ProjectID, TargetID: o.TargetID, Name: name, Agent: agent,
 			Model: o.Model, Workdir: workdir, Status: StatusStarting, Origin: "agentdeck",
 		})
 	}

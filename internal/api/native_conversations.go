@@ -100,7 +100,7 @@ func (s *Server) forkConversation(w http.ResponseWriter, r *http.Request) {
 		httpError(w, 422, "name exceeds 160 bytes")
 		return
 	}
-	next, err := s.Sessions.Launch(r.Context(), sessions.LaunchOpts{ProjectID: row.ProjectID, TargetID: row.TargetID, Name: name, Agent: row.Agent, Model: row.Model, Workdir: row.Workdir, ForkID: in.ConversationID})
+	next, err := s.Sessions.Launch(r.Context(), sessions.LaunchOpts{GroupPath: row.GroupPath, ProjectID: row.ProjectID, TargetID: row.TargetID, Name: name, Agent: row.Agent, Model: row.Model, Workdir: row.Workdir, ForkID: in.ConversationID})
 	if err != nil {
 		httpError(w, 502, "%s", err)
 		return

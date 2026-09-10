@@ -236,3 +236,36 @@ func TestWorktreeMigrationPreservesExistingSessions(t *testing.T) {
 		t.Fatalf("existing session changed: %+v", got)
 	}
 }
+
+func TestGroupMigrationPreservesWorktreeMetadata(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "before-groups.db")
+	db, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	target, _ := db.InsertTarget(&Target{Name: "existing", Kind: "local"})
+	session, err := db.InsertSession(&Session{TargetID: target.ID, Name: "Existing worktree", Workdir: "/saved/worktree", TmuxSession: "keep"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	metadata := `{"repo":"/saved/repo","path":"/saved/worktree","token":"preserve"}`
+	if err := db.Update("sessions", session.ID, map[string]any{"worktree_json": metadata}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec("ALTER TABLE sessions DROP COLUMN group_path"); err != nil {
+		t.Fatal(err)
+	}
+	db.Close()
+	db, err = Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	got, err := db.Session(session.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.GroupPath != "" || got.WorktreeJSON != metadata || got.TmuxSession != "keep" {
+		t.Fatalf("migration changed existing session: %+v", got)
+	}
+}
