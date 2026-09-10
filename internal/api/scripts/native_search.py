@@ -43,6 +43,11 @@ class NativeSearchIndex:
         except Exception:
             self.db.close();raise
     def close(self): self.db.close()
+    def reset(self):
+        # Derived data only: source conversations and other profile indexes stay intact.
+        with self.db:
+            self.db.execute('BEGIN IMMEDIATE')
+            self.db.execute('DELETE FROM documents')
     def files(self):
         base=self.home/('sessions' if self.agent=='codex' else 'projects')
         found={}

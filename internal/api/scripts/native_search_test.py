@@ -116,6 +116,11 @@ class SearchTests(unittest.TestCase):
         with ThreadPoolExecutor(max_workers=3) as pool:list(pool.map(lambda _:worker(),range(3)))
         self.assertEqual(self.index.db.execute('select count(*) from messages').fetchone()[0],100)
         self.assertEqual(len(self.matches('concurrent')),1)
+    def test_explicit_rebuild_discards_old_index_without_changing_sources(self):
+        path,cid=self.write(['original wording']);self.index.sync()
+        original=path.read_bytes();self.index.reset()
+        self.assertEqual(path.read_bytes(),original);self.assertEqual(self.matches('original'),[])
+        self.index.sync();self.assertEqual(self.matches('original')[0]['cid'],cid)
     def test_future_cache_version_is_preserved(self):
         other=NativeSearchIndex(self.cache,self.root/'future','codex');path=other.path
         other.db.execute('PRAGMA user_version=99');other.close()

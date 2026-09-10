@@ -71,4 +71,3 @@ def native_metadata(file, agent, workspace=None, max_bytes=LIMIT):
     cwd = os.path.realpath(cwd)
     if workspace is not None and cwd != workspace: return None
     return dict(id=cid, title=title or 'Saved conversation', modified=os.stat(file).st_mtime, agent=agent, cwd=cwd)
-

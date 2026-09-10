@@ -24,8 +24,8 @@ Warm unchanged files are not reparsed. Source deletion, replacement, truncation,
 and observed rewrites invalidate cached matches. Native histories are normally
 append-only; checkpoint hashes validate the existing prefix and offset boundary.
 An in-place edit to an old middle segment combined with append and unchanged
-checkpoints is not comprehensively detected; a full-rebuild operation is still
-needed before presenting the cache as a complete product workflow.
+checkpoints is not comprehensively detected; the index provides a reset operation for a full rebuild. The integration must
+expose it without changing source histories.
 
 Records up to 10 MiB are decoded, including captions alongside large image data.
 Larger individual entries are counted and skipped without hiding later messages.
@@ -36,10 +36,10 @@ are quoted as literal terms. A result cap tells callers when to narrow the query
 
 ## Evidence
 
-Fourteen index tests cover old text beyond the reader's recent window, long text,
+Fifteen index tests cover old text beyond the reader's recent window, long text,
 large image captions, oversized records, progressive indexing, append/partial
 writes, rewrites/deletion, concurrent writers, profile/path boundaries, private
-channels, malformed content, file permissions and future-cache preservation.
+channels, malformed content, file permissions, explicit rebuilds and future-cache preservation.
 Existing native-history API tests and eleven browser/terminal cases passed after
 the parser extraction.
 
@@ -59,6 +59,6 @@ latency still need measurement when the index is wired into the application.
   open the exact matching message with surrounding context.
 - Support native histories outside an existing session's recorded workspace
   through validated provider metadata, rather than accepting arbitrary file paths.
-- Add full rebuild/cache reset, and define invalidation for unusual rewrites.
+- Expose the full-rebuild/cache-reset operation for unusual rewrites.
 - Test actual local/SSH flows, large histories, failures and desktop/mobile UX;
   run final-head verification before deployment.
