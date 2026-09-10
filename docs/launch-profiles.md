@@ -46,5 +46,5 @@ agent boundaries, captured settings after edit/delete, private session output,
 and real local history search from a profile with no tracked session. Real tmux browser tests at 390/1440 pixels and a real PTY test cover management,
 selection, failed-save drafts, pending-save Escape handling, actual command/
 model/environment execution and continuation after profile deletion. A nested
-dialog Escape regression is covered by the browser flow. Full-suite verification
-and deployment are still required.
+dialog Escape regression is covered by the browser flow. The c5ac0e2 rollout passed the full Go suite, 180 end-to-end cases, and
+installed Codex/Claude plus SSH profile proofs. Server and PC run the same build.

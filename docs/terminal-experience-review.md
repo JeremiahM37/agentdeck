@@ -50,11 +50,11 @@ in this document is not a substitute for that evidence.
 | Find, group, monitor, attach, detach, reconnect | Live dashboard + PTY tests; browser real tmux resize/reconnect/dual-client tests. Broader multi-session and saved-view UX comparison remains. |
 | Review ongoing work | Live staged/working review implemented for TUI and web; real Git API tests cover renames, binary/untracked files, path boundaries and unchanged index; Playwright covers desktop/mobile, stale responses and retained attachment; actual SSH target proof passed. Full rollout verification is recorded in shared memory. |
 | Branch a conversation / isolated parallel work | Native Claude/Codex workspace conversation picker, paginated reader, and exact-ID fork implemented in TUI/web. API, real tmux/PTY and mobile browser tests cover boundaries, unchanged original history and explicit confirmation. Installed Codex fork persisted a distinct ID; installed Claude loaded saved history with its native fork flag (no new turn). Fresh interactive worktree creation/removal now exists in both interfaces, with durable allocation, ownership checks, retained branches, local/SSH Git proof and mobile/desktop/PTy tests. Native forks now optionally allocate an isolated worktree in both interfaces. Real Git/tmux API, browser and PTY tests cover committed-base isolation, preserved parent changes/history, directory-aware continuation and cleanup protection. Installed Codex and Claude CLIs were verified with distinct child IDs and worktree directories; Claude persistence used a synthetic response-only turn with no tool calls. Current native identity is detected from verified Linux process evidence; unsupported/legacy cases retain manual selection. |
-| Organize large fleets | Named group paths now persist across projects/targets and inherit on forks/handoffs. TUI and web have nested collapse/counts; terminal search reveals folded children and selection/collapse survive refresh. Web keeps per-tab display state. TUI grouping is remembered per section/server and folded named groups survive restarts, with real PTY restart coverage. Adopted sessions can restore their original record after stopping tracking, gated by a persistent tmux identity marker; real API, PTY and mobile/desktop tests cover retained metadata, concurrent requests and reused-name rejection. Unmarked live records capture identity when released; already-released records without identity still require explicit discovery. Archive now retains terminal snapshots and metadata, with explicit stop confirmation and unarchive without restart; exact native continuation is available separately. Profile configuration, broader native identity coverage and global conversation search remain. |
+| Organize large fleets | Named group paths now persist across projects/targets and inherit on forks/handoffs. TUI and web have nested collapse/counts; terminal search reveals folded children and selection/collapse survive refresh. Web keeps per-tab display state. TUI grouping is remembered per section/server and folded named groups survive restarts, with real PTY restart coverage. Adopted sessions can restore their original record after stopping tracking, gated by a persistent tmux identity marker; real API, PTY and mobile/desktop tests cover retained metadata, concurrent requests and reused-name rejection. Unmarked live records capture identity when released; already-released records without identity still require explicit discovery. Archive now retains terminal snapshots and metadata, with explicit stop confirmation and unarchive without restart; exact native continuation is available separately. Named launch profiles and global conversation search are implemented; broader native identity and fleet-profile partitioning still need comparison. |
 | Agent setup | Custom commands exist; named agent settings, MCP/skills setup, installed-agent discovery and lifecycle need comparison with current upstream. |
 | Workspace setup | Task and single-repository interactive worktrees run on local/SSH targets. Multi-repository interactive workspaces and repo setup hooks need audit/implementation. |
 | Sandbox choices | Existing Proxmox sandbox path is not equivalent to portable Docker/Podman sandboxing; portability gap remains. |
-| Web everyday management | Global command search now reaches sessions, tasks, projects, settings and common actions from desktop/mobile; real browser/tmux tests cover attachment, retained terminal identity, keyboard selection, draft/focus restoration, and refresh failures. Mobile terminals now default to focused navigation with a one-button return, retained frames, visible file/tool controls, and Esc/Tab/arrows/Ctrl-C keys in focused, expanded and standalone phone terminals. Real tmux tests cover height gained, application cursor keys, offline recovery, rotation, and restored preferences. Internal terminal tabs, structured chat, PDFs, routines/takeover and approvals exist. Native conversation content is not yet part of global search. Benchmark the same create/find/attach/review/send/recover workflows against AoE desktop and phone; improve discoverability and consistency before claiming superiority. |
+| Web everyday management | Global command search now reaches sessions, tasks, projects, settings and common actions from desktop/mobile; real browser/tmux tests cover attachment, retained terminal identity, keyboard selection, draft/focus restoration, and refresh failures. Mobile terminals now default to focused navigation with a one-button return, retained frames, visible file/tool controls, and Esc/Tab/arrows/Ctrl-C keys in focused, expanded and standalone phone terminals. Real tmux tests cover height gained, application cursor keys, offline recovery, rotation, and restored preferences. Internal terminal tabs, structured chat, PDFs, routines/takeover and approvals exist. Global search now includes native conversation content with context paging and validated forks. Benchmark the same create/find/attach/review/send/recover workflows against AoE desktop and phone; improve discoverability and consistency before claiming superiority. |
 | Installation and keyboard UX | Linux and Windows SSH clients exist; installation portability, help consistency, terminal compatibility and first-run flows need further audit. |
 
 Current upstream evidence: the Agent Deck README lists session forks, archive,
@@ -190,7 +190,7 @@ and journal files are restricted to the service account. Regression tests use
 real tmux processes and native Claude/Codex transcript files: conflicting project
 and agent configuration directories, settings edits between fork and resume,
 unchanged history files, private API responses, database migration and reopen.
-Named configuration profiles and profile selection remain separate work.
+Named launch profiles and profile selection are implemented; see `launch-profiles.md`.
 
 
 ## Verified terminal stops
@@ -259,18 +259,19 @@ Regression coverage includes this nested-header structure and verifies the child
 remains readable from its worktree without appearing as the parent conversation.
 
 
-## Global saved-conversation search and forks (pending rollout)
+## Global saved-conversation search and forks
 
-The development branch now searches native conversation content through private,
+AgentDeck now searches native conversation content through private,
 incremental indexes on local/SSH targets. Web and TUI expose progress, target/agent
 filters, cancellation, retry/rebuild, exact match reading, context paging and
 explicit whole-conversation forks. Forks offer captured launch settings and shared
 or isolated workspaces, without needing a tracked record for the source history.
 Real local/SSH, Git/tmux, browser/PTY and installed-native-CLI evidence is recorded
 in `docs/native-search.md` and shared memory. This is implementation evidence;
-final-head verification and deployment are still required. Named profiles, agent
-setup, multi-repo/hooks, portable isolation and comparative workflow testing
-remain part of the full goal.
+search/fork rollout passed 177 end-to-end cases. Fair scheduling and named
+launch-profile management in web/TUI subsequently passed 180 end-to-end cases
+and were deployed in c5ac0e2. Agent setup, multi-repo/hooks, portable isolation
+and comparative workflow testing remain part of the full goal.
 
 ## Recover a failed Git checkout hook
 
