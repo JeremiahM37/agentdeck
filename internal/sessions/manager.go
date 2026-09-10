@@ -214,6 +214,7 @@ func (m *Manager) Launch(ctx context.Context, o LaunchOpts) (*store.Session, err
 		return nil, fmt.Errorf("agent %q does not support resuming an exact conversation", agent)
 	}
 
+	sourceWorkdir := workdir
 	if o.Worktree != nil {
 		if target.Kind == "sandbox" {
 			m.end(sess.ID, StatusDead)
@@ -322,8 +323,18 @@ func (m *Manager) Launch(ctx context.Context, o LaunchOpts) (*store.Session, err
 		}
 	}
 
+	forkID := o.ForkID
+	if o.Worktree != nil && forkID != "" && agent == "claude" && claudeFileFork(spec.ForkArgs) {
+		// Native --resume accepts an exact transcript path. This avoids project
+		// lookup ambiguity across grouped roots without copying native storage.
+		forkID, err = claudeForkPath(ctx, ex, envPrefix, sourceWorkdir, forkID)
+		if err != nil {
+			m.end(sess.ID, StatusDead)
+			return nil, err
+		}
+	}
 	cmd := spec.LaunchCommand(Start{
-		Workdir: workdir, TmuxName: tmuxName, Model: o.Model, Resume: o.Resume, ResumeID: o.ResumeID, ForkID: o.ForkID,
+		Workdir: workdir, TmuxName: tmuxName, Model: o.Model, Resume: o.Resume, ResumeID: o.ResumeID, ForkID: forkID,
 		Prompt: argPrompt, EnvPrefix: envPrefix, Yolo: o.Yolo})
 	r, err := ex.Run(ctx, cmd, executor.RunOpts{Timeout: 60})
 	if err != nil {

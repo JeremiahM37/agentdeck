@@ -1,197 +1,83 @@
-# Multi-repository workspace implementation plan
+# Multi-repository workspaces — staging design
 
-This is an internal staging design. Browser multi-repository selection is implemented; terminal creation uses an optional repository-selection step. Session creation accepts
-`worktree.extra_repositories` entries with `project_id` and optional `base`.
-A primary project is required; all projects must use the same target, and a
-working-directory override is rejected for grouped creation. The planner, target validation and grouped creation/removal
-worker exist, with real Git tests for successful/partial creation, all-repository
-cleanup preflight and supervisor death during checkout. This branch is not deployed.
+This branch is not deployed. A workspace owns a root containing up to eight
+separately owned Git worktrees. The browser and terminal offer additional
+registered repositories, per-repository bases, and a shared branch name when
+creating an isolated session. The primary project supplies agent settings;
+additional projects do not merge their environment or launch settings.
 
-A workspace owns one root directory containing separately owned repository
-worktrees. `Interactive.Repositories` records each display name, optional project
-ID, and child allocation. Each child has its own source repository, base commit,
-path, token and state. One branch name spans the repositories; bases may differ.
-The planner produces bounded, distinct child directory names and never mutates
-Git. Ownership is recursively redacted from public session responses.
+## Creation and recovery
 
-The remaining implementation must provide:
+`worktree.extra_repositories` accepts project IDs and optional bases. All projects
+must use the same target. Grouped creation requires a primary project and rejects
+a working-directory override. Target-side preflight canonicalizes Git common
+directories, rejects duplicates and branch collisions, and resolves bases to
+commits. Creation repeats validation under an operation lock.
 
-1. Resolve selected registered projects on the same target. The target-side
-   preflight now canonicalizes Git common directories (including symlink and
-   linked-worktree aliases), rejects duplicates, resolves each base commit and
-   checks branches and allocation boundaries without mutations. Creation must
-   repeat these checks under its operation lock: preflight is not a reservation
-   of paths or refs. The API project selection/resolution is still outstanding.
-2. Persist the entire plan before mutation. Create an exclusively owned root,
-   then allocate children while retaining progress and partial failures. Protect
-   against cancellation leaving a Git or hook process writing into an allocation
-   that cleanup considers idle. An operation lock or equivalent durable process
-   evidence must survive the supervising command's failure.
-3. Preflight removal across every repository using `check-remove` before removing
-   any of them. Refuse unexpected root files and changed/untracked/ignored files,
-   active terminals, ownership mismatches or ongoing operations. Record partial
-   removal errors and retain all branches. No forced cleanup.
-4. Start the agent in the shared root; keep native fork/resume directory behavior
-   and captured launch profiles intact. Keep single-repository compatibility.
-5. Expose repository choices and per-repository bases in web and TUI creation,
-   plus repository selection in diff review. File browsing must reach the shared
-   workspace without reaching neighboring allocations.
-6. Support adding a repository to an existing workspace with the same durable
-   allocation and failure handling. Define the transition for older sessions
-   whose working directory is a single worktree rather than a workspace root.
-7. Verify real local/SSH Git, partial failure, cancellation, dirty cleanup,
-   preserved source/index/branches, native continuation, desktop/phone and PTY
-   workflows before rollout.
+The root records the entire allocation plan before creating children, fsyncing
+progress after each. Each child has its own ownership token, source repository,
+base, path, state and error. Public session responses redact every ownership token.
+A child process starts behind a pipe gate until its process-group receipt is
+written. Inherited locks and process-group checks prevent cleanup while a checkout
+continues after its supervisor dies. Linux zombies do not count as writers.
+Hooks that deliberately daemonize outside their process group require additional
+policy before reusable setup hooks are exposed.
 
-The existing `check-remove` action validates ownership, branch, active terminals
-and dirty files without removing the worktree. Git status runs with optional
-locks disabled so preflight does not refresh the index; the test compares index
-bytes and confirms registration and allocation state remain unchanged.
+Failed setup retains the session record, files, and allocation receipts. Recovery
+checks all repositories before removing any and rechecks each during removal.
+Changed, untracked, ignored, or unexpected root files block removal. Active tmux
+sessions at the root or within its children also block removal. Partial failures
+retain durable progress and all branches. Removing children leaves the owned root
+and receipt; it does not recursively delete the workspace.
 
-## Grouped worker evidence and limits
+Metadata writes use a fresh private inode and atomic replacement. Reads reject
+symlinks and special files, validate process-group receipts, and check the saved
+operation-lock identity. Replaced locks and damaged receipts require inspection.
 
-The root records its full owned plan before the first child allocation, then
-fsyncs progress after each child. Each child starts behind a pipe gate: its process
-group is recorded before it may execute Git. An inherited operation lock and
-process-group receipt keep cleanup from racing an orphaned checkout. Linux zombie
-processes do not count as writers. A test kills the supervisor inside a waiting
-checkout hook, verifies refusal, releases the hook, and recovers the allocation.
-Hooks that intentionally daemonize outside their process group need further policy
-before reusable setup hooks are exposed; this is not universal descendant tracking.
+## Review and continuation
 
-Removal checks active terminals at the shared root as well as child worktrees,
-checks every repository before removing any, rechecks each at removal, and retains
-branches. It leaves the owned root and durable receipt after removing children;
-it never recursively deletes the root. Additional root files block cleanup. A
-later repository failure preserves earlier worktrees and the failed tree's files.
+The agent starts at the shared root. Web review offers a repository selector;
+terminal review cycles repositories with Tab. `changes?repository=N` selects a
+recorded repository by index, never a supplied filesystem path. File browsing
+reaches the child repositories while hiding internal root allocation receipts.
+This filtering is a UI boundary, not a restriction on commands in the shell.
 
-Remaining checks before release include target-side group execution over SSH,
-metadata replacement/corruption handling, concurrent launch/removal attempts,
-partial removal and full API/native-continuation/browser/PTY integration. The
-120-second caller deadline also needs a deliberate asynchronous lifecycle for
-slow multi-repository setup; cancellation safety alone is not a usable progress UI.
+Shared continuations resolve the owner's grouped allocation without acquiring
+removal ownership. They reject incomplete or removed children. Isolated forks
+start each repository from its current committed HEAD, or an explicitly selected
+primary base. They exclude uncommitted edits and allocate from stable source
+repositories, so removing the parent does not break child cleanup.
 
-## Session API integration
+Codex forks receive a per-launch directory override. For Claude's native
+`--resume {id} --fork-session` template, isolated forks resolve the exact source
+transcript on the target, within the captured native profile, and pass its path
+to Claude. This is a documented native input, not a copied history seed:
+[Claude CLI reference](https://code.claude.com/docs/en/cli-reference).
+The resolver checks conversation identity and original workspace and refuses
+missing or ambiguous matches. It scans project directories to accommodate custom
+or hashed storage names. Custom fork templates remain unchanged. Future launches
+retain the original argument template rather than a frozen source path.
 
-The manager resolves project selections before inserting a session, validates the
-plan on its target, persists it, and then runs grouped creation. Failed creation
-retains its session and child receipts; failed cleanup also saves partial progress.
-The primary project remains the source of agent/environment configuration.
-Additional repositories do not silently merge their launch settings.
+The experimental snapshot helper was removed in favor of this native path.
+AgentDeck does not publish duplicate transcripts or manage copied sidecars.
 
-`GET /api/term/session/{id}/changes?repository=N` selects a recorded repository by
-zero-based index. Grouped responses include `repositories` and
-`selected_repository`; an omitted selection defaults to the primary repository.
-The server resolves paths from the saved allocation, never from a client path.
-Browser diff review now offers a repository dropdown; terminal review cycles
-repositories with Tab and labels the selected repository. Creation selectors
-still need wiring before rollout.
+## Evidence and remaining work
 
-A real API/Git/tmux lifecycle test creates both repositories, reviews a change in
-the second without mixing the first, rejects out-of-range selections, protects an
-active session, removes ended worktrees, rejects duplicate/mixed-target projects
-without inserting sessions, and recovers a failed second checkout after its
-untracked artifact is explicitly removed. Public child ownership tokens are
-redacted. This is staging evidence, not deployed multi-repository functionality.
+Real Git/API/tmux tests cover grouped creation, later checkout failure, supervisor
+death, concurrent operations, dirty and partial cleanup, metadata replacement,
+source/index preservation, and shared/isolated workspace continuation. Desktop,
+phone, and PTY tests cover creation and repository review. A lookup regression
+found by the combined suite was fixed by selecting only allocation metadata,
+avoiding unrelated legacy session rows with null timestamps.
 
+`e2e/test_grouped_native_fork.py` covers web and terminal search-to-fork workflows,
+exact Claude path arguments, two-repository allocation, and unchanged native
+profile files. `tests/native_grouped_sessions.py --mode fork|resume` is a manual
+installed-Claude/Codex test using private synthetic histories and no model turn.
+It checks exact native identity, saved history visibility, captured launch
+profiles, and the correct shared or isolated working directory.
 
-Repository review UI proof: `e2e/test_multi_workspace.py` launches a real grouped
-session through the API, edits both worktrees and switches between their distinct
-diffs in desktop1440/phone390 browsers and a real terminal PTY. Browser checks
-also preserve the live terminal connection and reject horizontal overflow/JS
-errors. Terminal unit coverage rejects a stale previous-repository response.
-The first browser run exposed an unstable implicit accessible label containing
-option text; the select now has an explicit Repository label. All three final
-end-to-end cases pass. SWv47 is staged; deployed remainsv46.
-
-
-Browser creation now offers a collapsed Additional repositories section under
-worktree options. Only other registered projects on the primary target are
-eligible; add/remove and per-repository base fields retain draft values, cap seven
-extras, and clear incompatible selections when the primary project changes.
-The primary project's base and shared branch controls remain unchanged.
-`test_browser_creates_grouped_workspace` verifies390/1440 real creation with a
-base tag, exclusion of another target, no horizontal overflow, and draft retention
-after a503 followed by successful retry. Both cases pass. SWv48 is staged.
-
-
-Terminal New session has an optional Choose additional repositories step after
-the session form. It requires a primary project, isolated files and fresh context.
-The next screen offers add/edit/remove for same-target projects and an explicit
-Create session action. Per-repository base forms return to selection; Escape/back
-preserves the original session draft and repository choices. Failed API requests
-leave choices available for retry. Long titles/options are clipped to avoid
-terminal overlap; the picker displays the current choice rather than an unbounded
-row of all project names. Unit tests cover retained draft,503 retry state, removal,
-target filtering and width; a realPTY test creates a grouped session end-to-end.
-The firstPTY attempt moved off the already-selected primary project; corrected
-navigation passed without changing implementation semantics.
-
-Metadata hardening found and fixed a real staged-worker defect: failure reporting
-opened `.agentdeck-state.next` with truncation, so a symlink there could overwrite
-an outside file even though cleanup refused the extra root entry. Regression
-proof failed before the fix and passes afterward. Metadata writes now use fresh
-private temporary inodes, fsync and atomic replacement. Reads and operation-lock
-opens reject symlinks/non-regular files. The saved lock device/inode must match
-before cleanup, preventing a replaced lock from bypassing the original operation.
-Malformed process receipts fail closed with repository files preserved. A crash
-between temporary-file creation and rename may leave an extra root entry for
-inspection; cleanup does not silently delete it. Earlier unshipped grouped roots
-without a saved lock identity are deliberately refused, not retroactively claimed.
-
-Additional lifecycle evidence: a real Git wrapper injects an edit into the second
-repository after the first removal succeeds. Cleanup refuses the later edit,
-persists the first child's removed state, preserves the new file, and completes
-on retry after that file is explicitly removed. Concurrent removal while checkout
-runs is refused, as is duplicate creation of the same allocation; supervisor-death
-recovery remains covered. These tests exercise actual Git operations, not a mocked
-workspace executor.
-
-The shared-root file API serves both repository trees but omits root bookkeeping
-(lock/state/process/temp files) and rejects direct file requests for those names.
-It identifies owned grouped roots from durable session records, including when a
-continuation shares the root without owning it. Ordinary workspace file behavior
-is unchanged. This is UI/API filtering, not isolation from a user or agent that
-can run arbitrary shell commands in the workspace.
-
-Grouped continuation now resolves the allocation by target/root through its owning
-record. Shared sessions retain repository review and filtered file access without
-inheriting removal ownership. Launch refuses removed/incomplete allocations and
-checks child directories; the retained receipt directory alone is not a usable
-workspace. An active shared session prevents owner cleanup.
-
-Creating an isolated workspace from a grouped root resolves each child's committed
-HEAD (or the explicit primary base), then allocates from the stable source repos.
-This preserves committed child work, excludes uncommitted edits, and avoids making
-cleanup depend on the parent's temporary worktree. API/Git/tmux tests cover these
-properties and removing the isolated group after parent removal. This verifies
-workspace continuation mechanics; installed-agent conversation fork/resume identity
-and browser/PTY native-history flows still require separate proof before rollout.
-
-The first combined full suite caught a launch regression in WorkspaceAt: scanning
-whole session rows failed on unrelated legacy records with null timestamps.
-The lookup now selects only nonempty worktree_json for the target and skips empty
-directory requests. Affected real-launch/takeover/grouped tests and the full Go
-suite pass with the narrowed query; the failing combined suite is allowed to
-finish unchanged before a new exact-head run.
-
-Installed-agent proof is mixed, not complete: Codex successfully forked a synthetic
-saved conversation through global search/profile/API into a two-repository
-workspace, with distinct native identity, copied history and unchanged parent,
-without a model turn. Installed Claude failed to find its source conversation
-from the new nongit grouped root. Adding the old directory with --add-dir did not
-fix it. A fixture-only wrapper that copies the source transcript to the new
-profile project directory before native --fork-session succeeded with distinct
-identity and copied history. That wrapper is NOT product code: transcript and
-sidecar integrity, collision handling, stale seed cleanup and real API/browser
-integration still need implementation and tests before Claude grouped forks ship.
-
-Claude fork snapshot groundwork now lives in sessions/claude_fork_seed.py. It
-validates the exact UUID and source cwd, snapshots complete JSONL plus the entire
-session-ID sidecar subtree, checks source file/directory versions across the copy,
-records hashes/sizes, and uses private staging files. Existing destination history
-is untouched. Partial/mismatched transcripts, changing source assets, special
-files/links and size limits fail explicitly with stage cleanup. Limits are64MiB
-per file/256MiB total in this unintegrated helper. Unit coverage is invoked by the
-Go suite. Publication, seed filtering/cleanup and launch integration remain
-unimplemented; this helper alone does not repair production Claude grouped forks.
+Before rollout, finish the slow-setup lifecycle and progress UI beyond the current
+120-second caller deadline, adding a repository to an existing group, and the
+transition from older single-worktree sessions. Run the full combined verify
+suite on the final source and verify deployment on both server and desktop.
