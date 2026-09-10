@@ -42,7 +42,7 @@ try:
   owner=pathlib.Path(git(dest,'rev-parse','--absolute-git-dir'))/'agentdeck-owner'
   with owner.open('x') as file:file.write(p['token'])
   p.update(repo=repo,path=dest,commit=commit,state='ready')
- elif operation=='remove':
+ elif operation in ('remove','check-remove'):
   if not os.path.isdir(dest):
    registrations=git(repo,'worktree','list','--porcelain','-z').split('\0')
    if any(entry=='worktree '+dest for entry in registrations):raise ValueError('Worktree directory is missing but still registered with Git; inspect it before cleanup')
@@ -55,9 +55,10 @@ try:
   panes=subprocess.run(['tmux','list-panes','-a','-F','#{pane_current_path}'],capture_output=True,text=True,timeout=10)
   if panes.returncode and not any(x in panes.stderr.lower() for x in ['no server running','no such file or directory']):raise ValueError('Could not check active terminals; nothing was removed')
   if any(within(cwd,dest) for cwd in panes.stdout.splitlines() if cwd):raise ValueError('A terminal is still using this worktree; end or leave it first')
-  if git(dest,'status','--porcelain','--untracked-files=all','--ignored=matching'):raise ValueError('Worktree contains changed, untracked or ignored files; commit or move them before removal')
-  git(repo,'worktree','remove','--',dest)
-  p['state']='removed'
+  if git(dest,'--no-optional-locks','status','--porcelain','--untracked-files=all','--ignored=matching'):raise ValueError('Worktree contains changed, untracked or ignored files; commit or move them before removal')
+  if operation=='remove':
+   git(repo,'worktree','remove','--',dest)
+   p['state']='removed'
  else:raise ValueError('Unknown worktree operation')
  print(json.dumps({'workspace':p}))
 except (OSError,ValueError,subprocess.TimeoutExpired) as e:

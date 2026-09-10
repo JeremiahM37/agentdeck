@@ -1,6 +1,7 @@
 package worktree
 
 import (
+	"bytes"
 	"context"
 	"github.com/JeremiahM37/agentdeck/internal/executor"
 	"os"
@@ -104,6 +105,21 @@ func TestInteractiveIsolationOwnershipAndSafeRemoval(t *testing.T) {
 	}
 	if plan.Commit != original {
 		t.Fatal("incorrect base")
+	}
+	indexPath := git(plan.Path, "rev-parse", "--path-format=absolute", "--git-path", "index")
+	indexBefore, err := os.ReadFile(indexPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := RunInteractive(ctx, ex, "check-remove", plan); err != nil {
+		t.Fatal(err)
+	}
+	indexAfter, err := os.ReadFile(indexPath)
+	if err != nil || !bytes.Equal(indexBefore, indexAfter) || plan.State != "ready" {
+		t.Fatal("removal preflight mutated the index or allocation state")
+	}
+	if !strings.Contains(git(repo, "worktree", "list", "--porcelain"), plan.Path) {
+		t.Fatal("preflight removed the worktree")
 	}
 	body, _ := os.ReadFile(filepath.Join(plan.Path, "file"))
 	if string(body) != "original\n" {

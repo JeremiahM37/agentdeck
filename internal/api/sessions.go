@@ -45,7 +45,7 @@ func (s *Server) sessionView(row *store.Session) *sessionView {
 	if row.WorktreeJSON != "" {
 		json.Unmarshal([]byte(row.WorktreeJSON), &v.Workspace)
 		if v.Workspace != nil {
-			v.Workspace.Token = ""
+			v.Workspace.RedactOwnership()
 		}
 	}
 	if row.LaunchConfigJSON != "" {

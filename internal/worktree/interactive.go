@@ -15,14 +15,15 @@ import (
 // Interactive records an allocation before any remote Git mutation. A failed
 // launch keeps this record so the directory is still discoverable and removable.
 type Interactive struct {
-	Repo   string `json:"repo"`
-	Path   string `json:"path"`
-	Branch string `json:"branch"`
-	Base   string `json:"base"`
-	Commit string `json:"commit"`
-	Token  string `json:"token,omitempty"`
-	State  string `json:"state"`
-	Error  string `json:"error,omitempty"`
+	Repo         string                `json:"repo"`
+	Path         string                `json:"path"`
+	Branch       string                `json:"branch"`
+	Base         string                `json:"base"`
+	Commit       string                `json:"commit"`
+	Token        string                `json:"token,omitempty"`
+	State        string                `json:"state"`
+	Error        string                `json:"error,omitempty"`
+	Repositories []WorkspaceRepository `json:"repositories,omitempty"`
 }
 type InteractiveOptions struct {
 	Base   string `json:"base"`
@@ -50,6 +51,9 @@ func PlanInteractive(repo string, id int64, o InteractiveOptions) *Interactive {
 var interactiveScript string
 
 func RunInteractive(ctx context.Context, ex executor.Executor, action string, plan *Interactive) error {
+	if len(plan.Repositories) > 0 {
+		return fmt.Errorf("multi-repository execution is not implemented yet")
+	}
 	data, _ := json.Marshal(plan)
 	result, err := ex.Run(ctx, "python3 -c "+executor.ShellQuote(interactiveScript)+" "+executor.ShellQuote(action)+" "+executor.ShellQuote(string(data)), executor.RunOpts{Timeout: 120})
 	if err != nil {
