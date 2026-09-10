@@ -112,6 +112,16 @@ func (s *Scheduler) stageRuntime(ctx context.Context, ex executor.Executor, work
 	// local one
 	mcp := store.UnjObj(c.Project.MCPJSON)
 	agent := firstNonEmpty(c.Task.Agent, "claude")
+	// Snapshot the complete project launch policy before branching by agent.
+	// Takeover must continue the attempt even if the project is edited later;
+	// the explicit marker distinguishes a captured empty declaration from an
+	// old row that predates this snapshot feature.
+	if err := s.DB.Update("attempts", att.ID, map[string]any{
+		"mcp_json": nz(c.Project.MCPJSON, "{}"), "strict_mcp": c.Project.StrictMCP,
+		"mcp_snapshot": 1,
+	}); err != nil {
+		return kw, err
+	}
 	if agent == "codex" && c.Project.StrictMCP != 0 {
 		return kw, fmt.Errorf("strict_mcp is unsupported for Codex additive configuration")
 	}
@@ -121,10 +131,26 @@ func (s *Scheduler) stageRuntime(ctx context.Context, ex executor.Executor, work
 			payload = map[string]any{"mcpServers": mcp}
 		}
 		raw, _ := json.Marshal(payload)
-		if err := ex.WriteFile(ctx, rt+"/mcp.json", raw); err != nil {
+		nonce, err := randomToken()
+		if err != nil {
 			return kw, err
 		}
-		kw.MCPConfig = agents.MCPRel
+		stateEnv, err := agents.MCPStateEnvPrefix(projectEnv(c.Project))
+		if err != nil {
+			return kw, err
+		}
+		result, err := ex.Run(ctx, stateEnv+agents.MCPInstallCommand(agents.TaskMCPRel(att.ID, nonce), raw), executor.RunOpts{Timeout: 20})
+		if err != nil || !result.OK() {
+			if err != nil {
+				return kw, err
+			}
+			return kw, fmt.Errorf("could not secure task MCP runtime")
+		}
+		configPath, err := agents.PrivateMCPPath(result.Stdout)
+		if err != nil {
+			return kw, err
+		}
+		kw.MCPConfig = configPath
 		kw.StrictMCP = c.Project.StrictMCP != 0
 	} else if agent == "codex" && len(mcp) > 0 {
 		var err error

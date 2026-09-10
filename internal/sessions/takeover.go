@@ -64,16 +64,67 @@ func (m *Manager) PrepareTakeover(ctx context.Context, ex executor.Executor, tas
 			}
 			extraArgs = append(extraArgs, "--settings", path)
 		}
-		raw, err = ex.ReadFile(ctx, agents.RuntimeDir(att.WorktreePath)+"/mcp.json", 0)
-		if err != nil {
-			return LaunchOpts{}, err
+		strictMCP := att.StrictMCP != 0
+		mcpJSON := att.MCPJSON
+		if att.MCPSnapshot == 0 {
+			// Attempts created before the snapshot column existed may still have
+			// the legacy worktree copy. Prefer it before falling back to the
+			// current project, so takeover remains a continuation of that run.
+			legacy, readErr := ex.ReadFile(ctx, agents.RuntimeDir(att.WorktreePath)+"/mcp.json", 0)
+			if readErr != nil {
+				return LaunchOpts{}, readErr
+			}
+			if len(legacy) > 0 {
+				mcpJSON = string(legacy)
+				strictMCP = project.StrictMCP != 0
+			} else {
+				mcpJSON = project.MCPJSON
+				strictMCP = project.StrictMCP != 0
+			}
 		}
-		if len(raw) > 0 {
-			extraArgs = append(extraArgs, "--mcp-config", agents.RuntimeDir(att.WorktreePath)+"/mcp.json")
+		mcp := store.UnjObj(mcpJSON)
+		if len(mcp) > 0 || strictMCP {
+			raw, mcpErr := agents.MCPPayload(mcp)
+			if mcpErr != nil {
+				return LaunchOpts{}, mcpErr
+			}
+			nonce, nonceErr := interactiveMCPNonce()
+			if nonceErr != nil {
+				return LaunchOpts{}, nonceErr
+			}
+			stateEnv, stateEnvErr := agents.MCPStateEnvPrefix(env)
+			if stateEnvErr != nil {
+				return LaunchOpts{}, stateEnvErr
+			}
+			result, installErr := ex.Run(ctx, stateEnv+agents.MCPInstallCommand(agents.TaskMCPRel(att.ID, nonce), raw), executor.RunOpts{Timeout: 20})
+			if installErr != nil || !result.OK() {
+				return LaunchOpts{}, fmt.Errorf("could not secure takeover MCP runtime")
+			}
+			configPath, pathErr := agents.PrivateMCPPath(result.Stdout)
+			if pathErr != nil {
+				return LaunchOpts{}, pathErr
+			}
+			extraArgs = append(extraArgs, "--mcp-config", configPath)
 		}
-		if project.StrictMCP != 0 {
+		if strictMCP {
 			extraArgs = append(extraArgs, "--strict-mcp-config")
 		}
+	} else {
+		mcpJSON := att.MCPJSON
+		if att.MCPSnapshot == 0 {
+			mcpJSON = project.MCPJSON
+		}
+		mcp := store.UnjObj(mcpJSON)
+		if len(mcp) > 0 {
+			codexArgs, codexErr := agents.CodexMCPArgs(mcp)
+			if codexErr != nil {
+				return LaunchOpts{}, codexErr
+			}
+			extraArgs = append(extraArgs, codexArgs...)
+		}
+	}
+	if task.Agent != "claude" && task.Agent != "" && att.StrictMCP != 0 {
+		return LaunchOpts{}, fmt.Errorf("strict_mcp is unsupported for Codex additive configuration")
 	}
 	return LaunchOpts{ProjectID: &project.ID, TargetID: project.TargetID, Name: task.Title, Agent: task.Agent,
 		Model: firstNonEmpty(att.Model, task.Model), Workdir: att.WorktreePath, ResumeID: resumeID, Prime: prime,

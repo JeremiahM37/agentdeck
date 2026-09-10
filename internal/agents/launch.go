@@ -158,9 +158,9 @@ func (l Launcher) claudeCommand(s LaunchSpec, prefix string) string {
 	parts := []string{l.bin(l.ClaudeBin, "claude"), "-p", `"$(cat .agentdeck/prompt.md)"`,
 		"--output-format", "stream-json", "--verbose",
 		"--permission-mode", s.PermissionMode}
-	parts = append(parts, "--settings", settings)
+	parts = append(parts, "--settings", shellQuote(settings))
 	if s.MCPConfig != "" {
-		parts = append(parts, "--mcp-config", s.MCPConfig)
+		parts = append(parts, "--mcp-config", shellQuote(s.MCPConfig))
 		if s.StrictMCP {
 			parts = append(parts, "--strict-mcp-config")
 		}

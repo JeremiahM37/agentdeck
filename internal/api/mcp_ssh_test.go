@@ -93,7 +93,7 @@ func TestInteractiveMCPManagerLaunchLifecycle(t *testing.T) {
 					t.Cleanup(func() {
 						ex, err := h.App.Reg.For(target)
 						if err == nil {
-							_, _ = ex.Run(context.Background(), "rm -rf -- "+shellQuoteForTest(filepath.Join(repo, ".agentdeck", "interactive")), executor.RunOpts{Timeout: 20})
+							_, _ = ex.Run(context.Background(), "rm -rf -- "+shellQuoteForTest(filepath.Join(repo, ".agentdeck", "interactive"))+" "+shellQuoteForTest(filepath.Join(home, ".local")), executor.RunOpts{Timeout: 20})
 						}
 					})
 				}
@@ -112,7 +112,7 @@ func TestInteractiveMCPManagerLaunchLifecycle(t *testing.T) {
 				}
 				extra := obj{
 					"name": agent, "command": wrapper,
-					"env":            obj{"CAPTURE_DIR": captureDir, envName: home},
+					"env":            obj{"CAPTURE_DIR": captureDir, "HOME": home, envName: home},
 					"resume_args":    []string{"resume", "--last"},
 					"resume_id_args": resumeIDArgs(agent),
 					"fork_args":      forkArgs(agent),
@@ -328,7 +328,7 @@ func assertLifecycleEnvironment(t *testing.T, got lifecycleCapture, agent, home 
 func assertFreshArgs(t *testing.T, agent string, args []string) {
 	t.Helper()
 	if agent == "claude" {
-		if len(args) < 2 || args[0] != "--mcp-config" || !strings.Contains(args[1], ".agentdeck/interactive/") {
+		if len(args) < 2 || args[0] != "--mcp-config" || !strings.Contains(args[1], "/agentdeck/mcp/") {
 			t.Fatalf("fresh Claude MCP argv: %q", args)
 		}
 		for _, arg := range args {
@@ -345,7 +345,7 @@ func assertFreshArgs(t *testing.T, agent string, args []string) {
 func assertContinuationArgs(t *testing.T, agent string, args []string, cid string, fork bool) {
 	t.Helper()
 	if agent == "claude" {
-		if len(args) < 4 || args[0] != "--mcp-config" || !strings.Contains(args[1], ".agentdeck/interactive/") {
+		if len(args) < 4 || args[0] != "--mcp-config" || !strings.Contains(args[1], "/agentdeck/mcp/") {
 			t.Fatalf("Claude MCP argv: %q", args)
 		}
 		want := []string{"--resume", cid}
@@ -444,7 +444,8 @@ func assertProjectFiles(t *testing.T, agent, repo, home string, before []fileSna
 		}
 	}
 	if agent == "claude" {
-		result, err := ex.Run(context.Background(), "find "+shellQuoteForTest(filepath.Join(repo, ".agentdeck", "interactive"))+" -type f -name mcp.json -printf '%m %p\\n'", executor.RunOpts{Timeout: 20})
+		stateRoot := filepath.Join(home, ".local", "state", "agentdeck", "mcp")
+		result, err := ex.Run(context.Background(), "find "+shellQuoteForTest(stateRoot)+" -type f -name mcp.json -printf '%m %p\\n'", executor.RunOpts{Timeout: 20})
 		if err != nil || !result.OK() || strings.TrimSpace(result.Stdout) == "" {
 			t.Fatal("Claude launch did not publish a private MCP runtime")
 		}

@@ -62,11 +62,20 @@ type Permissions struct {
 	AdditionalDirectories []string `json:"additionalDirectories,omitempty"`
 }
 
-// InteractiveMCPRel is private to one session, avoiding collisions with task
-// staging and preserving any foreign .agentdeck/mcp.json in the worktree.
-func InteractiveMCPRel(sessionID int64, nonce string) string {
-	return fmt.Sprintf(".agentdeck/interactive/%d-%s/mcp.json", sessionID, nonce)
+// PrivateMCPRel is private to one attempt/session and lives in AgentDeck's
+// per-user state directory rather than the Git checkout. The nonce prevents
+// collisions across restarts and across multiple control-plane instances.
+func PrivateMCPRel(id int64, nonce string) string {
+	return fmt.Sprintf("agentdeck/mcp/%d-%s/mcp.json", id, nonce)
 }
+
+// InteractiveMCPRel is private to one interactive session.
+func InteractiveMCPRel(sessionID int64, nonce string) string {
+	return PrivateMCPRel(sessionID, nonce)
+}
+
+// TaskMCPRel is private to one background attempt.
+func TaskMCPRel(attemptID int64, nonce string) string { return PrivateMCPRel(attemptID, nonce) }
 
 func (p Permissions) isEmpty() bool {
 	return len(p.Allow) == 0 && len(p.Deny) == 0 && len(p.Ask) == 0 &&

@@ -53,7 +53,9 @@ CREATE TABLE IF NOT EXISTS attempts(
   session_id TEXT DEFAULT '', log_offset INTEGER DEFAULT 0,
   started_at REAL, finished_at REAL, exit_code INTEGER,
   result_json TEXT DEFAULT '{}', diff_stat_json TEXT DEFAULT '{}',
-  verify_json TEXT DEFAULT '{}'
+  verify_json TEXT DEFAULT '{}',
+  mcp_json TEXT DEFAULT '{}', strict_mcp INTEGER DEFAULT 0,
+  mcp_snapshot INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS idx_attempts_task ON attempts(task_id);
 -- Operator messages survive restarts and are assigned to exactly one turn.
@@ -210,4 +212,7 @@ var migrations = []string{
 	"ALTER TABLE attempts ADD COLUMN model TEXT DEFAULT ''",
 	"ALTER TABLE attempts ADD COLUMN sandbox_vmid TEXT DEFAULT ''",
 	"ALTER TABLE attempts ADD COLUMN verify_json TEXT DEFAULT '{}'",
+	"ALTER TABLE attempts ADD COLUMN mcp_json TEXT DEFAULT '{}'",
+	"ALTER TABLE attempts ADD COLUMN strict_mcp INTEGER DEFAULT 0",
+	"ALTER TABLE attempts ADD COLUMN mcp_snapshot INTEGER NOT NULL DEFAULT 0",
 }

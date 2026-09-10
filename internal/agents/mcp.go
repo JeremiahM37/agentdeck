@@ -66,27 +66,39 @@ func CodexMCPArgs(mcp map[string]any) ([]string, error) {
 
 // interactiveMCPInstallScript creates and publishes one private runtime file on
 // the target. It deliberately uses directory descriptors for every operation
-// below the worktree: the worktree can be modified by setup hooks or another
-// session between any two control-plane calls. A hard link is the publication
-// primitive because it is atomic and refuses an existing destination, including
-// a symlink, without replacing foreign content.
+// below the target user's state directory: the worktree can be modified by
+// setup hooks or another session, and generated credentials must never become
+// Git files. A hard link is the publication primitive because it is atomic and
+// refuses an existing destination, including a symlink, without replacing
+// foreign content.
 const interactiveMCPInstallScript = `
 import base64, os, stat, sys
 
-workdir, rel, encoded = sys.argv[2:]
+rel, encoded = sys.argv[2:]
 parts = rel.split('/')
-if len(parts) != 4 or parts[0] != '.agentdeck' or parts[1] != 'interactive' or parts[3] != 'mcp.json' or not parts[2] or any(p in ('', '.', '..') for p in parts):
+if len(parts) != 4 or parts[0] != 'agentdeck' or parts[1] != 'mcp' or parts[3] != 'mcp.json' or not parts[2] or any(p in ('', '.', '..') for p in parts):
     raise RuntimeError('invalid interactive MCP path')
-if not workdir.startswith('/'):
-    raise RuntimeError('interactive MCP workdir must be absolute')
+
+state = os.environ.get('XDG_STATE_HOME', '')
+if not state:
+    home = os.environ.get('HOME', '')
+    if not home:
+        raise RuntimeError('target HOME is unavailable')
+    state = home + '/.local/state'
+if not state.startswith('/'):
+    raise RuntimeError('target XDG_STATE_HOME must be absolute')
 
 O_DIR = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
-def open_path(path):
+def open_or_make_path(path):
     fd = os.open('/', O_DIR)
     try:
         for part in path.split('/')[1:]:
             if not part or part in ('.', '..'):
-                raise RuntimeError('invalid workdir path')
+                raise RuntimeError('invalid state path')
+            try:
+                os.mkdir(part, 0o700, dir_fd=fd)
+            except FileExistsError:
+                pass
             nxt = os.open(part, O_DIR, dir_fd=fd)
             os.close(fd)
             fd = nxt
@@ -102,14 +114,14 @@ def open_or_make_dir(parent, name, mode):
         pass
     return os.open(name, O_DIR, dir_fd=parent)
 
-root = open_path(workdir)
+root = open_or_make_path(state)
 adk = None
 interactive = None
 leaf = None
 tmp = None
 try:
-    adk = open_or_make_dir(root, '.agentdeck', 0o700)
-    interactive = open_or_make_dir(adk, 'interactive', 0o700)
+    adk = open_or_make_dir(root, 'agentdeck', 0o700)
+    interactive = open_or_make_dir(adk, 'mcp', 0o700)
     try:
         os.mkdir(parts[2], 0o700, dir_fd=interactive)
     except FileExistsError:
@@ -134,6 +146,7 @@ try:
     # Do not follow a source symlink, and do not replace an existing destination.
     os.link('.mcp.tmp', 'mcp.json', src_dir_fd=leaf, dst_dir_fd=leaf, follow_symlinks=False)
     os.unlink('.mcp.tmp', dir_fd=leaf)
+    print(state + '/' + '/'.join(parts), flush=True)
 finally:
     for fd in (tmp, leaf, interactive, adk, root):
         if fd is not None:
@@ -141,13 +154,35 @@ finally:
             except OSError: pass
 `
 
-// InteractiveMCPInstallCommand performs the complete private runtime install
-// in one target-side operation. The payload is base64-encoded so neither JSON
-// bytes nor path values become shell syntax. Targets already require Python 3
-// for their normal agent runtime, and this avoids another uploaded executable.
-func InteractiveMCPInstallCommand(workdir, rel string, payload []byte) string {
+// MCPInstallCommand performs the complete private runtime install in one
+// target-side operation. The payload is base64-encoded so neither JSON bytes
+// nor path values become shell syntax. It prints the resulting absolute path;
+// the target's normal HOME/XDG state directory supplies the root.
+func MCPInstallCommand(rel string, payload []byte) string {
 	encoded := base64.StdEncoding.EncodeToString(payload)
-	return "python3 -c " + shellQuote(interactiveMCPInstallScript) + " -- " + shellQuote(workdir) + " " + shellQuote(rel) + " " + shellQuote(encoded)
+	return "python3 -c " + shellQuote(interactiveMCPInstallScript) + " -- " + shellQuote(rel) + " " + shellQuote(encoded)
+}
+
+// PrivateMCPPath validates the helper's absolute-path result before it becomes
+// part of a launch command.
+func PrivateMCPPath(output string) (string, error) {
+	path := strings.TrimSpace(output)
+	if path == "" || !strings.HasPrefix(path, "/") || strings.ContainsAny(path, "\r\n") {
+		return "", fmt.Errorf("target returned an invalid private MCP path")
+	}
+	return path, nil
+}
+
+// MCPStateEnvPrefix forwards only the state-directory selectors. Agent API
+// credentials and model endpoints do not belong in the helper's environment.
+func MCPStateEnvPrefix(env map[string]string) (string, error) {
+	stateEnv := map[string]string{}
+	for _, key := range []string{"HOME", "XDG_STATE_HOME"} {
+		if value, ok := env[key]; ok {
+			stateEnv[key] = value
+		}
+	}
+	return EnvPrefix(stateEnv, false)
 }
 
 func tomlKey(s string) string {

@@ -422,12 +422,23 @@ func (m *Manager) Launch(ctx context.Context, o LaunchOpts) (*store.Session, err
 				return nil, nonceErr
 			}
 			rel := agentcfg.InteractiveMCPRel(sess.ID, nonce)
-			install := agentcfg.InteractiveMCPInstallCommand(workdir, rel, raw)
-			if result, installErr := ex.Run(ctx, install, executor.RunOpts{Timeout: 20}); installErr != nil || !result.OK() {
+			stateEnv, stateEnvErr := agentcfg.MCPStateEnvPrefix(env)
+			if stateEnvErr != nil {
+				m.end(sess.ID, StatusDead)
+				return nil, stateEnvErr
+			}
+			install := stateEnv + agentcfg.MCPInstallCommand(rel, raw)
+			result, installErr := ex.Run(ctx, install, executor.RunOpts{Timeout: 20})
+			if installErr != nil || !result.OK() {
 				m.end(sess.ID, StatusDead)
 				return nil, fmt.Errorf("could not secure interactive MCP runtime")
 			}
-			toolArgs = []string{"--mcp-config", rel}
+			configPath, pathErr := agentcfg.PrivateMCPPath(result.Stdout)
+			if pathErr != nil {
+				m.end(sess.ID, StatusDead)
+				return nil, pathErr
+			}
+			toolArgs = []string{"--mcp-config", configPath}
 			if project.StrictMCP != 0 {
 				toolArgs = append(toolArgs, "--strict-mcp-config")
 			}

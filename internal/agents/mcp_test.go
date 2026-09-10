@@ -82,28 +82,36 @@ func TestInteractiveMCPInstallUsesPrivateExclusiveRuntime(t *testing.T) {
 	}
 	payload := []byte(`{"mcpServers":{"ops":{"command":"python3"}}}`)
 	root := t.TempDir()
+	state := filepath.Join(root, "state")
 	foreign := t.TempDir()
-	os.Symlink(foreign, filepath.Join(root, ".agentdeck"))
+	os.MkdirAll(state, 0700)
+	os.Symlink(foreign, filepath.Join(state, "agentdeck"))
 	rel := InteractiveMCPRel(7, "nonce")
-	if err := exec.Command("bash", "-c", InteractiveMCPInstallCommand(root, rel, payload)).Run(); err == nil {
-		t.Fatal("symlinked .agentdeck parent must be rejected")
+	cmd := exec.Command("bash", "-c", MCPInstallCommand(rel, payload))
+	cmd.Env = append(os.Environ(), "XDG_STATE_HOME="+state)
+	if err := cmd.Run(); err == nil {
+		t.Fatal("symlinked state parent must be rejected")
 	}
 	root = t.TempDir()
-	if err := os.MkdirAll(filepath.Join(root, ".agentdeck"), 0700); err != nil {
+	state = filepath.Join(root, "state")
+	if err := os.MkdirAll(filepath.Join(state, "agentdeck"), 0700); err != nil {
 		t.Fatal(err)
 	}
-	interactive := filepath.Join(root, ".agentdeck", "interactive")
+	interactive := filepath.Join(state, "agentdeck", "mcp")
 	if err := os.Symlink(foreign, interactive); err != nil {
 		t.Fatal(err)
 	}
-	if err := exec.Command("bash", "-c", InteractiveMCPInstallCommand(root, rel, payload)).Run(); err == nil {
-		t.Fatal("symlinked interactive parent must be rejected")
+	cmd = exec.Command("bash", "-c", MCPInstallCommand(rel, payload))
+	cmd.Env = append(os.Environ(), "XDG_STATE_HOME="+state)
+	if err := cmd.Run(); err == nil {
+		t.Fatal("symlinked MCP parent must be rejected")
 	}
 	root = t.TempDir()
-	if err := os.MkdirAll(filepath.Join(root, ".agentdeck", "interactive"), 0700); err != nil {
+	state = filepath.Join(root, "state")
+	if err := os.MkdirAll(filepath.Join(state, "agentdeck", "mcp"), 0700); err != nil {
 		t.Fatal(err)
 	}
-	dir := filepath.Join(root, filepath.FromSlash(strings.TrimSuffix(rel, "/mcp.json")))
+	dir := filepath.Join(state, filepath.FromSlash(strings.TrimSuffix(rel, "/mcp.json")))
 	if err := os.Mkdir(dir, 0700); err != nil {
 		t.Fatal(err)
 	}
@@ -111,7 +119,9 @@ func TestInteractiveMCPInstallUsesPrivateExclusiveRuntime(t *testing.T) {
 	if err := os.WriteFile(foreignDest, []byte("foreign"), 0640); err != nil {
 		t.Fatal(err)
 	}
-	if err := exec.Command("bash", "-c", InteractiveMCPInstallCommand(root, rel, payload)).Run(); err == nil {
+	cmd = exec.Command("bash", "-c", MCPInstallCommand(rel, payload))
+	cmd.Env = append(os.Environ(), "XDG_STATE_HOME="+state)
+	if err := cmd.Run(); err == nil {
 		t.Fatal("existing runtime leaf must make installation fail")
 	}
 	got, _ := os.ReadFile(foreignDest)
@@ -120,13 +130,16 @@ func TestInteractiveMCPInstallUsesPrivateExclusiveRuntime(t *testing.T) {
 		t.Fatalf("foreign config changed: body=%q mode=%o", got, info.Mode().Perm())
 	}
 	root = t.TempDir()
-	if err := os.MkdirAll(filepath.Join(root, ".agentdeck"), 0700); err != nil {
+	state = filepath.Join(root, "state")
+	if err := os.MkdirAll(filepath.Join(state, "agentdeck"), 0700); err != nil {
 		t.Fatal(err)
 	}
-	if out, err := exec.Command("bash", "-c", InteractiveMCPInstallCommand(root, rel, payload)).CombinedOutput(); err != nil {
+	cmd = exec.Command("bash", "-c", MCPInstallCommand(rel, payload))
+	cmd.Env = append(os.Environ(), "XDG_STATE_HOME="+state)
+	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("%v: %s", err, out)
 	}
-	dest := filepath.Join(root, filepath.FromSlash(rel))
+	dest := filepath.Join(state, filepath.FromSlash(rel))
 	got, err := os.ReadFile(dest)
 	if err != nil || string(got) != string(payload) {
 		t.Fatalf("published MCP payload: %q (%v)", got, err)
@@ -147,13 +160,16 @@ func TestInteractiveMCPInstallUsesPrivateExclusiveRuntime(t *testing.T) {
 		t.Fatal(err)
 	}
 	root = t.TempDir()
-	if err := os.MkdirAll(filepath.Join(root, ".agentdeck"), 0700); err != nil {
+	state = filepath.Join(root, "state")
+	if err := os.MkdirAll(filepath.Join(state, "agentdeck"), 0700); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Symlink(outside, filepath.Join(root, ".agentdeck", "interactive")); err != nil {
+	if err := os.Symlink(outside, filepath.Join(state, "agentdeck", "mcp")); err != nil {
 		t.Fatal(err)
 	}
-	if err := exec.Command("bash", "-c", InteractiveMCPInstallCommand(root, rel, payload)).Run(); err == nil {
+	cmd = exec.Command("bash", "-c", MCPInstallCommand(rel, payload))
+	cmd.Env = append(os.Environ(), "XDG_STATE_HOME="+state)
+	if err := cmd.Run(); err == nil {
 		t.Fatal("symlinked interactive parent must not be traversed")
 	}
 	got, _ = os.ReadFile(outside)
@@ -167,13 +183,17 @@ func TestInteractiveMCPInstallRejectsParentReplacementBeforeTraversal(t *testing
 		t.Skip("python3 is required on agent targets")
 	}
 	root := t.TempDir()
-	if err := os.Mkdir(filepath.Join(root, ".agentdeck"), 0700); err != nil {
+	state := filepath.Join(root, "state")
+	if err := os.Mkdir(state, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(filepath.Join(state, "agentdeck"), 0700); err != nil {
 		t.Fatal(err)
 	}
 	outside := t.TempDir()
 	bin := t.TempDir()
 	python := filepath.Join(bin, "python3")
-	body := "#!/bin/sh\nset -eu\nmv -- \"$ADK_WORK/.agentdeck\" \"$ADK_WORK/original-agentdeck\"\nln -s -- \"$ADK_OUTSIDE\" \"$ADK_WORK/.agentdeck\"\nexec \"$ADK_REAL_PYTHON\" \"$@\"\n"
+	body := "#!/bin/sh\nset -eu\nmv -- \"$ADK_STATE/agentdeck\" \"$ADK_STATE/original-agentdeck\"\nln -s -- \"$ADK_OUTSIDE\" \"$ADK_STATE/agentdeck\"\nexec \"$ADK_REAL_PYTHON\" \"$@\"\n"
 	if err := os.WriteFile(python, []byte(body), 0700); err != nil {
 		t.Fatal(err)
 	}
@@ -182,9 +202,10 @@ func TestInteractiveMCPInstallRejectsParentReplacementBeforeTraversal(t *testing
 		t.Fatal(err)
 	}
 	rel := InteractiveMCPRel(8, "replacement")
-	cmd := exec.Command("bash", "-c", InteractiveMCPInstallCommand(root, rel, []byte(`{"mcpServers":{}}`)))
+	cmd := exec.Command("bash", "-c", MCPInstallCommand(rel, []byte(`{"mcpServers":{}}`)))
 	cmd.Env = append(os.Environ(),
-		"PATH="+bin+":"+os.Getenv("PATH"), "ADK_WORK="+root,
+		"PATH="+bin+":"+os.Getenv("PATH"), "XDG_STATE_HOME="+state,
+		"ADK_STATE="+state,
 		"ADK_OUTSIDE="+outside, "ADK_REAL_PYTHON="+realPython)
 	if out, err := cmd.CombinedOutput(); err == nil {
 		t.Fatal("parent replacement must be rejected")
