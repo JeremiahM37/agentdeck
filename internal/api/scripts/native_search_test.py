@@ -5,6 +5,7 @@ from contextlib import closing
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from native_search import NativeSearchIndex
+from native_search_read import read_match
 
 class SearchTests(unittest.TestCase):
     def setUp(self):
@@ -25,8 +26,46 @@ class SearchTests(unittest.TestCase):
         state=self.index.sync(seconds=10)
         self.assertTrue(state['complete']);self.assertGreater(path.stat().st_size,2*1024*1024)
         self.assertEqual(self.matches('rare opening')[0]['cid'],cid)
-        self.assertEqual(self.matches('long-message-needle')[0]['cid'],cid)
+        hit=self.matches('long-message-needle')[0]
+        self.assertEqual(hit['cid'],cid);self.assertIn('long-message-needle',hit['snippet']);self.assertLess(len(hit['snippet']),1210)
         self.assertGreater(self.matches('rare')[0]['end_offset'],self.matches('rare')[0]['offset'])
+    def read_hit(self,hit,query):
+        return read_match(self.index,hit['document'],hit['cid'],hit['cwd'],hit['offset'],hit['fingerprint'],query)
+    def test_read_exact_old_match_with_bounded_context(self):
+        path,cid=self.write(['before '+str(i) for i in range(8)]+['exact needle']+['after '+str(i) for i in range(8)]+['filler '*1000]*400)
+        self.index.sync(seconds=10)
+        result=self.read_hit(self.matches('exact needle')[0],'exact needle')
+        self.assertEqual(result['conversation']['id'],cid)
+        self.assertEqual(len(result['messages']),11)
+        self.assertEqual([m['text'] for m in result['messages'] if m['matched']],['exact needle'])
+        self.assertEqual(result['context_before_count'],5);self.assertEqual(result['context_after_count'],5)
+        self.assertFalse(self.index.db.in_transaction)
+        self.assertEqual(self.index.sync()['scanned_bytes'],0)
+    def test_read_rejects_stale_message_and_releases_transaction(self):
+        path,cid=self.write(['exact needle']);self.index.sync();hit=self.matches('needle')[0]
+        path.write_text(path.read_text().replace('exact needle','other needle'))
+        with self.assertRaisesRegex(ValueError,'Matched message changed'):self.read_hit(hit,'needle')
+        self.assertFalse(self.index.db.in_transaction)
+    def test_read_rejects_replaced_file_and_foreign_symlink(self):
+        path,cid=self.write(['exact needle']);self.index.sync();hit=self.matches('needle')[0]
+        moved=path.with_suffix('.old');path.rename(moved);path.write_bytes(moved.read_bytes())
+        with self.assertRaisesRegex(ValueError,'file changed'):self.read_hit(hit,'needle')
+        path.unlink();outside=self.root/'outside.jsonl';outside.write_bytes(moved.read_bytes());path.symlink_to(outside)
+        with self.assertRaisesRegex(ValueError,'outside this native profile'):self.read_hit(hit,'needle')
+    def test_read_long_message_centers_on_match(self):
+        self.write(['x'*90000+' exactneedle '+'y'*90000]);self.index.sync(seconds=10)
+        result=self.read_hit(self.matches('exactneedle')[0],'exactneedle')
+        message=result['messages'][0]
+        self.assertTrue(message['truncated']);self.assertTrue(message['matched'])
+        self.assertIn('exactneedle',message['text']);self.assertLess(len(message['text']),64010)
+    def test_read_skips_changed_neighbor_and_private_content(self):
+        path,cid=self.write(['before words','exact needle','after words'])
+        with path.open('a') as f:f.write(json.dumps(self.message('PRIVATE_SENTINEL',channel='analysis'))+'\n')
+        self.index.sync();hit=self.matches('needle')[0]
+        path.write_text(path.read_text().replace('before words','edited words'))
+        result=self.read_hit(hit,'needle')
+        self.assertEqual(result['changed_neighbors'],1)
+        self.assertEqual([m['text'] for m in result['messages']],['exact needle','after words'])
     def test_budgeted_resume_append_partial_and_no_duplicates(self):
         path,cid=self.write(['first needle','second needle'])
         state=self.index.sync(byte_budget=1,seconds=10);self.assertFalse(state['complete'])
@@ -97,6 +136,10 @@ class SearchTests(unittest.TestCase):
         (folder/(cid+'.jsonl')).write_text(json.dumps(row)+'\n')
         index.sync(seconds=10);self.assertEqual(index.search('caption needle')['matches'][0]['cid'],cid)
         self.assertLess(index.path.stat().st_size,100000)
+        hit=index.search('caption needle')['matches'][0]
+        result=read_match(index,hit['document'],cid,hit['cwd'],hit['offset'],hit['fingerprint'],'caption needle')
+        self.assertIn('Large image caption needle',result['messages'][0]['text'])
+        self.assertLess(len(result['messages'][0]['text']),100)
     def test_oversized_entry_does_not_hide_following_messages(self):
         path,cid=self.write(['x'*(11*1024*1024),'following sentinel'])
         for _ in range(10):
@@ -133,6 +176,17 @@ class SearchTests(unittest.TestCase):
         self.assertEqual(reply['matches'][0]['cid'],cid)
         result=subprocess.run([sys.executable,str(script),'codex',' '],env=env,capture_output=True,text=True)
         self.assertEqual(result.returncode,1);self.assertIn('error',json.loads(result.stdout))
+    def test_embedded_read_worker_and_profile_change(self):
+        path,cid=self.write(['worker exact phrase']);self.index.sync();hit=self.matches('exact')[0]
+        folder=Path(__file__).parent
+        script='NATIVE_SEARCH_LIBRARY=True\n'+'\n'.join((folder/name).read_text() for name in ('native_records.py','native_search.py','native_search_read.py'))
+        env={**os.environ,'CODEX_HOME':str(self.home),'AGENTDECK_NATIVE_SEARCH_CACHE':str(self.cache)}
+        args=[sys.executable,'-c',script,'codex',str(hit['document']),cid,hit['cwd'],str(hit['offset']),hit['fingerprint'],self.index.path.stem,'exact']
+        reply=json.loads(subprocess.check_output(args,env=env,cwd=self.root))
+        self.assertEqual(reply['messages'][0]['text'],'worker exact phrase')
+        env['CODEX_HOME']=str(self.root/'another-profile')
+        result=subprocess.run(args,env=env,cwd=self.root,capture_output=True,text=True)
+        self.assertEqual(result.returncode,1);self.assertIn('profile changed',json.loads(result.stdout)['error'])
     def test_slow_bad_header_cannot_starve_other_conversations(self):
         good,cid=self.write(['available discussion'])
         bad,_=self.write(['invalid']);bad.write_text('{}\n');os.utime(bad,(time.time()+60,)*2)

@@ -40,16 +40,28 @@ Larger individual entries are counted and skipped without hiding later messages.
 Malformed or unreadable headers are reported as issues. Failure checkpoints
 prevent one slow bad file from starving other conversations; changed files retry
 immediately, and transient failures are eligible for retry after 30 seconds. Results currently provide
-one matching message per conversation, with a snippet, role and byte boundaries.
+one matching message per conversation, with a bounded snippet, role, byte boundaries and a visible-message fingerprint.
 Whitespace-separated query terms must occur in the same message. FTS operators
 are quoted as literal terms. A result cap tells callers when to narrow the query.
 
+The exact-match reader revalidates the native profile, conversation identity,
+file identity, JSONL boundary and visible-message fingerprint before returning
+source text. It reads up to five visible messages on either side of the match;
+changed neighbors are omitted and counted, and a changed selected message is
+rejected. Large selected messages are clipped around the matching text. Returned
+context counts describe the included messages, not pagination availability.
+The reader uses cache schema v2, leaving prior development caches untouched.
+It closes its read transaction on success and failure so subsequent indexing can
+proceed. Context pagination and source context beyond the indexed portion remain
+integration work.
+
 ## Evidence
 
-Eighteen index tests cover old text beyond the reader's recent window, long text,
+Twenty-four index and reader tests cover old text beyond the reader's recent window, long text,
 large image captions, oversized records, progressive indexing, append/partial
 writes, rewrites/deletion, concurrent writers, profile/path boundaries, private
-channels, malformed content, file permissions, explicit rebuilds and future-cache preservation.
+channels, malformed content, file permissions, explicit rebuilds, future-cache preservation,
+exact old matches, stale/replaced files, profile changes and large-message excerpts.
 Existing native-history API tests and eleven browser/terminal cases passed after
 the parser extraction.
 
@@ -58,6 +70,10 @@ bytes) indexed in 40 bounded passes in 0.157 seconds; 100 warm queries averaged
 2.316 ms, and an unchanged sync reparsed zero bytes. These are fixture measurements,
 not an end-to-end or upstream comparison. SSH transport, discovery time and UI
 latency still need measurement when the index is wired into the application.
+The embedded search and read workers also passed on the actual SSH target with
+a private synthetic profile: Unicode matching, warm-cache reuse, rebuild, exact
+source reading and stale-match rejection. The fixture cleaned its own files; no
+user history was indexed or edited.
 
 ## Remaining integration
 

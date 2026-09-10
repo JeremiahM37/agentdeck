@@ -1,5 +1,5 @@
 """Incremental target-local search of visible native conversation messages."""
-import hashlib, json, os, sqlite3, time
+import hashlib, json, os, secrets, sqlite3, time
 from pathlib import Path
 if 'native_record' not in globals():
     from native_records import native_record, native_metadata, LIMIT
@@ -18,7 +18,7 @@ CREATE TABLE IF NOT EXISTS failures(
  changed INTEGER, reason TEXT NOT NULL, retry_after REAL, touched INTEGER);
 CREATE TABLE IF NOT EXISTS messages(
  id INTEGER PRIMARY KEY, doc INTEGER NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
- offset INTEGER NOT NULL, end_offset INTEGER NOT NULL, role TEXT NOT NULL, text TEXT NOT NULL, UNIQUE(doc,offset));
+ offset INTEGER NOT NULL, end_offset INTEGER NOT NULL, role TEXT NOT NULL, text TEXT NOT NULL, fingerprint TEXT NOT NULL, UNIQUE(doc,offset));
 CREATE INDEX IF NOT EXISTS messages_doc ON messages(doc);
 CREATE VIRTUAL TABLE IF NOT EXISTS message_search USING fts5(text,content=messages,content_rowid=id);
 CREATE TRIGGER IF NOT EXISTS message_insert AFTER INSERT ON messages BEGIN
@@ -33,16 +33,16 @@ class NativeSearchIndex:
         self.home=Path(home).expanduser().resolve();self.agent=agent
         # Keep indexes separate even when callers use a common private cache root.
         key=hashlib.sha256((agent+'\0'+str(self.home)).encode()).hexdigest()
-        folder=Path(cache).expanduser()/'native-search-v1';folder.mkdir(mode=0o700,parents=True,exist_ok=True)
+        folder=Path(cache).expanduser()/'native-search-v2';folder.mkdir(mode=0o700,parents=True,exist_ok=True)
         os.chmod(folder,0o700)
         self.path=folder/(key+'.sqlite3')
         fd=os.open(self.path,os.O_CREAT|os.O_RDWR|os.O_NOFOLLOW,0o600);os.fchmod(fd,0o600);os.close(fd)
         self.db=sqlite3.connect(self.path,timeout=3);self.db.row_factory=sqlite3.Row
         try:
             self.db.execute('PRAGMA foreign_keys=ON')
-            if self.db.execute('PRAGMA user_version').fetchone()[0] not in (0,1):
+            if self.db.execute('PRAGMA user_version').fetchone()[0] not in (0,2):
                 raise ValueError('Search cache uses an unsupported version')
-            self.db.executescript(SCHEMA+'\nPRAGMA user_version=1;')
+            self.db.executescript(SCHEMA+'\nPRAGMA user_version=2;')
         except Exception:
             self.db.close();raise
     def close(self): self.db.close()
@@ -119,7 +119,7 @@ class NativeSearchIndex:
                             except (ValueError,UnicodeError):continue
                             if not isinstance(row,dict):continue
                             message=native_record(row,self.agent,limit=None)
-                            if message:self.db.execute('INSERT OR IGNORE INTO messages(doc,offset,end_offset,role,text) VALUES(?,?,?,?,?)',(doc,position,offset,message['role'],message['text']))
+                            if message:self.db.execute('INSERT OR IGNORE INTO messages(doc,offset,end_offset,role,text,fingerprint) VALUES(?,?,?,?,?,?)',(doc,position,offset,message['role'],message['text'],message_fingerprint(message)))
                         prefix_len=min(offset,4096)
                         self.db.execute('UPDATE documents SET title=?,modified=?,observed=?,stamp=?,offset=?,prefix_len=?,prefix=?,tail=?,pending=?,skipping=?,oversized=?,touched=? WHERE id=?',
                             (info['title'],st.st_mtime,st.st_size,st.st_mtime_ns,offset,prefix_len,self.digest(file,0,prefix_len),self.digest(file,max(0,offset-256),min(256,offset)),pending,skipping,oversized,time.time_ns(),doc))
@@ -147,16 +147,33 @@ class NativeSearchIndex:
         if not terms or len(query)>500:raise ValueError('Enter between 1 and 500 characters')
         match=' AND '.join('"'+term.replace('"','""')+'"' for term in terms)
         limit=min(max(int(limit),1),100)
+        marker='adk-'+secrets.token_hex(12)
+        opening,closing='['+marker+']','[/'+marker+']'
         rows=self.db.execute("""WITH hits AS (
             SELECT min(m.id) AS id FROM message_search
             JOIN messages m ON m.id=message_search.rowid
             WHERE message_search MATCH ? GROUP BY m.doc)
-            SELECT d.cid,d.cwd,d.title,d.modified,m.role,m.offset,m.end_offset,
-            snippet(message_search,0,'','', ' … ',32) AS snippet
+            SELECT d.id AS document,d.cid,d.cwd,d.title,d.modified,m.role,m.offset,m.end_offset,m.fingerprint,
+            snippet(message_search,0,?,?, ' … ',32) AS snippet
             FROM message_search JOIN messages m ON m.id=message_search.rowid
             JOIN documents d ON d.id=m.doc JOIN hits ON hits.id=m.id
-            WHERE message_search MATCH ? ORDER BY d.modified DESC LIMIT ?""",(match,match,limit+1)).fetchall()
-        return dict(matches=[dict(row) for row in rows[:limit]],more=len(rows)>limit)
+            WHERE message_search MATCH ? ORDER BY d.modified DESC LIMIT ?""",(match,opening,closing,match,limit+1)).fetchall()
+        matches=[]
+        for row in rows[:limit]:
+            item=dict(row);item['snippet']=marked_excerpt(item['snippet'],opening,closing,1200)[0];matches.append(item)
+        return dict(matches=matches,more=len(rows)>limit)
+
+
+def message_fingerprint(message):
+    return hashlib.sha256((message['role']+'\0'+message['text']).encode()).hexdigest()
+
+
+def marked_excerpt(text, opening, closing, limit):
+    position=text.find(opening)
+    clean=text.replace(opening,'').replace(closing,'')
+    if len(clean)<=limit:return clean,False
+    start=max(0,(position if position>=0 else 0)-min(200,limit//4))
+    return ('… ' if start else '')+clean[start:start+limit]+(' …' if start+limit<len(clean) else ''),True
 
 
 def main():
@@ -174,12 +191,12 @@ def main():
         index=NativeSearchIndex(cache,home,args.agent)
         if args.reset:index.reset()
         progress=index.sync()
-        print(json.dumps(dict(agent=args.agent,progress=progress,**index.search(args.query)),ensure_ascii=False))
+        print(json.dumps(dict(agent=args.agent,profile_key=index.path.stem,progress=progress,**index.search(args.query)),ensure_ascii=False))
     except (OSError,ValueError,sqlite3.Error) as error:
         print(json.dumps(dict(error=str(error))));return 1
     finally:
         if index:index.close()
     return 0
 
-if __name__=='__main__':
+if __name__=='__main__' and not globals().get('NATIVE_SEARCH_LIBRARY'):
     raise SystemExit(main())
