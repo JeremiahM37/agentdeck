@@ -34,9 +34,13 @@ def check(t,row,cid,file,before,git,status,agent):
     assert not (dest/'parent-only.txt').exists()
     assert (t['root']/'base.txt').read_text()=='uncommitted parent change'
     assert file.read_bytes()==before and git('status','--porcelain')==status
-    args=argv(dest);assert cid in args
-    if agent=='codex':assert args[-2:]==['--cd',str(dest)]
-    else:assert '--fork-session' in args
+    args=argv(dest)
+    if agent=='codex':
+        assert cid in args
+        assert args[-2:]==['--cd',str(dest)]
+    else:
+        assert args[args.index('--resume')+1]==str(file)
+        assert '--fork-session' in args
     source=t['api'](f"/sessions/{t['id']}")
     subprocess.run(['tmux','has-session','-t','='+source['tmux_session']],env=t['env'],check=True)
     return dest
