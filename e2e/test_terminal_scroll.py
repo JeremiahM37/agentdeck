@@ -147,10 +147,12 @@ def test_middle_autoscroll_moves_normal_terminal_buffer(page,real_terminal):
           constructor(...args){super(...args);window.testTerminal=this;}
         };}});''')
     open_terminal(page,real_terminal)
-    type_command(page,'for i in $(seq 1 300); do echo BUFFER-LINE-$i; done')
-    expect(page.locator('#agent-terminal .xterm-screen')).to_contain_text('BUFFER-LINE-300')
+    # Pace output so tmux sends scroll operations rather than coalescing the
+    # whole burst into one screen redraw with little client-side scrollback.
+    type_command(page,'for i in $(seq 1 120); do echo BUFFER-LINE-$i; sleep 0.02; done')
+    expect(page.locator('#agent-terminal .xterm-screen')).to_contain_text('BUFFER-LINE-120')
     base=page.evaluate('window.testTerminal.buffer.active.baseY')
-    assert base>100
+    assert base>20
     box=page.locator('#agent-terminal').bounding_box()
     x=box['x']+box['width']/2;y=box['y']+box['height']/2
     page.mouse.click(x,y,button='middle');page.mouse.move(x,y-150)
