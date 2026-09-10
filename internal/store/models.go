@@ -148,6 +148,7 @@ type Memory struct {
 // which is work they hand OFF. Its tmux session is the process; this row is the
 // durable record that outlives it.
 type Session struct {
+	WorktreeJSON   string   `json:"-"`
 	ID             int64    `json:"id"`
 	ProjectID      *int64   `json:"project_id"`
 	TargetID       int64    `json:"target_id"`

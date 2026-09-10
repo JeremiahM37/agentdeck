@@ -286,6 +286,9 @@ func (m *dashboard) updatePreview() {
 		switch sections[m.section] {
 		case "sessions":
 			content = fmt.Sprintf("%s\n%s · %s · %s\n%s\n\n%s", name(r), str(r["agent"]), str(r["status"]), str(r["target_name"]), str(r["workdir"]), str(r["pane_tail"]))
+			if ws, ok := r["workspace"].(map[string]any); ok {
+				content = "Worktree: " + str(ws["branch"]) + " · " + str(ws["state"]) + "\nBase: " + str(ws["base"]) + "\n\n" + content
+			}
 		case "tasks":
 			content = fmt.Sprintf("%s\n%s · %s\n\n%s", name(r), str(r["status"]), str(r["project_name"]), str(r["prompt"]))
 			if a, ok := r["attempt"].(map[string]any); ok {

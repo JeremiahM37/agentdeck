@@ -706,3 +706,7 @@ body.terminals-open { overflow: hidden; }
    switching views. Inert also keeps their inputs out of keyboard navigation. */
 #terminal-workspace[hidden] { display:flex !important; visibility:hidden; pointer-events:none; }
 .terminal-tabpanel[hidden] { display:block !important; visibility:hidden; pointer-events:none; }
+
+.session-worktree { margin:8px 0 12px; color:var(--ink-dim); font-size:12px; overflow-wrap:anywhere; }
+.session-worktree summary { cursor:pointer; }
+.session-worktree code, .session-worktree small { display:block; margin-top:6px; }

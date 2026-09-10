@@ -158,3 +158,32 @@ verifies Claude loads fixture history with its native fork flag and leaves the
 original unchanged. Claude need not write the new transcript before a new turn.
 The regular suite tests target lookup, pagination, workspace boundaries and
 actual tmux launch with scripted agents, without requiring either paid CLI.
+
+## Interactive Git worktrees
+
+In **New session**, select a project and enable **Isolate in a new Git worktree**.
+The terminal dashboard's `n` form has the same choice and also accepts an
+explicit repository directory. Choose a base branch/tag/commit (blank means
+committed `HEAD`) and a new branch name, or let AgentDeck allocate a unique name.
+The agent starts in a separate directory beside the repository. Uncommitted
+source edits are not copied; this mode starts a fresh conversation.
+
+Both interfaces show the branch, allocation state and working directory. On
+the web, expand the worktree line to see its path/base. After ending a session,
+use **Include ended and untracked sessions** (web) or `z` (TUI) to find it again.
+**More/Actions → Remove worktree** removes the directory only after its sessions
+and tmux terminals have left, and only when Git reports no changed, untracked
+or ignored files. The branch and committed work remain. There is no force-delete
+option. Cleanup checks the recorded repository, branch and ownership marker.
+
+`POST /api/sessions` accepts `"worktree":{"base":"main","branch":"feature/example"}`;
+it can use a project or an absolute `workdir` on a local/SSH target. Session
+responses include `workspace`. `DELETE /api/sessions/{id}/worktree` performs
+checked removal; ending/dismissing a session never removes its worktree.
+Allocation is recorded before Git runs; failed allocations remain in ended
+sessions with their planned path. A launch failure does not erase files.
+
+This is separate from saved-conversation forking: native conversation forks
+currently share their original directory. Interactive worktrees are not yet a
+multi-repository workspace, and setup hooks/profile templates remain separate
+work on the parity roadmap.

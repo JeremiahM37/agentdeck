@@ -18,11 +18,13 @@ import (
 	"github.com/JeremiahM37/agentdeck/internal/shellq"
 	"github.com/JeremiahM37/agentdeck/internal/store"
 	"github.com/JeremiahM37/agentdeck/internal/terminal"
+	"github.com/JeremiahM37/agentdeck/internal/worktree"
 )
 
 // sessionView is a session plus the two things a card always needs: how long it
 // has been quiet, and whether a handoff is currently being written.
 type sessionView struct {
+	Workspace *worktree.Interactive `json:"workspace,omitempty"`
 	*store.Session
 	IdleSeconds     float64 `json:"idle_seconds"`
 	UptimeSeconds   float64 `json:"uptime_seconds"`
@@ -36,6 +38,12 @@ func (s *Server) sessionView(row *store.Session) *sessionView {
 		IdleSeconds:     sessions.IdleFor(row).Seconds(),
 		UptimeSeconds:   store.Now() - row.CreatedAt,
 		HandoffInFlight: s.Sessions.InFlight(row.ID),
+	}
+	if row.WorktreeJSON != "" {
+		json.Unmarshal([]byte(row.WorktreeJSON), &v.Workspace)
+		if v.Workspace != nil {
+			v.Workspace.Token = ""
+		}
 	}
 	if wraps, err := s.DB.SessionWraps(row.ID); err == nil {
 		v.Wraps = len(wraps)
@@ -65,12 +73,13 @@ func (s *Server) getSession(w http.ResponseWriter, r *http.Request) {
 }
 
 type sessionIn struct {
-	ProjectID *int64 `json:"project_id"`
-	TargetID  int64  `json:"target_id"`
-	Name      string `json:"name"`
-	Agent     string `json:"agent"`
-	Model     string `json:"model"`
-	Workdir   string `json:"workdir"`
+	Worktree  *worktree.InteractiveOptions `json:"worktree"`
+	ProjectID *int64                       `json:"project_id"`
+	TargetID  int64                        `json:"target_id"`
+	Name      string                       `json:"name"`
+	Agent     string                       `json:"agent"`
+	Model     string                       `json:"model"`
+	Workdir   string                       `json:"workdir"`
 	// Resume picks the agent's own previous conversation back up, which is what
 	// you want when re-opening a project you were in yesterday.
 	Resume bool   `json:"resume"`
@@ -143,7 +152,7 @@ func (s *Server) createSession(w http.ResponseWriter, r *http.Request) {
 		yolo = *in.Yolo
 	}
 	sess, err := s.Sessions.Launch(r.Context(), sessions.LaunchOpts{
-		ProjectID: in.ProjectID, TargetID: in.TargetID, Name: in.Name,
+		Worktree: in.Worktree, ProjectID: in.ProjectID, TargetID: in.TargetID, Name: in.Name,
 		Agent: in.Agent, Model: in.Model, Workdir: in.Workdir,
 		Resume: in.Resume, Prime: prime, Scratch: in.Scratch, Yolo: yolo,
 		// a project's env is how a session reaches a local model, exactly as it

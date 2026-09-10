@@ -19,7 +19,7 @@ const state = {
   mobileColPinned: false, // ...and whether the user chose it themselves
   showAllDone: false,     // phone: finished lists are capped until asked
   diffWrap: localStorage.getItem("adk-diffwrap") === "1",
-  sessionFilter: "", settingsSection: sessionStorage.getItem('adk-settings-section') || "machines",
+  sessionFilter: "", showEndedSessions: false, endedSessions: [], settingsSection: sessionStorage.getItem('adk-settings-section') || "machines",
 };
 
 // Rotating a phone or dragging a desktop window across the breakpoint has to
@@ -121,8 +121,13 @@ async function refreshApprovals() {
   if (state.tab === "approvals") renderApprovals();
   if (state.sheet?.kind === "task") renderSheet();
 }
+let sessionRefreshVersion=0;
 async function refreshSessions() {
-  state.sessions = await api("/sessions");
+  const generation=++sessionRefreshVersion;
+  const rows = await api(state.showEndedSessions ? "/sessions?all=true" : "/sessions");
+  if(generation!==sessionRefreshVersion)return;
+  state.sessions = rows.filter(s => s.ended_at == null);
+  state.endedSessions = rows.filter(s => s.ended_at != null);
   const live = state.sessions.filter((s) => s.status !== "dead").length;
   const b = $("#sess-badge");
   b.hidden = live === 0;
@@ -526,6 +531,13 @@ function sessionCard(s) {
   if (["claude", "codex"].includes(s.agent)) {
     act("Saved conversations", "", () => openNativeHistory({id:s.id,name:s.name,api,onFork:()=>{refreshSessions();toast("Fork started. The original session keeps running.");}}));
   }
+  if (s.workspace) {
+    const info=document.createElement('details');info.className='session-worktree';const heading=document.createElement('summary');heading.textContent=`Worktree · ${s.workspace.branch} · ${s.workspace.state}`;const location=document.createElement('code');location.textContent=s.workspace.path;const base=document.createElement('small');base.textContent=`Base: ${s.workspace.base} · ${s.workspace.commit?.slice(0,12)||'not created'}`;info.append(heading,location,base);el.insertBefore(info,row);
+    if(s.workspace.state!=='removed') act("Remove worktree", "", async()=>{
+      if(!confirm(`Remove ${s.workspace.path}? End its sessions first. Changed, untracked or ignored files prevent removal. The Git branch is kept.`))return;
+      try{await api(`/sessions/${s.id}/worktree`,{method:'DELETE'});await refreshSessions();toast('Worktree removed; branch kept.');}catch(e){toast(e.message,true);}
+    });
+  }
   if (s.status === "dead") {
     act("Dismiss", "no", () => endSession(s, false));
   } else if (adopted) {
@@ -714,7 +726,7 @@ function renderHandoff(sheet) {
 function renderSessions() {
   const main = $("#view");
   if (main.querySelector('#sesslist') && (main.querySelector('.action-menu[open]') ||
-      main.contains(document.activeElement) && document.activeElement.matches('input,select'))) return;
+      main.contains(document.activeElement) && document.activeElement.matches('input:not(#sess-ended),select'))) return;
   const live = state.sessions.filter((s) => s.status !== "dead");
   main.innerHTML = `
     <div class="list wide">
@@ -724,18 +736,21 @@ function renderSessions() {
         <button class="b ok" id="sess-new">+ New session</button>
       </div>
       <input id="sess-search" class="f" type="search" placeholder="Find a session or project" aria-label="Find a session or project">
+      <label class="check"><input type="checkbox" id="sess-ended"> Include ended and untracked sessions</label>
       <div id="sesslist"></div>
     </div>`;
   $("#sess-new").onclick = () => { state.sheet = { kind: "new-session" }; renderSheet(); };
   $("#sess-discover").onclick = () => { state.sheet = { kind: "discover" }; renderSheet(); };
 
+  $('#sess-ended').checked=state.showEndedSessions;
+  $('#sess-ended').onchange=async e=>{state.showEndedSessions=e.target.checked;try{await refreshSessions();}catch(err){toast(err.message,true);}};
   $('#sess-search').value = state.sessionFilter;
   $('#sess-search').oninput = (e) => { state.sessionFilter = e.target.value; renderSessionList(); };
   renderSessionList();
 }
 
 function renderSessionList() {
-  const live = state.sessions.filter((s) => s.status !== 'dead');
+  const live = state.showEndedSessions ? [...state.sessions, ...state.endedSessions] : state.sessions.filter((s) => s.status !== 'dead');
   const list = $('#sesslist');
   list.replaceChildren();
   if (!live.length) {
@@ -773,6 +788,12 @@ function renderNewSession(sheet) {
     <label class="f">Model</label>
     <input class="f" id="ns-model" list="adk-models" placeholder="default" autocomplete="off">
     <datalist id="adk-models"></datalist>
+    <label class="f check"><input type="checkbox" id="ns-worktree"> Isolate in a new Git worktree</label>
+    <div id="ns-worktree-options" hidden>
+      <p class="subhint">A fresh session with separate files on a new branch. Starts from a committed revision; uncommitted edits stay in the original directory.</p>
+      <label class="f" for="ns-worktree-base">Base branch, tag or commit</label><input class="f" id="ns-worktree-base" placeholder="HEAD — current committed revision">
+      <label class="f" for="ns-worktree-branch">New branch name</label><input class="f" id="ns-worktree-branch" placeholder="Automatic unique branch">
+    </div>
     <label class="f">Start from</label>
     <select class="f" id="ns-start">
       <option value="fresh">Fresh context</option>
@@ -852,6 +873,11 @@ function renderNewSession(sheet) {
   if (state.projects.length) projBox.value = String(state.projects[0].id);
   const syncProjHint = () => {
     const blank = !projBox.value;
+    $('#ns-worktree').disabled=blank;
+    if(blank)$('#ns-worktree').checked=false;
+    $('#ns-worktree-options').hidden=!$('#ns-worktree').checked;
+    const resume=$('#ns-start option[value="resume"]');resume.disabled=$('#ns-worktree').checked;
+    if(resume.disabled && $('#ns-start').value==='resume')$('#ns-start').value='fresh';
     $("#ns-proj-hint").textContent = blank
       ? "Starts the agent in a fresh throwaway directory. Turn it into a project later."
       : "";
@@ -863,6 +889,7 @@ function renderNewSession(sheet) {
     syncHint();
   };
   projBox.onchange = syncProjHint;
+  $("#ns-worktree").onchange=syncProjHint;
 
   const hint = $("#ns-hint");
   let briefRequest = 0;
@@ -892,11 +919,13 @@ function renderNewSession(sheet) {
   syncProjHint();
   $("#ns-go").onclick = async () => {
     const mode = $("#ns-start").value;
+    $("#ns-go").disabled=true;
     try {
       const projectID = projBox.value ? +projBox.value : null;
       await api("/sessions", { method: "POST", body: {
         project_id: projectID,
         scratch: projectID === null,
+        worktree: $("#ns-worktree").checked ? {base:$("#ns-worktree-base").value.trim(),branch:$("#ns-worktree-branch").value.trim()} : null,
         name: $("#ns-name").value.trim(),
         agent: agentBox.value,
         model: $("#ns-model").value.trim(),
@@ -908,7 +937,7 @@ function renderNewSession(sheet) {
       closeSheet();
       switchTab("sessions");
       toast("Session started");
-    } catch (e) { toast(e.message, true); }
+    } catch (e) { toast(e.message, true); } finally {const button=$("#ns-go");if(button)button.disabled=false;}
   };
 }
 

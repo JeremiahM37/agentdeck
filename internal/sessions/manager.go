@@ -14,6 +14,7 @@ import (
 	"github.com/JeremiahM37/agentdeck/internal/memory"
 	"github.com/JeremiahM37/agentdeck/internal/shellq"
 	"github.com/JeremiahM37/agentdeck/internal/store"
+	"github.com/JeremiahM37/agentdeck/internal/worktree"
 )
 
 // Manager owns the lifecycle of every interactive session.
@@ -32,9 +33,10 @@ type Manager struct {
 	// before giving up and saying so.
 	HandoffTimeout time.Duration
 
-	sendMu   sync.Mutex
-	mu       sync.Mutex
-	handoffs map[int64]bool // sessions with a wrap in flight
+	workspaceMu sync.RWMutex
+	sendMu      sync.Mutex
+	mu          sync.Mutex
+	handoffs    map[int64]bool // sessions with a wrap in flight
 }
 
 // New builds a session manager.
@@ -56,6 +58,7 @@ func (m *Manager) publish(s *store.Session) {
 
 // LaunchOpts are the inputs of a new interactive session.
 type LaunchOpts struct {
+	Worktree  *worktree.InteractiveOptions
 	ProjectID *int64
 	TargetID  int64
 	Name      string
@@ -90,6 +93,8 @@ type LaunchOpts struct {
 
 // Launch starts an interactive agent and records it.
 func (m *Manager) Launch(ctx context.Context, o LaunchOpts) (*store.Session, error) {
+	m.workspaceMu.RLock()
+	defer m.workspaceMu.RUnlock()
 	target, err := m.DB.Target(o.TargetID)
 	if err != nil {
 		return nil, err
@@ -101,6 +106,9 @@ func (m *Manager) Launch(ctx context.Context, o LaunchOpts) (*store.Session, err
 			return nil, err
 		}
 		workdir = proj.RepoPath
+	}
+	if o.Worktree != nil && (o.Scratch || o.Resume || o.ResumeID != "" || o.ForkID != "" || o.ReservedID != 0) {
+		return nil, fmt.Errorf("an isolated worktree starts a fresh session; choose fresh context")
 	}
 	agent := o.Agent
 	if agent == "" {
@@ -160,6 +168,34 @@ func (m *Manager) Launch(ctx context.Context, o LaunchOpts) (*store.Session, err
 	}
 	if o.ResumeID != "" && len(spec.ResumeIDArgs) == 0 {
 		return nil, fmt.Errorf("agent %q does not support resuming an exact conversation", agent)
+	}
+
+	if o.Worktree != nil {
+		if target.Kind == "sandbox" {
+			m.end(sess.ID, StatusDead)
+			return nil, fmt.Errorf("interactive worktrees require a local or SSH target")
+		}
+		root, err := ex.Run(ctx, "git -C "+shellq.Quote(workdir)+" rev-parse --show-toplevel", executor.RunOpts{Timeout: 30})
+		if err != nil || !root.OK() {
+			m.end(sess.ID, StatusDead)
+			return nil, fmt.Errorf("worktree source must be an existing Git working directory")
+		}
+		plan := worktree.PlanInteractive(strings.TrimSpace(root.Stdout), sess.ID, *o.Worktree)
+		if err := m.DB.Update("sessions", sess.ID, map[string]any{"worktree_json": store.J(plan)}); err != nil {
+			m.end(sess.ID, StatusDead)
+			return nil, err
+		}
+		if err := worktree.RunInteractive(ctx, ex, "create", plan); err != nil {
+			plan.State = "failed"
+			m.DB.Update("sessions", sess.ID, map[string]any{"worktree_json": store.J(plan)})
+			m.end(sess.ID, StatusDead)
+			return nil, fmt.Errorf("session %d worktree: %w (allocation retained in ended sessions)", sess.ID, err)
+		}
+		workdir = plan.Path
+		if err := m.DB.Update("sessions", sess.ID, map[string]any{"workdir": workdir, "worktree_json": store.J(plan)}); err != nil {
+			m.end(sess.ID, StatusDead)
+			return nil, err
+		}
 	}
 	spec = m.Launcher.resolve(spec)
 	for _, arg := range o.ExtraArgs {

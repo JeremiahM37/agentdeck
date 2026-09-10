@@ -110,6 +110,9 @@ func (m *dashboard) actions() []dashboardAction {
 	switch kind {
 	case "sessions":
 		actions = []dashboardAction{op("Attach", "attach"), op("Companion shell", "shell"), op("Send message", "send"), op("Upload context file", "upload"), op("Review changes", "review"), op("Read history", "history"), op("Saved conversations / fork", "saved-history"), op("Browse files", "files"), op("Rename", "rename"), op("Move / edit session", "edit"), op("Request handoff", "handoff"), read("Handoff summaries", "/wraps")}
+		if ws, ok := r["workspace"].(map[string]any); ok && ws["state"] != "removed" {
+			actions = append(actions, dashboardAction{Label: "Remove worktree (keep branch)", Method: "DELETE", Path: path + "/worktree", Warning: "Remove " + str(ws["path"]) + "? End its sessions first. Changed, untracked or ignored files prevent removal. The branch is kept."})
+		}
 		actions = append(actions, dashboardAction{Label: "Interrupt agent", Method: "POST", Path: path + "/send", Body: map[string]any{"key": "C-c"}, Warning: "Send Ctrl-c to this session's current command?"})
 	case "tasks":
 		actions = []dashboardAction{op("Attach to attempt", "attach"), op("Companion shell", "shell"), op("Send message", "send"), op("Upload context file", "upload"), op("Review diff", "diff"), op("Review live changes", "review"), read("Messages", "/messages"), read("Events", "/events"), post("Dispatch in worktree", "/dispatch"), post("Take over as interactive session", "/takeover"), op("Request changes", "followup"), op("Commit changes", "commit"), post("Mark complete", "/complete"), op("Edit task", "edit")}
@@ -264,7 +267,7 @@ func formBody(fields []field) (map[string]any, error) {
 				return nil, fmt.Errorf("Choose a project")
 			}
 			out[f.Key] = []int64{n}
-		case f.Key == "resume" || f.Key == "brief" || f.Key == "yolo" || f.Key == "enabled" || f.Key == "dispatch":
+		case f.Key == "isolated" || f.Key == "resume" || f.Key == "brief" || f.Key == "yolo" || f.Key == "enabled" || f.Key == "dispatch":
 			out[f.Key] = v == "true"
 		default:
 			out[f.Key] = v
@@ -356,7 +359,7 @@ func (m *dashboard) newForm() tea.Cmd {
 	var fields []field
 	switch kind {
 	case "sessions":
-		fields = []field{{Key: "name", Label: "Session name", Required: true}, optionField("project_id", "Project", project, projects, false), optionField("target_id", "Target", target, targets, false), agent, {Key: "model", Label: "Model (blank uses default)"}, {Key: "workdir", Label: "Directory (blank uses project or scratch)"}, {Key: "prime", Label: "Initial prompt", Multiline: true}, boolField("resume", "Resume latest conversation", false), boolField("brief", "Include project brief", true), boolField("yolo", "Skip agent permission prompts", false)}
+		fields = []field{{Key: "name", Label: "Session name", Required: true}, optionField("project_id", "Project", project, projects, false), optionField("target_id", "Target", target, targets, false), agent, {Key: "model", Label: "Model (blank uses default)"}, {Key: "workdir", Label: "Directory (blank uses project or scratch)"}, {Key: "prime", Label: "Initial prompt", Multiline: true}, boolField("isolated", "Isolate files in a new Git worktree", false), {Key: "worktree_base", Label: "Worktree base (blank = committed HEAD)"}, {Key: "worktree_branch", Label: "New branch (blank = unique name)"}, boolField("resume", "Resume latest conversation", false), boolField("brief", "Include project brief", true), boolField("yolo", "Skip agent permission prompts", false)}
 	case "tasks":
 		fields = []field{{Key: "title", Label: "Task title", Required: true}, optionField("project_id", "Project", project, options(m.projects, ""), true), {Key: "prompt", Label: "Task prompt", Multiline: true, Required: true}, agent, {Key: "model", Label: "Model"}, {Key: "base_branch", Label: "Base branch (blank uses project default)"}, boolField("dispatch", "Dispatch now in an isolated worktree", true)}
 	case "routines":
@@ -368,6 +371,12 @@ func (m *dashboard) newForm() tea.Cmd {
 	}
 	return m.openForm("New "+strings.TrimSuffix(kind, "s"), fields, func(body map[string]any) tea.Cmd {
 		if kind == "sessions" {
+			if body["isolated"] == true {
+				body["worktree"] = map[string]any{"base": body["worktree_base"], "branch": body["worktree_branch"]}
+			}
+			delete(body, "isolated")
+			delete(body, "worktree_base")
+			delete(body, "worktree_branch")
 			if body["project_id"] != nil {
 				delete(body, "target_id")
 			}

@@ -204,3 +204,35 @@ func TestErrNotFoundRatherThanSQLNoRows(t *testing.T) {
 }
 
 func second[T any](_ T, err error) error { return err }
+
+func TestWorktreeMigrationPreservesExistingSessions(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "sessions-before-worktrees.db")
+	db, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	target, err := db.InsertTarget(&Target{Name: "existing", Kind: "local"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	session, err := db.InsertSession(&Session{TargetID: target.ID, Name: "Keep running", Agent: "codex", Workdir: "/saved/workspace", TmuxSession: "keep-this"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec("ALTER TABLE sessions DROP COLUMN worktree_json"); err != nil {
+		t.Fatal(err)
+	}
+	db.Close()
+	db, err = Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	got, err := db.Session(session.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Name != session.Name || got.TmuxSession != session.TmuxSession || got.Workdir != session.Workdir || got.WorktreeJSON != "" {
+		t.Fatalf("existing session changed: %+v", got)
+	}
+}
