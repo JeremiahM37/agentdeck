@@ -76,6 +76,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("PATCH /api/targets/{id}", s.patchTarget)
 	mux.HandleFunc("DELETE /api/targets/{id}", s.deleteTarget)
 	mux.HandleFunc("POST /api/targets/{id}/check", s.checkTarget)
+	mux.HandleFunc("GET /api/targets/{id}/agents", s.targetAgentCommands)
 
 	// ---- projects ----
 	mux.HandleFunc("GET /api/projects", s.listProjects)

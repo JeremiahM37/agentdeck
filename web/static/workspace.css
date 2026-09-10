@@ -137,3 +137,12 @@
   background: inherit; border-top: 1px solid var(--line);
   box-shadow: 0 -10px 18px -12px rgba(0,0,0,.6);
 }
+
+.agent-commands { width: min(620px, calc(100vw - 28px)); max-height: calc(100dvh - 32px); box-sizing: border-box; overflow: auto; padding: 20px; border: 1px solid var(--border); border-radius: 14px; background: var(--panel, #171a24); color: var(--text, #eee); }
+.agent-commands::backdrop { background: #0009; }
+.agent-commands header { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.agent-commands h2 { margin: 0; font-size: 18px; }
+.agent-commands p { line-height: 1.5; }
+.ac-results { list-style: none; padding: 0; }
+.ac-results li { display: grid; gap: 6px; padding: 12px 0; border-bottom: 1px solid var(--border); }
+.agent-commands p, .ac-results span, .ac-status { overflow-wrap: anywhere; }

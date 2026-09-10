@@ -174,7 +174,7 @@ func (m *dashboard) rowActions() []dashboardAction {
 	case "projects":
 		actions = []dashboardAction{op("Open project shell", "attach"), op("Review changes", "review"), read("Project brief", "/brief"), read("Notes", "/notes"), read("Handoffs", "/wraps"), read("Capabilities", "/capability"), op("Rename", "rename"), op("Edit project", "edit")}
 	case "targets":
-		actions = []dashboardAction{post("Check connection", "/check"), op("Rename", "rename"), op("Edit target", "edit")}
+		actions = []dashboardAction{post("Check connection", "/check"), read("Check agent commands", "/agents"), op("Rename", "rename"), op("Edit target", "edit")}
 	case "approvals":
 		actions = []dashboardAction{{Label: "Approve", Method: "POST", Path: path + "/decision", Body: map[string]any{"decision": "approved"}, Warning: "Allow the selected pending tool request?"}, {Label: "Deny", Method: "POST", Path: path + "/decision", Body: map[string]any{"decision": "denied"}}}
 	}
@@ -599,6 +599,25 @@ func (m *dashboard) readDetail(label string) tea.Cmd {
 	return m.readResource(label, "/term/"+terminalKind+"/"+rid+"/history?lines=1000")
 }
 func formatDetail(label string, data []byte) string {
+	if label == "Check agent commands" {
+		var rows []struct{ Name, State, Path, Detail string }
+		if json.Unmarshal(data, &rows) == nil {
+			lines := []string{"Default target commands. Project/profile overrides may differ.", "No agents started; login and model access are not checked.", ""}
+			for _, row := range rows {
+				state := map[string]string{"available": "Found", "missing": "Not found", "unchecked": "Not checked"}[row.State]
+				if state == "" {
+					state = "Not checked"
+				}
+				detail := row.Path
+				if detail == "" {
+					detail = row.Detail
+				}
+				lines = append(lines, row.Name+" · "+state, "  "+detail, "")
+			}
+			return strings.Join(lines, "\n")
+		}
+	}
+
 	if label == "Saved conversation" {
 		return nativeText(data)
 	}

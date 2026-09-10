@@ -349,3 +349,16 @@ phone safe-area space; fields remain reachable above it. Browser checks cover
 and returning to the top without losing that message. Real Git/tmux phone and
 desktop launch-and-cleanup flows also pass. Screenshot review caught and removed
 a strip of scrolling content beneath the first footer layout.
+
+### Target command inventory
+
+Settings → Targets → **Agent commands**, or the terminal dashboard’s target
+**Check agent commands** action, performs an on-demand lookup through the target’s
+local/SSH executor. The same read-only endpoint is available with
+`agentdeck api GET /targets/<id>/agents`.
+
+This checks default command resolution, including configured builtin binary
+paths; it does not run agents, version commands, trust hooks, authentication or
+model requests. Commands with shell syntax and custom agent PATH values are
+reported as unchecked. Project and launch-profile overrides may use a different
+command or environment; the inventory is informational and never blocks launch.

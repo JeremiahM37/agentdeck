@@ -1,3 +1,4 @@
+import { openAgentCommands } from "/agent-commands.js";
 import { SheetFocus } from "/sheet-focus.js";
 import { workspaceRepositories } from "/workspace-repositories.js";
 import { renderSessionGroups } from "/session-groups.js";
@@ -1259,12 +1260,13 @@ async function renderTargets() {
       <h3><span class="led ${led}"></span> ${esc(t.name)}</h3>
       <div class="sub">${esc(t.kind)}${t.host ? " · " + esc(t.user + "@" + t.host) : ""} · ${t.max_concurrent} slots${t.sandbox ? " · sandbox" : ""}</div>
       ${info.claude ? `<div class="sub" style="margin-top:5px">claude ${esc(info.claude)} · ${esc(info.git || "")}</div>` : ""}
-      <div class="btnrow"><button class="b">Probe</button></div>`;
+      <div class="btnrow"><button class="b">Probe</button><button class="b target-agents">Agent commands</button></div>`;
     $("button", el).onclick = async (ev) => {
       ev.target.textContent = "Probing…";
       try { await api(`/targets/${t.id}/check`, { method: "POST" }); await refreshMeta(); }
       catch (e) { toast(e.message, true); }
     };
+    $(".target-agents", el).onclick = () => openAgentCommands({api, target: t});
     list.appendChild(el);
   }
   projectPanel.appendChild(projectsCard());
