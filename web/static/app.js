@@ -1,4 +1,5 @@
 import { renderSessionGroups } from "/session-groups.js";
+import { CommandPalette } from "/command-palette.js";
 import { openNativeHistory } from "/native-history.js";
 import { openReview } from "/review.js";
 import { TerminalTabs } from "/terminal-tabs.js";
@@ -2267,6 +2268,27 @@ function openTerminal(url, label) {
   closeSheet();
   terminalTabs.open(url, label);
 }
+const commandPalette = new CommandPalette({
+  button: $('#command-open'),
+  error: message => toast(message, true),
+  refresh: () => Promise.all([refreshSessions(), refreshTasks(), refreshMeta()]),
+  items: () => {
+    const command = (id, title, run, detail = '', keywords = '', category = 'Actions') => ({id, title, run, detail, keywords, category});
+    const sheet = kind => { state.sheet = {kind}; renderSheet(); };
+    const settings = section => { state.settingsSection = section; switchTab('targets'); };
+    return [
+      command('new-session', 'New session', () => sheet('new-session'), 'Start an interactive agent', 'create launch'),
+      command('new-task', 'New task', () => sheet('new'), 'Plan or dispatch work', 'create'),
+      command('discover', 'Find running agents', () => sheet('discover'), 'Track existing tmux sessions', 'adopt restore untracked'),
+      command('routines', 'Routines', () => sheet('routines'), 'Saved jobs and active runs', 'schedule takeover'),
+      ...[['board','Task board'],['sessions','Sessions'],['terminals','Open terminals'],['deck','Deck'],['approvals','Approvals']].map(([tab,title]) => command(`nav-${tab}`,title,()=>switchTab(tab),'','navigate view','Navigate')),
+      ...[['machines','Targets','ssh remote local machines'],['projects','Projects','repositories workspaces'],['notifications','Notifications','alerts push'],['about','Usage and about','settings version costs']].map(([section,title,words]) => command(`settings-${section}`,title,()=>settings(section),'Settings',words,'Navigate')),
+      ...state.sessions.map(s => command(`session-${s.id}`,s.name || `Session ${s.id}`,()=>attachSession(s),[s.status,s.agent,s.group_path,s.project_name,s.target_name,s.workdir].filter(Boolean).join(' · '),'attach terminal '+(s.workspace?.branch||''),'Sessions')),
+      ...state.tasks.map(t => command(`task-${t.id}`,t.title || `Task ${t.id}`,()=>openTaskSheet(t.id),[t.status,t.project_name].filter(Boolean).join(' · '),`task ${t.id}`,'Tasks')),
+      ...state.projects.map(p => command(`project-${p.id}`,`Edit project: ${p.name}`,()=>openProjectEditor(p),p.repo_path,'repository workspace configuration','Projects')),
+    ];
+  },
+});
 const fitTerminalWorkspace = () => {
   const top = $("#topbar").getBoundingClientRect().bottom;
   document.documentElement.style.setProperty("--terminal-top", `${top}px`);
