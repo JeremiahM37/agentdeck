@@ -1,5 +1,6 @@
 import { renderSessionGroups } from "/session-groups.js";
 import { CommandPalette } from "/command-palette.js";
+import { openArchiveHistory } from "/archive-history.js";
 import { openNativeHistory } from "/native-history.js";
 import { openReview } from "/review.js";
 import { TerminalTabs } from "/terminal-tabs.js";
@@ -21,7 +22,7 @@ const state = {
   mobileColPinned: false, // ...and whether the user chose it themselves
   showAllDone: false,     // phone: finished lists are capped until asked
   diffWrap: localStorage.getItem("adk-diffwrap") === "1",
-  sessionFilter: "", sessionGrouping: sessionStorage.getItem("adk-session-grouping") || "none", showEndedSessions: false, endedSessions: [], settingsSection: sessionStorage.getItem('adk-settings-section') || "machines",
+  sessionFilter: "", sessionGrouping: sessionStorage.getItem("adk-session-grouping") || "none", archivedSessions: [], showArchivedSessions: false, showEndedSessions: false, endedSessions: [], settingsSection: sessionStorage.getItem('adk-settings-section') || "machines",
 };
 
 // Rotating a phone or dragging a desktop window across the breakpoint has to
@@ -127,10 +128,11 @@ const collapsedSessionGroups = new Set((()=>{try{const value=JSON.parse(sessionS
 let sessionRefreshVersion=0;
 async function refreshSessions() {
   const generation=++sessionRefreshVersion;
-  const rows = await api(state.showEndedSessions ? "/sessions?all=true" : "/sessions");
+  const [rows, archived] = await Promise.all([api(state.showEndedSessions ? "/sessions?all=true" : "/sessions"),state.showArchivedSessions ? api("/sessions?archived=true") : Promise.resolve([])]);
   if(generation!==sessionRefreshVersion)return;
   state.sessions = rows.filter(s => s.ended_at == null);
   state.endedSessions = rows.filter(s => s.ended_at != null);
+  state.archivedSessions = archived;
   const live = state.sessions.filter((s) => s.status !== "dead").length;
   const b = $("#sess-badge");
   b.hidden = live === 0;
@@ -469,7 +471,7 @@ function sessionCard(s) {
     <div class="scard-top">
       <span class="dot${live ? " live" : ""}"></span>
       <span class="nm"></span>
-      <span class="sstate">${s.ended_at != null ? (s.status === "dead" ? "ended" : "untracked") : (SESSION_LABEL[s.status] || esc(s.status))}</span>
+      <span class="sstate">${s.archived_at != null ? "archived" : s.ended_at != null ? (s.status === "dead" ? "ended" : "untracked") : (SESSION_LABEL[s.status] || esc(s.status))}</span>
       <span class="sidle">${s.status === "dead" ? "" : "quiet " + fmtDuration(s.idle_seconds)}</span>
     </div>
     <div class="smeta">
@@ -543,7 +545,11 @@ function sessionCard(s) {
       try{await api(`/sessions/${s.id}/worktree`,{method:'DELETE'});await refreshSessions();toast('Worktree removed; branch kept.');}catch(e){toast(e.message,true);}
     });
   }
-  if (s.ended_at != null) {
+  if (s.archived_at != null) {
+    act("Archived terminal output", "", ()=>openArchiveHistory({id:s.id,name:s.name,api}));
+    act("Unarchive record", "", async()=>{try{await api(`/sessions/${s.id}/archive`,{method:"DELETE"});await refreshSessions();toast("Record unarchived. Its terminal stays stopped; find it under Include ended and untracked.");}catch(e){toast(e.message,true);}});
+  } else if (s.ended_at != null) {
+    act("Archive stopped record", "", async()=>{try{await api(`/sessions/${s.id}/archive`,{method:"POST",body:{stop:false}});await refreshSessions();}catch(e){toast(e.message,true);}});
     if (s.can_restore) {
       actionRow = row;
       act("Track again", "ok", async () => {
@@ -571,6 +577,10 @@ function sessionCard(s) {
       endSession(s, true);
     });
   }
+  if(s.archived_at == null && s.ended_at == null) act("Stop and archive", "no", async()=>{
+    if(!confirm(`Stop "${s.name}" and move its record to Archive? This ends its terminal process. Captured output, saved conversations and worktree files are retained. Unarchiving does not restart it.`))return;
+    try{await api(`/sessions/${s.id}/archive`,{method:"POST",body:{stop:true}});await refreshSessions();toast("Session stopped and archived.");}catch(e){toast(e.message,true);}
+  });
   const projectLabel = document.createElement('label');
   projectLabel.className = 'menu-field';
   projectLabel.textContent = 'Project';
@@ -742,7 +752,7 @@ function renderHandoff(sheet) {
 function renderSessions() {
   const main = $("#view");
   if (main.querySelector('#sesslist') && (main.querySelector('.action-menu[open]') ||
-      main.contains(document.activeElement) && document.activeElement.matches('input:not(#sess-ended),select'))) {
+      main.contains(document.activeElement) && document.activeElement.matches('input,select:not(#sess-scope)'))) {
     // Keep the focused controls, but apply arriving results to their current query.
     if (!main.querySelector('.action-menu[open]')) renderSessionList();
     return;
@@ -757,14 +767,14 @@ function renderSessions() {
       </div>
       <input id="sess-search" class="f" type="search" placeholder="Search sessions, groups, branches or folders" aria-label="Find a session or project">
       <label class="session-grouping">Group by <select class="f" id="sess-grouping" aria-label="Group sessions by"><option value="none">None</option><option value="group">Named group</option><option value="project">Project</option><option value="target">Target</option></select></label>
-      <label class="check"><input type="checkbox" id="sess-ended"> Include ended and untracked sessions</label>
+      <label>Show <select id="sess-scope"><option value="active">Active sessions</option><option value="all">Include ended and untracked</option><option value="archived">Archived sessions</option></select></label>
       <div id="sesslist"></div>
     </div>`;
   $("#sess-new").onclick = () => { state.sheet = { kind: "new-session" }; renderSheet(); };
   $("#sess-discover").onclick = () => { state.sheet = { kind: "discover" }; renderSheet(); };
 
-  $('#sess-ended').checked=state.showEndedSessions;
-  $('#sess-ended').onchange=async e=>{state.showEndedSessions=e.target.checked;try{await refreshSessions();}catch(err){toast(err.message,true);}};
+  $('#sess-scope').value=state.showArchivedSessions?'archived':state.showEndedSessions?'all':'active';
+  $('#sess-scope').onchange=async e=>{state.showArchivedSessions=e.target.value==='archived';state.showEndedSessions=e.target.value!=='active';try{await refreshSessions();}catch(err){toast(err.message,true);}};
   $('#sess-grouping').value=state.sessionGrouping;
   $('#sess-grouping').onchange=e=>{state.sessionGrouping=e.target.value;sessionStorage.setItem('adk-session-grouping',state.sessionGrouping);renderSessionList();};
   $('#sess-search').value = state.sessionFilter;
@@ -773,11 +783,11 @@ function renderSessions() {
 }
 
 function renderSessionList() {
-  const live = state.showEndedSessions ? [...state.sessions, ...state.endedSessions] : state.sessions.filter((s) => s.status !== 'dead');
+  const live = state.showArchivedSessions ? state.archivedSessions : state.showEndedSessions ? [...state.sessions, ...state.endedSessions] : state.sessions.filter((s) => s.status !== 'dead');
   const list = $('#sesslist');
   list.replaceChildren();
   if (!live.length) {
-    list.innerHTML = `<div class="hint">No sessions yet.<br><br>
+    list.innerHTML = state.showArchivedSessions ? `<div class="hint">No archived sessions. Use “Stop and archive” in a session’s actions to keep it here for later.</div>` : `<div class="hint">No sessions yet.<br><br>
       Start one here, or hit <b>Find running agents</b> to adopt the Claude and Codex
       sessions already running in tmux — agentdeck will watch them from then on.</div>`;
     return;

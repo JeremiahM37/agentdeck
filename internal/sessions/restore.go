@@ -50,6 +50,9 @@ func (m *Manager) Restore(ctx context.Context, id int64) (*store.Session, error)
 	if err != nil {
 		return nil, err
 	}
+	if sess.ArchivedAt != nil {
+		return nil, fmt.Errorf("unarchive this record before restoring tracking")
+	}
 	if sess.EndedAt == nil {
 		return nil, fmt.Errorf("this session is already tracked")
 	}
@@ -78,7 +81,7 @@ func (m *Manager) Restore(ctx context.Context, id int64) (*store.Session, error)
 		if current.EndedAt == nil {
 			return fmt.Errorf("this session is already tracked")
 		}
-		if current.Status == StatusDead || current.TrackingIdentity != sess.TrackingIdentity || current.TargetID != sess.TargetID || current.TmuxSession != sess.TmuxSession {
+		if current.ArchivedAt != nil || current.Status == StatusDead || current.TrackingIdentity != sess.TrackingIdentity || current.TargetID != sess.TargetID || current.TmuxSession != sess.TmuxSession {
 			return fmt.Errorf("session changed while checking identity; retry recovery")
 		}
 		if _, err := m.DB.SessionByTmux(sess.TargetID, sess.TmuxSession); err == nil {

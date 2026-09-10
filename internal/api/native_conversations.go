@@ -65,7 +65,7 @@ func (s *Server) nativeConversations(w http.ResponseWriter, r *http.Request) {
 	}
 	spec, _ := sessions.Find(s.agentSpecs(), row.Agent)
 	out["fork_supported"], _ = json.Marshal(len(spec.ForkArgs) > 0)
-	out["resume_supported"], _ = json.Marshal(len(spec.ResumeIDArgs) > 0 && row.EndedAt != nil)
+	out["resume_supported"], _ = json.Marshal(len(spec.ResumeIDArgs) > 0 && row.EndedAt != nil && row.ArchivedAt == nil)
 	w.Header().Set("Cache-Control", "no-store")
 	writeJSON(w, 200, out)
 }

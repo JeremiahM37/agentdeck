@@ -29,7 +29,7 @@ def argv(t):
 def test_web_resumes_exact_stopped_conversation(page,real_terminal,agent,width):
     t=real_terminal;cid,file,_=prepare(t,agent);before=file.read_bytes();stopped(t)
     page.set_viewport_size({'width':width,'height':900});page.goto(t['url']+'/#sessions')
-    page.locator('#sess-ended').check()
+    page.locator('#sess-scope').select_option('all')
     title='Real terminal' if agent=='claude' else 'Native source'
     card=page.locator('.scard',has_text=title)
     card.locator('summary').first.click();card.get_by_role('button',name='Saved conversations',exact=True).click()

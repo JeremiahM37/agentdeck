@@ -37,7 +37,7 @@ type Manager struct {
 	workspaceMu sync.RWMutex
 	sendMu      sync.Mutex
 	mu          sync.Mutex
-	resuming    map[string]bool
+	transitions map[string]bool
 	handoffs    map[int64]bool // sessions with a wrap in flight
 }
 

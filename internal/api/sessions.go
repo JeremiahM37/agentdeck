@@ -54,13 +54,17 @@ func (s *Server) sessionView(row *store.Session) *sessionView {
 }
 
 func (s *Server) listSessions(w http.ResponseWriter, r *http.Request) {
-	rows, err := s.DB.Sessions(r.URL.Query().Get("all") == "true")
+	archived := r.URL.Query().Get("archived") == "true"
+	rows, err := s.DB.Sessions(archived || r.URL.Query().Get("all") == "true")
 	if err != nil {
 		respondErr(w, err)
 		return
 	}
 	out := make([]*sessionView, 0, len(rows))
 	for _, row := range rows {
+		if (row.ArchivedAt != nil) != archived {
+			continue
+		}
 		out = append(out, s.sessionView(row))
 	}
 	writeJSON(w, 200, out)

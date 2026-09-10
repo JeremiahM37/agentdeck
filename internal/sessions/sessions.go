@@ -103,7 +103,7 @@ const PollDelimiter = "\x1e---AGENTDECK-PANE---\x1e"
 // One exec per target per tick, not one per session: over SSH the round trip
 // dominates, and a board with a dozen live sessions would otherwise spend the
 // whole tick opening channels.
-func PollCommand(names []string) string { return buildPollCommand(names) }
+func PollCommand(names []string) string { return buildPollCommand(names, PaneLines) }
 
 // ParsePoll splits a batched capture back into per-session pane text.
 func ParsePoll(out string) map[string]string {

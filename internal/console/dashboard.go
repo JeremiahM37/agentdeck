@@ -104,7 +104,7 @@ type dashboard struct {
 	preferencePath                 string
 	collapsed                      map[string]bool
 	matched                        int
-	attention, ended               bool
+	attention, ended, archived     bool
 	preview                        viewport.Model
 	previewFocus                   bool
 	detailKey, detailTitle, detail string
@@ -169,8 +169,12 @@ func (m *dashboard) refresh() tea.Cmd {
 	if section == "approvals" {
 		path += "?status=pending"
 	}
-	if section == "sessions" && m.ended {
-		path += "?all=true"
+	if section == "sessions" {
+		if m.archived {
+			path += "?archived=true"
+		} else if m.ended {
+			path += "?all=true"
+		}
 	}
 	return func() tea.Msg {
 		b, e := c.JSON("GET", path, nil)
@@ -600,7 +604,11 @@ func (m *dashboard) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "w":
 			m.attention = !m.attention
 			m.filter()
+		case "A":
+			m.archived = !m.archived
+			return m, m.refresh()
 		case "z":
+			m.archived = false
 			m.ended = !m.ended
 			return m, m.refresh()
 		case "r":
@@ -760,7 +768,9 @@ func (m *dashboard) View() string {
 	if m.attention {
 		meta += " · needs attention"
 	}
-	if m.ended {
+	if m.archived {
+		meta += " · archive"
+	} else if m.ended {
 		meta += " · includes ended"
 	}
 	header += muted.Render(clip(meta, m.width)) + "\n"
@@ -917,7 +927,8 @@ const dashboardHelp = ` Keyboard shortcuts
  h             Full history     v        Review task diff
  H             Saved conversations / fork   O Earlier saved messages
  PgUp/PgDn     Scroll preview   Esc       Clear search / return to live preview
- z             Include ended sessions   r  Refresh now
+ z             Include ended sessions   A  Archive view
+ r             Refresh now
  7 Settings    8 Usage           9 Full API
 
  Forms: Tab/Shift-Tab move; ←/→ choose named options; Ctrl-s submit; Esc cancel.

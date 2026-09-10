@@ -15,7 +15,7 @@ type PollCapture struct {
 	Missing, Failed bool
 }
 
-func buildPollCommand(names []string) string {
+func buildPollCommand(names []string, lines int) string {
 	var command strings.Builder
 	seen := map[string]bool{}
 	for _, name := range names {
@@ -26,7 +26,7 @@ func buildPollCommand(names []string) string {
 		// Encode payloads so a pane cannot forge another pane's frame. Known tmux
 		// absence errors are distinct from socket permissions, bad arguments, etc.
 		fmt.Fprintf(&command, `if adk_poll_text=$(LC_ALL=C tmux capture-pane -p -t %s -S -%d 2>&1); then adk_poll_state=ok; else case "$adk_poll_text" in "can't find session:"*|"no server running on "*|"error connecting to "*" (No such file or directory)") adk_poll_state=missing; adk_poll_text='' ;; *) adk_poll_state=error ;; esac; fi; adk_poll_payload=$(printf '%%s' "$adk_poll_text" | base64) || exit 1; adk_poll_payload=$(printf '%%s' "$adk_poll_payload" | tr -d '\r\n') || exit 1; printf '%%s\t%%s\t%%s\n' %s "$adk_poll_state" "$adk_poll_payload"; `,
-			shellq.Quote("="+name+":"), PaneLines, shellq.Quote(base64.StdEncoding.EncodeToString([]byte(name))))
+			shellq.Quote("="+name+":"), lines, shellq.Quote(base64.StdEncoding.EncodeToString([]byte(name))))
 	}
 	fmt.Fprintf(&command, "printf '%%s\\n' %s", shellq.Quote(PollEnd))
 	return command.String()

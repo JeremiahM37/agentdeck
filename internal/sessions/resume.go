@@ -15,6 +15,9 @@ func (m *Manager) ResumeConversation(ctx context.Context, sourceID int64, cid, n
 	if err != nil {
 		return nil, err
 	}
+	if source.ArchivedAt != nil {
+		return nil, fmt.Errorf("unarchive this record before resuming its conversation")
+	}
 	if source.EndedAt == nil {
 		return nil, fmt.Errorf("stop the original session before resuming; use Fork to branch a running conversation")
 	}
@@ -23,16 +26,16 @@ func (m *Manager) ResumeConversation(ctx context.Context, sourceID int64, cid, n
 	}
 	key := fmt.Sprintf("%d/%s/%s", source.TargetID, source.Agent, cid)
 	m.mu.Lock()
-	if m.resuming == nil {
-		m.resuming = map[string]bool{}
+	if m.transitions == nil {
+		m.transitions = map[string]bool{}
 	}
-	if m.resuming[key] {
+	if m.transitions[key] {
 		m.mu.Unlock()
 		return nil, fmt.Errorf("this conversation is already being resumed")
 	}
-	m.resuming[key] = true
+	m.transitions[key] = true
 	m.mu.Unlock()
-	defer func() { m.mu.Lock(); delete(m.resuming, key); m.mu.Unlock() }()
+	defer func() { m.mu.Lock(); delete(m.transitions, key); m.mu.Unlock() }()
 
 	// Include released records: stopping tracking does not stop their processes.
 	rows, err := m.DB.Sessions(true)
@@ -65,7 +68,7 @@ func (m *Manager) ResumeConversation(ctx context.Context, sourceID int64, cid, n
 	if err != nil {
 		return nil, err
 	}
-	if current.EndedAt == nil || current.TargetID != source.TargetID || current.TmuxSession != source.TmuxSession || current.Workdir != source.Workdir || current.Agent != source.Agent {
+	if current.ArchivedAt != nil || current.EndedAt == nil || current.TargetID != source.TargetID || current.TmuxSession != source.TmuxSession || current.Workdir != source.Workdir || current.Agent != source.Agent {
 		return nil, fmt.Errorf("source session changed; refresh before resuming")
 	}
 	if name == "" {

@@ -299,3 +299,37 @@ func TestNativeResumeIdentitySurvivesDatabaseReopen(t *testing.T) {
 		t.Fatalf("list identity lost: %+v %v", rows, err)
 	}
 }
+
+func TestArchiveMetadataAndSnapshotSurviveReopen(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "archive.db")
+	db, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	target, err := db.InsertTarget(&Target{Name: "archive", Kind: "local"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	row, err := db.InsertSession(&Session{TargetID: target.ID, Name: "record", GroupPath: "Work/Archive"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := Now()
+	if err := db.Update("sessions", row.ID, map[string]any{"ended_at": now, "archived_at": now, "archive_text": "Retained output Ω"}); err != nil {
+		t.Fatal(err)
+	}
+	db.Close()
+	db, err = Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	got, err := db.Session(row.ID)
+	if err != nil || got.ArchivedAt == nil || *got.ArchivedAt != now || got.GroupPath != row.GroupPath {
+		t.Fatalf("archive metadata lost: %+v %v", got, err)
+	}
+	var snapshot string
+	if err := db.QueryRow("SELECT archive_text FROM sessions WHERE id=?", row.ID).Scan(&snapshot); err != nil || snapshot != "Retained output Ω" {
+		t.Fatalf("snapshot lost: %q %v", snapshot, err)
+	}
+}

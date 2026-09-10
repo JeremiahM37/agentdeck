@@ -127,8 +127,12 @@ func (m *dashboard) actions() []dashboardAction {
 	var actions []dashboardAction
 	switch kind {
 	case "sessions":
+		if r["archived_at"] != nil {
+			return []dashboardAction{{Label: "Unarchive record", Method: "DELETE", Path: path + "/archive"}, read("Archived terminal output", "/archive/history"), op("Saved conversations", "saved-history"), op("Rename", "rename"), op("Move to group", "group")}
+		}
+		archive := dashboardAction{Label: "Stop and archive", Method: "POST", Path: path + "/archive", Body: map[string]any{"stop": true}, Warning: "Stop this terminal process and move its record to Archive? Captured output, saved conversations and worktree files are retained. Unarchiving will not restart it."}
 		if r["ended_at"] != nil {
-			actions = []dashboardAction{op("Saved conversations", "saved-history"), op("Rename", "rename"), op("Move to group", "group"), read("Handoff summaries", "/wraps")}
+			actions = []dashboardAction{op("Saved conversations", "saved-history"), op("Rename", "rename"), op("Move to group", "group"), read("Handoff summaries", "/wraps"), {Label: "Archive stopped record", Method: "POST", Path: path + "/archive", Body: map[string]any{"stop": false}}}
 			if r["can_restore"] == true {
 				actions = append([]dashboardAction{post("Track again", "/restore")}, actions...)
 			}
@@ -138,6 +142,7 @@ func (m *dashboard) actions() []dashboardAction {
 		if ws, ok := r["workspace"].(map[string]any); ok && ws["state"] != "removed" {
 			actions = append(actions, dashboardAction{Label: "Remove worktree (keep branch)", Method: "DELETE", Path: path + "/worktree", Warning: "Remove " + str(ws["path"]) + "? End its sessions first. Changed, untracked or ignored files prevent removal. The branch is kept."})
 		}
+		actions = append(actions, archive)
 		actions = append(actions, dashboardAction{Label: "Interrupt agent", Method: "POST", Path: path + "/send", Body: map[string]any{"key": "C-c"}, Warning: "Send Ctrl-c to this session's current command?"})
 	case "tasks":
 		actions = []dashboardAction{op("Attach to attempt", "attach"), op("Companion shell", "shell"), op("Send message", "send"), op("Upload context file", "upload"), op("Review diff", "diff"), op("Review live changes", "review"), read("Messages", "/messages"), read("Events", "/events"), post("Dispatch in worktree", "/dispatch"), post("Take over as interactive session", "/takeover"), op("Request changes", "followup"), op("Commit changes", "commit"), post("Mark complete", "/complete"), op("Edit task", "edit")}

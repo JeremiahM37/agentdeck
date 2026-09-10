@@ -50,7 +50,7 @@ in this document is not a substitute for that evidence.
 | Find, group, monitor, attach, detach, reconnect | Live dashboard + PTY tests; browser real tmux resize/reconnect/dual-client tests. Broader multi-session and saved-view UX comparison remains. |
 | Review ongoing work | Live staged/working review implemented for TUI and web; real Git API tests cover renames, binary/untracked files, path boundaries and unchanged index; Playwright covers desktop/mobile, stale responses and retained attachment; actual SSH target proof passed. Full rollout verification is recorded in shared memory. |
 | Branch a conversation / isolated parallel work | Native Claude/Codex workspace conversation picker, paginated reader, and exact-ID fork implemented in TUI/web. API, real tmux/PTY and mobile browser tests cover boundaries, unchanged original history and explicit confirmation. Installed Codex fork persisted a distinct ID; installed Claude loaded saved history with its native fork flag (no new turn). Fresh interactive worktree creation/removal now exists in both interfaces, with durable allocation, ownership checks, retained branches, local/SSH Git proof and mobile/desktop/PTy tests. Native forks still share their original workspace; automatic terminal-to-native identity and combined fork/isolation remain gaps. |
-| Organize large fleets | Named group paths now persist across projects/targets and inherit on forks/handoffs. TUI and web have nested collapse/counts; terminal search reveals folded children and selection/collapse survive refresh. Web keeps per-tab display state. TUI grouping is remembered per section/server and folded named groups survive restarts, with real PTY restart coverage. Adopted sessions can restore their original record after stopping tracking, gated by a persistent tmux identity marker; real API, PTY and mobile/desktop tests cover retained metadata, concurrent requests and reused-name rejection. Unmarked live records capture identity when released; already-released records without identity still require explicit discovery. Profile configuration, archive/restart and global conversation search remain. |
+| Organize large fleets | Named group paths now persist across projects/targets and inherit on forks/handoffs. TUI and web have nested collapse/counts; terminal search reveals folded children and selection/collapse survive refresh. Web keeps per-tab display state. TUI grouping is remembered per section/server and folded named groups survive restarts, with real PTY restart coverage. Adopted sessions can restore their original record after stopping tracking, gated by a persistent tmux identity marker; real API, PTY and mobile/desktop tests cover retained metadata, concurrent requests and reused-name rejection. Unmarked live records capture identity when released; already-released records without identity still require explicit discovery. Archive now retains terminal snapshots and metadata, with explicit stop confirmation and unarchive without restart; exact native continuation is available separately. Profile configuration, automatic native identity and global conversation search remain. |
 | Agent setup | Custom commands exist; named agent settings, MCP/skills setup, installed-agent discovery and lifecycle need comparison with current upstream. |
 | Workspace setup | Task and single-repository interactive worktrees run on local/SSH targets. Multi-repository interactive workspaces and repo setup hooks need audit/implementation. |
 | Sandbox choices | Existing Proxmox sandbox path is not equivalent to portable Docker/Podman sandboxing; portability gap remains. |
@@ -131,3 +131,37 @@ Selection is explicit because a workspace can contain multiple conversations.
 This does not automatically infer IDs for agents launched outside AgentDeck,
 or detect a writer on an unrelated machine. Automatic authoritative identity
 capture, archive lifecycle, profiles and broader comparison workflows remain.
+
+
+## Archive and return later
+
+Choose **Stop and archive** from a live session's actions. Confirmation explicitly
+ends its terminal process. Captured output is saved before stopping it; tmux's
+session-local identity is checked and absence is verified before the record moves
+to Archive. Failed captures, changed identity and refused stops leave it visible.
+Worktree files, native transcripts and handoff records remain in place.
+
+The web **Show** selector switches between Active, Include ended/untracked and
+Archived. In the terminal dashboard press `A` for Archive, `z` for ended records.
+Archived records offer **Archived terminal output** and **Unarchive record**.
+Unarchiving restores the ended record without starting a process. Use Saved
+conversations afterward to continue an exact history when supported.
+
+Already-stopped records use **Archive stopped record**. An untracked terminal
+that is still running must be tracked again before AgentDeck can stop/archive it.
+Archive is separate from Stop tracking, which continues to leave processes alone.
+Snapshots contain up to 10,000 scrollback lines plus the visible screen, capped
+at 2 MiB; if the terminal had already stopped, its last recorded preview is
+clearly labeled. An existing archive snapshot survives unarchive/rearchive.
+
+Scripts use POST `/api/sessions/ID/archive` with `{"stop":true}` for a live
+terminal or `{"stop":false}` for a stopped record, DELETE the same route to
+unarchive, GET `/api/sessions?archived=true` to list archived records, and GET
+`/api/sessions/ID/archive/history` to read captured output. Ordinary session lists,
+including `?all=true`, exclude archived records. This is an organizational filter,
+not an access-control boundary.
+
+Action menus now calculate their available space around the desktop sidebar,
+header and mobile bottom navigation. The archive browser test reproduced a
+visible-but-unclickable desktop action underneath the sidebar; the corrected
+menu remains within the usable area on desktop and phone, including after resize.
