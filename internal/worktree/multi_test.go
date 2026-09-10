@@ -474,6 +474,16 @@ func testMultiWorkspaceSupervisorDeath(t *testing.T, cancel bool) {
 		if _, err := os.Stat(filepath.Join(plan.Repositories[0].Worktree.Path, "file")); err != nil {
 			t.Fatal(err)
 		}
+		if err := RunInteractive(context.Background(), ex, "recover", plan); err != nil {
+			t.Fatalf("cancelled allocation could not be validated: %v", err)
+		}
+		if plan.Repositories[0].Worktree.State != "ready" {
+			t.Fatal("recovered child was not usable")
+		}
+		if err := RunInteractive(context.Background(), ex, "remove", plan); err != nil {
+			t.Fatalf("recovered clean allocation could not be removed: %v", err)
+		}
+		git("rev-parse", plan.Branch)
 		return
 	}
 	os.WriteFile(release, []byte("release"), 0600)

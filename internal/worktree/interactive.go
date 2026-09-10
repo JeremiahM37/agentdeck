@@ -57,7 +57,12 @@ func PlanInteractive(repo string, id int64, o InteractiveOptions) *Interactive {
 var interactiveScript string
 
 //go:embed setup_control.py
-var setupControlScript string
+var setupControlRaw string
+
+var setupControlScript = func() string {
+	source, _ := json.Marshal(setupControlRaw)
+	return "setup_control_source = " + string(source) + "\n" + setupControlRaw
+}()
 
 func RunInteractive(ctx context.Context, ex executor.Executor, action string, plan *Interactive) error {
 	return RunInteractiveWithTimeout(ctx, ex, action, plan, 120)

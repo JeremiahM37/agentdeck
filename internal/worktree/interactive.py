@@ -8,7 +8,13 @@ control=None
 def git(repo,*args,cancel_check=True):
  if control is not None and cancel_check:
   control.check()
-  child=subprocess.Popen(['git','-C',repo,*args],stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True,start_new_session=not inherited_lock)
+  command=['git','-C',repo,*args]
+  if not inherited_lock and args[:2]==('worktree','add'):
+   # A detached monitor retains the operation lock and cancellation observer
+   # even if this launch supervisor dies while Git's checkout hook runs.
+   monitor=setup_control_source+"\nimport sys\nc=SetupControl(json.loads(sys.argv[1]),create=False)\nc.check()\ng=subprocess.Popen(sys.argv[4:],stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True,pass_fds=(int(sys.argv[2]),))\no,e=c.wait(g,float(sys.argv[3]),os.getpgrp())\nsys.stdout.write(o);sys.stderr.write(e);sys.exit(g.returncode)"
+   command=['python3','-c',monitor,json.dumps(p),str(control.lease_file.fileno()),str(git_timeout),*command]
+  child=subprocess.Popen(command,stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True,start_new_session=not inherited_lock,pass_fds=inherited_lock or ((control.lease_file.fileno(),) if control.lease_file else ()))
   stdout,stderr=control.wait(child,git_timeout,os.getpgrp() if inherited_lock else None)
   r=subprocess.CompletedProcess(child.args,child.returncode,stdout,stderr)
  else:r=subprocess.run(['git','-C',repo,*args],capture_output=True,text=True,timeout=git_timeout,pass_fds=inherited_lock)
@@ -27,7 +33,7 @@ def claim_created_worktree(repo,dest,common,commit):
  with owner.open('x') as file:file.write(p['token'])
 try:
  if operation=='create':
-  if not inherited_lock:control=SetupControl(p)
+  if not inherited_lock:control=SetupControl(p);control.lease()
   elif len(sys.argv)>5:control=SetupControl(json.loads(sys.argv[5]))
   if control:control.check()
  repo=os.path.realpath(p['repo']);dest=os.path.realpath(p['path'])
@@ -39,6 +45,7 @@ try:
   commit=git(repo,'rev-parse','--verify','--end-of-options',p['base']+'^{commit}')
   if os.path.lexists(p['path']):raise ValueError('Worktree path already exists; nothing was changed')
   pathlib.Path(dest).parent.mkdir(parents=True,exist_ok=True)
+  if control and not inherited_lock:control.allocation(dict(p,repo=repo,path=dest,commit=commit))
   try:
    git(repo,'worktree','add','-b',p['branch'],'--',dest,commit)
   except ValueError as failure:
@@ -54,6 +61,37 @@ try:
   owner=pathlib.Path(git(dest,'rev-parse','--absolute-git-dir'))/'agentdeck-owner'
   with owner.open('x') as file:file.write(p['token'])
   p.update(repo=repo,path=dest,commit=commit,state='ready')
+ elif operation in ('recover','check-recover'):
+  if os.path.islink(p['path']):raise ValueError('Allocation path was replaced by a symlink')
+  if not inherited_lock:
+   recovery=SetupControl(p,create=False);recovery.lease(create=False)
+   recorded=recovery.allocation()
+   if not recorded:raise ValueError('The original checkout revision was not recorded; inspect this allocation manually')
+   if any(recorded.get(k)!=p.get(k) for k in ('token','branch')):raise ValueError('Recorded allocation identity does not match')
+   if recorded.get('repo')!=repo or recorded.get('path')!=dest:raise ValueError('Recorded allocation paths do not match')
+   if not isinstance(recorded.get('commit'),str) or not re.fullmatch('[0-9a-f]{40}|[0-9a-f]{64}',recorded['commit']):raise ValueError('Recorded checkout revision is unavailable')
+   if p.get('commit') and p['commit']!=recorded['commit']:raise ValueError('Recorded checkout revisions do not match')
+   p['commit']=recorded['commit']
+  if not os.path.isdir(dest):
+   if os.path.lexists(p['path']):raise ValueError('Allocation path was replaced')
+   registrations=git(repo,'worktree','list','--porcelain','-z').split('\0')
+   if any(entry=='worktree '+dest for entry in registrations):raise ValueError('Missing checkout is still registered with Git; inspect it manually')
+   p['state']='removed';print(json.dumps({'workspace':p}));sys.exit(0)
+  if git(dest,'rev-parse','--show-toplevel')!=dest:raise ValueError('Directory is not the recorded worktree root')
+  if git(dest,'rev-parse','--path-format=absolute','--git-common-dir')!=common:raise ValueError('Worktree repository does not match')
+  if git(dest,'symbolic-ref','--quiet','--short','HEAD')!=p['branch']:raise ValueError('Worktree branch changed; inspect it manually')
+  panes=subprocess.run(['tmux','list-panes','-a','-F','#{pane_current_path}'],capture_output=True,text=True,timeout=10)
+  if panes.returncode and not any(x in panes.stderr.lower() for x in ['no server running','no such file or directory']):raise ValueError('Could not check active terminals before recovery')
+  if any(within(cwd,dest) for cwd in panes.stdout.splitlines() if cwd):raise ValueError('A terminal is using this allocation; leave it before recovery')
+  owner=pathlib.Path(git(dest,'rev-parse','--absolute-git-dir'))/'agentdeck-owner'
+  if os.path.lexists(owner):
+   fd=os.open(owner,os.O_RDONLY|os.O_NOFOLLOW|os.O_NONBLOCK)
+   with os.fdopen(fd) as file:
+    if not stat.S_ISREG(os.fstat(file.fileno()).st_mode) or file.read()!=p['token']:raise ValueError('Worktree ownership does not match')
+  else:
+   if not p.get('commit') or git(dest,'rev-parse','HEAD')!=p['commit']:raise ValueError('Worktree revision changed; ownership was not recovered')
+   if operation=='recover':claim_created_worktree(repo,dest,common,p['commit'])
+  p.update(repo=repo,path=dest,state='ready');p.pop('error',None)
  elif operation in ('remove','check-remove'):
   if not os.path.isdir(dest):
    registrations=git(repo,'worktree','list','--porcelain','-z').split('\0')

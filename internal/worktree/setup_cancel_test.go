@@ -106,7 +106,7 @@ with tempfile.TemporaryDirectory() as folder:
  victim.write_text('untouched')
  control.path.symlink_to(victim)
  try:SetupControl(p)
- except OSError:pass
+ except (OSError,ValueError):pass
  else:raise AssertionError('followed cancellation symlink')
  assert victim.read_text()=='untouched'
  control.path.unlink()

@@ -143,6 +143,9 @@ def run_child(entry, operation):
         result = json.loads(stdout)
     except ValueError:
         raise ValueError('Repository worker did not return a result: ' + stderr.strip())
+    if operation == 'check-recover':
+        if child.returncode:raise ValueError(result.get('error') or 'Repository validation failed')
+        return
     if result.get('workspace'):
         result['workspace']['base'] = entry['worktree']['base']
         entry['worktree'] = result['workspace']
@@ -152,7 +155,7 @@ def run_child(entry, operation):
 
 
 try:
-    if action not in ('create', 'remove', 'check-remove', 'status'):
+    if action not in ('create', 'remove', 'check-remove', 'status', 'recover'):
         raise ValueError('Unknown workspace operation')
     if action == 'status':
         # The writer atomically replaces its receipt, so readers can inspect
@@ -204,6 +207,13 @@ try:
         owned = True
         busy()
         check_terminals()
+        if action == 'recover':
+            for entry in p['repositories']:run_child(entry,'check-recover')
+            for entry in p['repositories']:run_child(entry,'recover')
+            p.update(state='failed',error='Interrupted checkout validated; files retained for inspection')
+            save()
+            print(json.dumps({'workspace':p}))
+            sys.exit(0)
         allowed = {'.agentdeck-lock', '.agentdeck-state.json', '.agentdeck-process.json'}
         allowed.update(pathlib.Path(r['worktree']['path']).name for r in p['repositories'])
         if set(os.listdir(root)) - allowed:
