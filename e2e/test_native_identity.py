@@ -62,6 +62,8 @@ def test_web_selects_live_conversation_over_newer_neighbor(page,real_terminal,ag
     expect(dialog.locator('.nh-select option:checked')).to_contain_text('Current terminal')
     dialog.locator('.nh-select').select_option(decoy.stem)
     dialog.locator('.nh-refresh').click()
+    expect(dialog.locator('.nh-fork')).to_be_enabled()
+    expect(dialog.locator('.nh-status')).to_contain_text(decoy.stem)
     expect(dialog.locator('.nh-select')).to_have_value(decoy.stem)
     assert dialog.evaluate('(e)=>e.scrollWidth<=e.clientWidth')
     page.screenshot(path=f'/tmp/agentdeck-native-identity-{width}.png')
