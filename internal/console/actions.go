@@ -13,7 +13,7 @@ func (u *UI) item(kind, id string, row map[string]any) error {
 		b, _ := json.Marshal(row)
 		u.show(b)
 		options := map[string]string{
-			"sessions":  "attach · shell · read · send · interrupt · upload · files · rename (edit) · handoff · wraps · promote · delete",
+			"sessions":  "attach · shell · read · send · interrupt · upload · files · rename (edit) · handoff · wraps · promote · restore (tracking) · delete",
 			"tasks":     "attach · messages · send · upload · events · diff · dispatch · takeover · followup · complete · cancel · commit · cleanup · edit · delete",
 			"routines":  "run · enable · disable · edit · delete (running tasks appear in Tasks; choose takeover there)",
 			"projects":  "attach · brief · notes · wraps · capability · edit · delete",
@@ -95,7 +95,7 @@ func (u *UI) item(kind, id string, row map[string]any) error {
 			e = u.request("GET", "/term/"+strings.TrimSuffix(kind, "s")+"/"+id+"/files", nil)
 		case "handoff", "promote", "followup", "commit":
 			e = u.edit("POST", path+"/"+pick)
-		case "dispatch", "takeover", "complete", "cancel", "run", "check":
+		case "restore", "dispatch", "takeover", "complete", "cancel", "run", "check":
 			e = u.request("POST", path+"/"+pick, map[string]any{})
 		case "enable", "disable":
 			e = u.request("PATCH", path, map[string]any{"enabled": pick == "enable"})

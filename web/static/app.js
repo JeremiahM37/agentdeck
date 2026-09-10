@@ -469,7 +469,7 @@ function sessionCard(s) {
     <div class="scard-top">
       <span class="dot${live ? " live" : ""}"></span>
       <span class="nm"></span>
-      <span class="sstate">${SESSION_LABEL[s.status] || esc(s.status)}</span>
+      <span class="sstate">${s.ended_at != null ? (s.status === "dead" ? "ended" : "untracked") : (SESSION_LABEL[s.status] || esc(s.status))}</span>
       <span class="sidle">${s.status === "dead" ? "" : "quiet " + fmtDuration(s.idle_seconds)}</span>
     </div>
     <div class="smeta">
@@ -511,7 +511,7 @@ function sessionCard(s) {
     b.className = `b ${cls}`; b.textContent = label; b.onclick = fn;
     actionRow.appendChild(b);
   };
-  if (s.status !== "dead") {
+  if (s.ended_at == null && s.status !== "dead") {
     // the whole point: one tap into the real terminal, same tmux, same chat
     act("⌨ Attach", "attach", () => attachSession(s));
     act("Chat", "grow", () => openConversation({kind:"session",id:s.id,name:s.name,api,attachMic,onClose:refreshSessions}));
@@ -543,7 +543,18 @@ function sessionCard(s) {
       try{await api(`/sessions/${s.id}/worktree`,{method:'DELETE'});await refreshSessions();toast('Worktree removed; branch kept.');}catch(e){toast(e.message,true);}
     });
   }
-  if (s.status === "dead") {
+  if (s.ended_at != null) {
+    if (s.can_restore) {
+      actionRow = row;
+      act("Track again", "ok", async () => {
+        try { await api(`/sessions/${s.id}/restore`, {method:"POST",body:{}}); await refreshSessions(); toast("Tracking restored. Your session keeps running."); }
+        catch (e) { toast(e.message, true); }
+      });
+      actionRow = panel;
+    } else {
+      act("Find running sessions", "", () => { state.sheet={kind:"discover"}; renderSheet(); });
+    }
+  } else if (s.status === "dead") {
     act("Dismiss", "no", () => endSession(s, false));
   } else if (adopted) {
     act("Stop tracking", "", () => endSession(s, false));

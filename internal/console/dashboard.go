@@ -681,6 +681,12 @@ func (m *dashboard) attachSelected(shell bool) tea.Cmd {
 	}
 	kind := strings.TrimSuffix(sections[m.section], "s")
 	rid := id(r)
+	if kind == "session" && r["ended_at"] != nil {
+		m.menu = true
+		m.menuIndex = 0
+		m.notice = "Restore tracking before attaching, or use f to find running sessions."
+		return nil
+	}
 	if kind == "task" {
 		a, _ := r["attempt"].(map[string]any)
 		if a == nil {
