@@ -137,6 +137,11 @@ def test_session_sheet_keeps_keyboard_focus_and_returns_to_opener(page, server):
     expect(profiles).not_to_be_visible()
     expect(sheet.locator('#ns-manage-profiles')).to_be_focused()
     expect(sheet.get_by_label('Name', exact=True)).to_have_value('Keep this draft')
+    # The live session refresh replaces the opener while the form is open.
+    # Escape must return to its replacement, not a detached button or the body.
+    prior_opener = opener.element_handle()
+    page.wait_for_function('(el)=>!el.isConnected', arg=prior_opener, timeout=8000)
+    expect(sheet.get_by_label('Name', exact=True)).to_have_value('Keep this draft')
     page.keyboard.press('Escape')
     expect(sheet).not_to_be_visible()
     expect(opener).to_be_focused()
