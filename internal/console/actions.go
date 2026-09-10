@@ -16,7 +16,7 @@ func (u *UI) item(kind, id string, row map[string]any) error {
 			"sessions":  "attach · shell · read · send · interrupt · upload · files · rename (edit) · handoff · wraps · promote · restore (tracking) · delete",
 			"tasks":     "attach · messages · send · upload · events · diff · dispatch · takeover · followup · complete · cancel · commit · cleanup · edit · delete",
 			"routines":  "run · enable · disable · edit · delete (running tasks appear in Tasks; choose takeover there)",
-			"projects":  "attach · brief · notes · wraps · capability · MCP settings (add / edit / remove) · edit · delete",
+			"projects":  "attach · brief · notes · wraps · capability · MCP settings (add / edit / remove) · skills (attach / detach) · edit · delete",
 			"targets":   "check · edit · delete",
 			"approvals": "allow · deny",
 		}
@@ -33,6 +33,8 @@ func (u *UI) item(kind, id string, row map[string]any) error {
 			e = u.edit("PATCH", path)
 		case "mcp":
 			e = u.mcpSettings(path)
+		case "skills":
+			e = u.skillsSettings(path, row)
 		case "attach", "shell":
 			terminalKind := strings.TrimSuffix(kind, "s")
 			terminalID := id

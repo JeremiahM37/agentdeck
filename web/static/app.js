@@ -1485,6 +1485,118 @@ function projectCard(p) {
   };
   drawMCP();
   loadMCP();
+
+  // Project skills are target-local. The catalog is queried from the selected
+  // target for the selected provider, while attachments are the project's
+  // durable intent. Keep these as separate loads so a discovery failure never
+  // hides the attachments the operator may need to remove.
+  const skillsSection = document.createElement("section");
+  skillsSection.className = "project-skills";
+  skillsSection.innerHTML = `<h4>Project skills</h4>
+    <p class="sub">Choose a provider, search the target's named skill catalog, then attach or detach skills for this project. New launches use the saved attachments; running processes are not restarted automatically.</p>
+    <div class="skills-controls">
+      <label class="f">Provider<select class="f skills-agent" aria-label="Skills provider"><option value="claude">Claude Code</option><option value="codex">Codex</option></select></label>
+      <button class="b skills-reload" type="button">Reload</button>
+    </div>
+    <label class="f">Search catalog<input class="f skills-search" placeholder="name, source, description" autocomplete="off"></label>
+    <div class="sub skills-status" role="status" aria-live="polite">Loading skills…</div>
+    <div class="skills-attached"><h5>Attached</h5><div class="skills-attached-list"></div></div>
+    <div class="skills-catalog"><h5>Available on target</h5><div class="skills-catalog-list"></div></div>
+    <details class="skills-sources"><summary>Extra target skill directories</summary>
+      <p class="sub">One absolute directory per line. These paths are read on the project target during discovery.</p>
+      <textarea class="f skills-source-input" rows="3" spellcheck="false" aria-label="Extra target skill directories"></textarea>
+      <div class="btnrow"><button class="b skills-source-save" type="button">Save directories</button><button class="b no skills-source-clear" type="button">Clear directories</button></div>
+      <div class="sub skills-source-status" role="status"></div>
+    </details>`;
+  el.appendChild(skillsSection);
+  const skillAgent = $(".skills-agent", skillsSection);
+  const skillSearch = $(".skills-search", skillsSection);
+  const skillStatus = $(".skills-status", skillsSection);
+  const attachedList = $(".skills-attached-list", skillsSection);
+  const catalogList = $(".skills-catalog-list", skillsSection);
+  const sourceInput = $(".skills-source-input", skillsSection);
+  const sourceStatus = $(".skills-source-status", skillsSection);
+  let skillCatalog = [], skillAttachments = [], skillGeneration = 0, skillsLoading = false;
+  const configuredSources = () => {
+    try { return JSON.parse(p.skill_sources_json || "[]"); } catch { return []; }
+  };
+  sourceInput.value = configuredSources().join("\n");
+  skillAgent.value = p.default_agent === "codex" ? "codex" : "claude";
+  const drawSkills = () => {
+    const attachedIDs = new Set(skillAttachments.map((a) => a.skill_id));
+    attachedList.innerHTML = "";
+    if (!skillAttachments.length) {
+      attachedList.innerHTML = '<div class="sub skills-empty">No skills attached for this provider.</div>';
+    } else for (const a of skillAttachments) {
+      const row = document.createElement("div"); row.className = "skill-row attached-skill";
+      row.innerHTML = `<span class="skill-main"><b></b><small></small></span><button class="b no skill-detach" type="button">Detach</button>`;
+      $("b", row).textContent = a.entry_name || a.skill_id;
+      $("small", row).textContent = [a.source_id || "target", a.skill_id].filter(Boolean).join(" · ");
+      $(".skill-detach", row).onclick = async () => {
+      const rowGeneration = skillGeneration, rowAgent = skillAgent.value;
+      const button = $(".skill-detach", row); button.disabled = skillsLoading || true; skillStatus.textContent = "Detaching…";
+      if (rowGeneration !== skillGeneration || rowAgent !== skillAgent.value) { skillStatus.textContent = "Provider changed; reload the selected provider before detaching."; return; }
+        try { const result = await api(`/projects/${p.id}/skills/${a.id}`, {method:"DELETE"});
+          skillAttachments = skillAttachments.filter((x) => x.id !== a.id); drawSkills();
+          skillStatus.textContent = result?.preserved?.length ? "Detached; target content was preserved." : "Skill detached.";
+        } catch (e) { button.disabled = false; skillStatus.textContent = "Could not detach: " + e.message; }
+      };
+      attachedList.appendChild(row);
+    }
+    const q = (skillSearch.value || "").trim().toLowerCase();
+    catalogList.innerHTML = "";
+    const rows = skillCatalog.filter((s) => !q || [s.name, s.entry_name, s.source, s.description, s.id].some((v) => String(v || "").toLowerCase().includes(q)));
+    if (!rows.length) { catalogList.innerHTML = `<div class="sub skills-empty">${skillCatalog.length ? "No catalog entries match this search." : "No skills discovered on this target."}</div>`; return; }
+    for (const s of rows) {
+      const row = document.createElement("div"); row.className = "skill-row catalog-skill";
+      row.innerHTML = `<span class="skill-main"><b></b><small></small></span><button class="b ok skill-attach" type="button"></button>`;
+      $("b", row).textContent = s.name || s.entry_name || s.id;
+      $("small", row).textContent = [s.source || "target", s.description].filter(Boolean).join(" · ");
+      const button = $(".skill-attach", row);
+      const attached = attachedIDs.has(s.id);
+      button.textContent = attached ? "Attached" : "Attach"; button.disabled = attached || skillsLoading;
+      const rowGeneration = skillGeneration, rowAgent = skillAgent.value;
+      button.onclick = async () => {
+        if (rowGeneration !== skillGeneration || rowAgent !== skillAgent.value || skillsLoading) { skillStatus.textContent = "Provider changed; reload the selected provider before attaching."; return; }
+        button.disabled = true; skillStatus.textContent = `Attaching ${s.name || s.entry_name || s.id}…`;
+        try { const result = await api(`/projects/${p.id}/skills`, {method:"POST", body:{agent:skillAgent.value, skill_id:s.id}});
+          if (result?.attachment) skillAttachments = [...skillAttachments, result.attachment];
+          drawSkills(); skillStatus.textContent = "Skill attached.";
+        } catch (e) { button.disabled = false; skillStatus.textContent = e.status === 409 ? "Skill is already attached or its target destination is occupied; reload to review." : "Could not attach: " + e.message; }
+      };
+      catalogList.appendChild(row);
+    }
+  };
+  const loadSkills = async () => {
+    const agent = skillAgent.value, generation = ++skillGeneration;
+    skillCatalog = []; skillAttachments = [];
+    skillsLoading = true; skillStatus.textContent = `Loading ${agent} skills…`; drawSkills();
+    $(".skills-reload", skillsSection).disabled = true;
+    const [available, attached] = await Promise.allSettled([
+      api(`/skills?project_id=${p.id}&agent=${encodeURIComponent(agent)}`),
+      api(`/projects/${p.id}/skills?agent=${encodeURIComponent(agent)}`)]);
+    if (generation !== skillGeneration || agent !== skillAgent.value) return;
+    const errors = [];
+    if (available.status === "fulfilled") skillCatalog = available.value.skills || [];
+    else errors.push("catalog: " + available.reason.message);
+    if (attached.status === "fulfilled") skillAttachments = attached.value.attachments || [];
+    else errors.push("attachments: " + attached.reason.message);
+    skillsLoading = false; drawSkills();
+    skillStatus.textContent = errors.length ? "Could not load " + errors.join("; ") + ". Use Reload to retry." : `${skillCatalog.length} available · ${skillAttachments.length} attached.`;
+    $(".skills-reload", skillsSection).disabled = false;
+  };
+  skillSearch.oninput = drawSkills;
+  skillAgent.onchange = loadSkills;
+  $(".skills-reload", skillsSection).onclick = loadSkills;
+  $(".skills-source-save", skillsSection).onclick = async () => {
+    const values = sourceInput.value.split("\n").map((x) => x.trim()).filter(Boolean);
+    const button = $(".skills-source-save", skillsSection); button.disabled = true; sourceStatus.textContent = "Saving…";
+    try { const saved = await api(`/projects/${p.id}`, {method:"PATCH", body:{skill_sources:values}}); p.skill_sources_json = saved.skill_sources_json || JSON.stringify(values); sourceInput.value = values.join("\n"); sourceStatus.textContent = "Directories saved. Reload the provider to discover them."; }
+    catch (e) { sourceStatus.textContent = "Could not save directories: " + e.message; }
+    finally { button.disabled = false; }
+  };
+  $(".skills-source-clear", skillsSection).onclick = () => { sourceInput.value = ""; sourceStatus.textContent = "Unsaved directory changes — use Save directories to clear the target configuration."; sourceInput.focus(); };
+  loadSkills();
   const sel = $(".cap-sel", el);
   const info = $(".cap-info", el);
   sel.value = p.capability_profile || "restricted";

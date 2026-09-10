@@ -587,6 +587,29 @@ textarea.f { min-height: 118px; resize: vertical; line-height: 1.6; }
 .mcp-row .mcp-extra { grid-column: 1 / 4; font-family: ui-monospace, monospace; min-height: 52px; }
 .mcp-row .mcp-remove { grid-column: 3; justify-self: end; }
 @media (max-width: 600px) { .mcp-row { grid-template-columns: 1fr 90px; } .mcp-row .mcp-command { grid-column: 1 / 3; } .mcp-row .mcp-extra { grid-column: 1 / 3; } .mcp-row .mcp-remove { grid-column: 2; } }
+.project-skills { margin-top: 18px; border-top: 1px solid var(--line); padding-top: 12px; }
+.project-skills h4 { margin-bottom: 5px; }
+.project-skills h5 { margin: 14px 0 7px; color: var(--ink-dim); font-size: 11px; text-transform: uppercase; letter-spacing: .08em; }
+.skills-controls { display: flex; align-items: end; gap: 8px; flex-wrap: wrap; }
+.skills-controls label { flex: 1 1 190px; min-width: 0; }
+.skills-controls button { flex: 0 0 auto; }
+.skill-row { display: flex; align-items: center; gap: 10px; padding: 9px 10px; border: 1px solid var(--line); border-radius: 8px; margin: 6px 0; min-width: 0; }
+.skill-main { display: flex; flex-direction: column; gap: 3px; min-width: 0; flex: 1; }
+.skill-main b, .skill-main small { overflow-wrap: anywhere; }
+.skill-main b { font-size: 13px; }
+.skill-main small { color: var(--ink-dim); font-size: 11px; }
+.skill-row .b { flex: 0 0 auto; }
+.skills-sources { margin-top: 14px; border-top: 1px solid var(--line); padding-top: 10px; }
+.skills-sources summary { cursor: pointer; color: var(--ink-dim); font-size: 13px; }
+.skills-sources textarea { font: 12px/1.5 var(--mono); min-height: 58px; }
+.skills-empty { padding: 7px 0; }
+@media (max-width: 600px) {
+  .skills-controls { align-items: stretch; }
+  .skills-controls label { flex-basis: 100%; }
+  .skills-controls button { flex: 1; min-height: 44px; }
+  .skill-row { align-items: flex-start; }
+  .skill-row .b { min-height: 44px; }
+}
 .pjlist { max-height: 55vh; overflow-y: auto; border: 1px solid var(--line);
   border-radius: 10px; }
 .pjrow { display: flex; align-items: center; gap: 10px; padding: 9px 11px;

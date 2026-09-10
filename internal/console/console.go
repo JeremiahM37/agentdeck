@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net/url"
 	"os"
 	"strconv"
 	"strings"
@@ -127,6 +128,141 @@ func (u *UI) mcpSettings(path string) error {
 		}
 		return err
 	}
+}
+
+// skillsSettings is the plain terminal editor for target-local project skills.
+// Discovery and attachments are shown together, with provider and search
+// controls, so managing a project never requires opening the web UI.
+func (u *UI) skillsSettings(path string, project map[string]any) error {
+	agent := text(project["default_agent"])
+	if agent != "claude" && agent != "codex" {
+		agent = "claude"
+	}
+	query := ""
+	id := strings.TrimPrefix(path, "/projects/")
+	for {
+		catalogData, cErr := u.Client.JSON("GET", "/skills?project_id="+id+"&agent="+url.QueryEscape(agent), nil)
+		attachedData, dErr := u.Client.JSON("GET", path+"/skills?agent="+url.QueryEscape(agent), nil)
+		if cErr != nil || dErr != nil {
+			u.say("Skills load failed (%s): %v%s", agent, cErr, func() string {
+				if dErr != nil {
+					return "; attachments: " + dErr.Error()
+				}
+				return ""
+			}())
+			u.say("r: retry · p: provider · b: back")
+			pick, err := u.ask("Choose", "r")
+			if err != nil || pick == "b" {
+				return err
+			}
+			if pick == "p" {
+				agent = u.skillProvider(agent)
+			}
+			continue
+		}
+		var catalog struct {
+			Skills []struct{ ID, Name, Source, EntryName, Description string } `json:"skills"`
+		}
+		var attached struct {
+			Attachments []struct {
+				ID                           int64 `json:"id"`
+				SkillID, EntryName, SourceID string
+			} `json:"attachments"`
+		}
+		if err := json.Unmarshal(catalogData, &catalog); err != nil {
+			return err
+		}
+		if err := json.Unmarshal(attachedData, &attached); err != nil {
+			return err
+		}
+		u.say("\nPROJECT SKILLS · provider %s", agent)
+		u.say("Attached:")
+		if len(attached.Attachments) == 0 {
+			u.say("  (none)")
+		}
+		for _, a := range attached.Attachments {
+			u.say("  %d  %s · %s · %s", a.ID, a.EntryName, a.SourceID, a.SkillID)
+		}
+		u.say("Available:")
+		shown := 0
+		for _, s := range catalog.Skills {
+			label := strings.ToLower(strings.Join([]string{s.ID, s.Name, s.EntryName, s.Source, s.Description}, " "))
+			if query != "" && !fuzzy(query, label) {
+				continue
+			}
+			u.say("  %-32s %-20s %-14s %s", s.ID, s.Name, s.Source, oneLine(s.Description))
+			shown++
+		}
+		if shown == 0 {
+			u.say("  (no matches)")
+		}
+		u.say("a: attach · d: detach · s: save target directories · p: provider · /: search · r: reload · b: back")
+		pick, err := u.ask("Action", "")
+		if err != nil {
+			return err
+		}
+		switch pick {
+		case "b", "":
+			return nil
+		case "r":
+			continue
+		case "p":
+			agent = u.skillProvider(agent)
+			query = ""
+		case "/":
+			query, err = u.ask("Catalog search (blank clears)", query)
+			if err != nil {
+				return err
+			}
+		case "a":
+			id, e := u.ask("Skill ID", "")
+			if e != nil {
+				return e
+			}
+			if id == "" {
+				continue
+			}
+			if e = u.request("POST", path+"/skills", map[string]any{"agent": agent, "skill_id": id}); e != nil {
+				u.say("Attach failed: %v", e)
+			}
+		case "d":
+			id, e := u.ask("Attachment ID", "")
+			if e != nil {
+				return e
+			}
+			if id == "" {
+				continue
+			}
+			if e = u.request("DELETE", path+"/skills/"+id, nil); e != nil {
+				u.say("Detach failed: %v", e)
+			}
+		case "s":
+			raw, e := u.ask("Extra target directories (comma separated; blank clears)", "")
+			if e != nil {
+				return e
+			}
+			values := []string{}
+			for _, v := range strings.Split(raw, ",") {
+				if v = strings.TrimSpace(v); v != "" {
+					values = append(values, v)
+				}
+			}
+			if e = u.request("PATCH", path, map[string]any{"skill_sources": values}); e != nil {
+				u.say("Directory save failed: %v", e)
+			}
+		default:
+			u.say("Choose a, d, s, p, /, r, or b.")
+		}
+	}
+}
+
+func (u *UI) skillProvider(current string) string {
+	next, err := u.ask("Provider (claude/codex)", current)
+	if err != nil || (next != "claude" && next != "codex") {
+		u.say("Provider must be claude or codex.")
+		return current
+	}
+	return next
 }
 func (u *UI) confirm(label string) bool {
 	s, e := u.ask(label+" — type yes to continue", "")

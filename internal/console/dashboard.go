@@ -548,6 +548,9 @@ func (m *dashboard) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		return m, m.jsonForm(v.title, v.method, v.path, body)
+	case skillsLoadedMsg:
+		m.busy = false
+		return m, m.skillsSettingsLoaded(v)
 	case discoveredMsg:
 		m.busy = false
 		if v.err != nil {

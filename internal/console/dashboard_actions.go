@@ -39,6 +39,11 @@ type discoveredMsg struct {
 	rows []row
 	err  error
 }
+type skillsLoadedMsg struct {
+	path string
+	data []byte
+	err  error
+}
 
 func (m *dashboard) request(label, method, path string, body any, preview bool) tea.Cmd {
 	if m.busy {
@@ -82,6 +87,8 @@ func (m *dashboard) choose(a dashboardAction) tea.Cmd {
 		return m.groupForm()
 	case "mcp":
 		return m.mcpSettingsForm()
+	case "skills":
+		return m.skillsSettingsForm()
 	case "rename":
 		return m.renameForm()
 	case "edit":
@@ -180,7 +187,7 @@ func (m *dashboard) rowActions() []dashboardAction {
 	case "routines":
 		actions = []dashboardAction{post("Run now", "/run"), {Label: "Enable schedule", Method: "PATCH", Path: path, Body: map[string]any{"enabled": true}}, {Label: "Disable schedule", Method: "PATCH", Path: path, Body: map[string]any{"enabled": false}}, op("Rename", "rename"), op("Edit routine", "edit")}
 	case "projects":
-		actions = []dashboardAction{op("Open project shell", "attach"), op("Review changes", "review"), read("Project brief", "/brief"), read("Notes", "/notes"), read("Handoffs", "/wraps"), read("Capabilities", "/capability"), op("Rename", "rename"), op("Edit project", "edit"), op("MCP settings (add / edit / remove)", "mcp")}
+		actions = []dashboardAction{op("Open project shell", "attach"), op("Review changes", "review"), read("Project brief", "/brief"), read("Notes", "/notes"), read("Handoffs", "/wraps"), read("Capabilities", "/capability"), op("Rename", "rename"), op("Edit project", "edit"), op("MCP settings (add / edit / remove)", "mcp"), op("Skills (attach / detach)", "skills")}
 	case "targets":
 		actions = []dashboardAction{post("Check connection", "/check"), read("Check agent commands", "/agents"), op("Rename", "rename"), op("Edit target", "edit")}
 	case "approvals":
@@ -317,6 +324,8 @@ func formBody(fields []field) (map[string]any, error) {
 			continue
 		}
 		switch {
+		case f.Key == "skill_id":
+			out[f.Key] = v
 		case strings.HasSuffix(f.Key, "_id") || f.Key == "port" || f.Key == "max_concurrent":
 			n, e := strconv.ParseInt(v, 10, 64)
 			if e != nil || n <= 0 {
@@ -603,6 +612,136 @@ func (m *dashboard) mcpSettingsLoaded(data []byte, path string) tea.Cmd {
 			}
 			return resultMsg{label: "Save MCP settings", data: result, err: err}
 		}
+	})
+}
+
+// skillsSettingsForm keeps discovery and attachment records visible in the
+// terminal. Skill IDs remain target-local; the dashboard only submits the
+// selected provider and ID back to the dedicated endpoints.
+func (m *dashboard) skillsSettingsForm() tea.Cmd {
+	r := m.current()
+	if r == nil || sections[m.section] != "projects" || m.busy {
+		return nil
+	}
+	m.busy = true
+	c := m.client
+	projectID := id(r)
+	agent := str(r["default_agent"])
+	if agent != "claude" && agent != "codex" {
+		agent = "claude"
+	}
+	path := "/projects/" + projectID + "/skills"
+	return func() tea.Msg {
+		available, err := c.JSON("GET", "/skills?project_id="+projectID+"&agent="+agent, nil)
+		if err != nil {
+			return skillsLoadedMsg{path: path, err: err}
+		}
+		attached, err := c.JSON("GET", path+"?agent="+agent, nil)
+		if err != nil {
+			return skillsLoadedMsg{path: path, err: err}
+		}
+		var a, b map[string]any
+		if err = json.Unmarshal(available, &a); err != nil {
+			return skillsLoadedMsg{path: path, err: err}
+		}
+		if err = json.Unmarshal(attached, &b); err != nil {
+			return skillsLoadedMsg{path: path, err: err}
+		}
+		combined, _ := json.Marshal(map[string]any{"agent": agent, "skills": a["skills"], "attachments": b["attachments"], "skill_sources_json": r["skill_sources_json"]})
+		return skillsLoadedMsg{path: path, data: combined}
+	}
+}
+
+func (m *dashboard) skillsSettingsLoaded(msg skillsLoadedMsg) tea.Cmd {
+	if msg.err != nil {
+		m.notice = "Skills: " + clean(msg.err.Error()) + " (choose Skills again to retry)"
+		return nil
+	}
+	var envelope struct {
+		Agent  string `json:"agent"`
+		Skills []struct {
+			ID, Name, Source, EntryName, Description string
+		} `json:"skills"`
+		Attachments []struct {
+			ID                           int64 `json:"id"`
+			SkillID, EntryName, SourceID string
+		} `json:"attachments"`
+		SkillSourcesJSON string `json:"skill_sources_json"`
+	}
+	if err := json.Unmarshal(msg.data, &envelope); err != nil {
+		m.notice = "Skills: " + clean(err.Error())
+		return nil
+	}
+	if envelope.Agent == "" {
+		envelope.Agent = "claude"
+	}
+	skillChoices := []choice{}
+	for _, s := range envelope.Skills {
+		label := s.Name
+		if label == "" {
+			label = s.EntryName
+		}
+		label += " · " + s.Source
+		if s.Description != "" {
+			label += " · " + s.Description
+		}
+		skillChoices = append(skillChoices, choice{clean(oneLine(label)), s.ID})
+	}
+	attachmentChoices := []choice{}
+	for _, a := range envelope.Attachments {
+		label := a.EntryName
+		if label == "" {
+			label = a.SkillID
+		}
+		label += " · " + a.SourceID
+		attachmentChoices = append(attachmentChoices, choice{clean(oneLine(label)), fmt.Sprint(a.ID)})
+	}
+	if len(skillChoices) == 0 {
+		skillChoices = []choice{{"No discovered skills", ""}}
+	}
+	if len(attachmentChoices) == 0 {
+		attachmentChoices = []choice{{"No attached skills", ""}}
+	}
+	sources := ""
+	var sourceList []string
+	if envelope.SkillSourcesJSON != "" {
+		_ = json.Unmarshal([]byte(envelope.SkillSourcesJSON), &sourceList)
+		sources = strings.Join(sourceList, "\n")
+	}
+	return m.openForm("Project skills — target-local catalog", []field{
+		optionField("agent", "Provider", envelope.Agent, []choice{{"Claude Code", "claude"}, {"Codex", "codex"}}, true),
+		optionField("operation", "Operation", "attach", []choice{{"Attach discovered skill", "attach"}, {"Detach attached skill", "detach"}, {"Save target directories", "sources"}}, true),
+		optionField("skill_id", "Skill (name · source)", skillChoices[0].Value, skillChoices, false),
+		optionField("attachment_id", "Attachment (name · source)", attachmentChoices[0].Value, attachmentChoices, false),
+		{Key: "skill_sources", Label: "Extra target directories (one per line)", Value: sources, Multiline: true},
+	}, func(body map[string]any) tea.Cmd {
+		op := str(body["operation"])
+		agent := str(body["agent"])
+		switch op {
+		case "attach":
+			if str(body["skill_id"]) == "" {
+				m.notice = "No discovered skill is available for this provider."
+				return nil
+			}
+			return m.request("Attach skill", "POST", "/projects/"+id(m.current())+"/skills", map[string]any{"agent": agent, "skill_id": body["skill_id"]}, false)
+		case "detach":
+			attachmentID := str(body["attachment_id"])
+			if attachmentID == "" {
+				m.notice = "No attached skill is available for this provider."
+				return nil
+			}
+			return m.request("Detach skill", "DELETE", "/projects/"+id(m.current())+"/skills/"+attachmentID, nil, false)
+		case "sources":
+			values := []string{}
+			for _, line := range strings.Split(str(body["skill_sources"]), "\n") {
+				if line = strings.TrimSpace(line); line != "" {
+					values = append(values, line)
+				}
+			}
+			return m.request("Save skill directories", "PATCH", "/projects/"+id(m.current()), map[string]any{"skill_sources": values}, false)
+		}
+		m.notice = "Choose an operation."
+		return nil
 	})
 }
 func (m *dashboard) editForm() tea.Cmd {
