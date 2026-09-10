@@ -269,6 +269,17 @@ func TestHandoffWritesAWrapAndPrimesASuccessor(t *testing.T) {
 	if successor.str("tmux_session") == sess.str("tmux_session") {
 		t.Error("the successor must be a genuinely new process")
 	}
+	// The successor row is inserted before its tmux process is launched. The
+	// wrap is linked only after Launch returns successfully; wait for that
+	// transition before inspecting the launch command.
+	h.waitUntil("the successor launch to finish", func() bool {
+		for _, w := range h.getList(fmt.Sprintf("/api/sessions/%d/wraps", sess.id())) {
+			if int64(w.num("next_session_id")) == successor.id() {
+				return true
+			}
+		}
+		return false
+	})
 	// the successor was primed with its predecessor's handoff — carried on the
 	// launch command itself, so there is no paste to race
 	primed := false
