@@ -37,3 +37,29 @@ feature-for-feature replacement of every tool: native conversation branching,
 tmuxp-compatible declarative layouts, and Zellij's pane/plugin system remain
 separate capabilities. Existing tmux/Zellij workspaces can host the client;
 AgentDeck continues using tmux for the underlying agent sessions.
+
+## Full parity goal: evidence ledger
+
+The active goal is terminal quality at least matching Agent Deck and Agent of
+Empires, and web quality exceeding Agent of Empires. The acceptance list above
+is an initial milestone, **not completion of that goal**. Compare the common
+workflows on real Git/tmux and rendered desktop/mobile surfaces. A checked box
+in this document is not a substitute for that evidence.
+
+| Workflow | Current evidence and remaining work |
+| --- | --- |
+| Find, group, monitor, attach, detach, reconnect | Live dashboard + PTY tests; browser real tmux resize/reconnect/dual-client tests. Broader multi-session and saved-view UX comparison remains. |
+| Review ongoing work | Live staged/working review implemented for TUI and web; real Git API tests cover renames, binary/untracked files, path boundaries and unchanged index; Playwright covers desktop/mobile, stale responses and retained attachment; actual SSH target proof passed. Full rollout verification is recorded in shared memory. |
+| Branch a conversation / isolated parallel work | Task worktrees exist. Native session forking and interactive worktree creation remain gaps; latest-session resume is not forking. |
+| Organize large fleets | Project/target grouping and search exist. Saved profiles, archive/recovery, custom groups, global conversation search need audit/implementation. |
+| Agent setup | Custom commands exist; named agent settings, MCP/skills setup, installed-agent discovery and lifecycle need comparison with current upstream. |
+| Workspace setup | Task worktrees and target executors exist; multi-repository interactive workspaces and repo setup hooks need audit/implementation. |
+| Sandbox choices | Existing Proxmox sandbox path is not equivalent to portable Docker/Podman sandboxing; portability gap remains. |
+| Web everyday management | Internal terminal tabs, structured chat, PDFs, routines/takeover and approvals exist. Benchmark the same create/find/attach/review/send/recover workflows against AoE desktop and phone; improve discoverability and consistency before claiming superiority. |
+| Installation and keyboard UX | Linux and Windows SSH clients exist; installation portability, help consistency, terminal compatibility and first-run flows need further audit. |
+
+Current upstream evidence: the Agent Deck README lists session forks, archive,
+MCP/skills managers, global search and settings; the AoE README lists profiles,
+repo hooks, multi-repo workspaces, portable containers and structured mobile
+views. These remain part of the comparison, not exclusions added to declare the
+current implementation sufficient.

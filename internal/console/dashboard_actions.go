@@ -70,6 +70,8 @@ func (m *dashboard) choose(a dashboardAction) tea.Cmd {
 		return m.uploadForm()
 	case "history":
 		return m.readDetail("History")
+	case "review":
+		return m.openReview()
 	case "diff":
 		return m.readDetail("Diff")
 	case "files":
@@ -105,17 +107,17 @@ func (m *dashboard) actions() []dashboardAction {
 	var actions []dashboardAction
 	switch kind {
 	case "sessions":
-		actions = []dashboardAction{op("Attach", "attach"), op("Companion shell", "shell"), op("Send message", "send"), op("Upload context file", "upload"), op("Read history", "history"), op("Browse files", "files"), op("Rename", "rename"), op("Move / edit session", "edit"), op("Request handoff", "handoff"), read("Handoff summaries", "/wraps")}
+		actions = []dashboardAction{op("Attach", "attach"), op("Companion shell", "shell"), op("Send message", "send"), op("Upload context file", "upload"), op("Review changes", "review"), op("Read history", "history"), op("Browse files", "files"), op("Rename", "rename"), op("Move / edit session", "edit"), op("Request handoff", "handoff"), read("Handoff summaries", "/wraps")}
 		actions = append(actions, dashboardAction{Label: "Interrupt agent", Method: "POST", Path: path + "/send", Body: map[string]any{"key": "C-c"}, Warning: "Send Ctrl-c to this session's current command?"})
 	case "tasks":
-		actions = []dashboardAction{op("Attach to attempt", "attach"), op("Companion shell", "shell"), op("Send message", "send"), op("Upload context file", "upload"), op("Review diff", "diff"), read("Messages", "/messages"), read("Events", "/events"), post("Dispatch in worktree", "/dispatch"), post("Take over as interactive session", "/takeover"), op("Request changes", "followup"), op("Commit changes", "commit"), post("Mark complete", "/complete"), op("Edit task", "edit")}
+		actions = []dashboardAction{op("Attach to attempt", "attach"), op("Companion shell", "shell"), op("Send message", "send"), op("Upload context file", "upload"), op("Review diff", "diff"), op("Review live changes", "review"), read("Messages", "/messages"), read("Events", "/events"), post("Dispatch in worktree", "/dispatch"), post("Take over as interactive session", "/takeover"), op("Request changes", "followup"), op("Commit changes", "commit"), post("Mark complete", "/complete"), op("Edit task", "edit")}
 		cancel := post("Cancel task", "/cancel")
 		cancel.Warning = "Stop this task's active attempt?"
 		actions = append(actions, cancel)
 	case "routines":
 		actions = []dashboardAction{post("Run now", "/run"), {Label: "Enable schedule", Method: "PATCH", Path: path, Body: map[string]any{"enabled": true}}, {Label: "Disable schedule", Method: "PATCH", Path: path, Body: map[string]any{"enabled": false}}, op("Rename", "rename"), op("Edit routine", "edit")}
 	case "projects":
-		actions = []dashboardAction{op("Open project shell", "attach"), read("Project brief", "/brief"), read("Notes", "/notes"), read("Handoffs", "/wraps"), read("Capabilities", "/capability"), op("Rename", "rename"), op("Edit project", "edit")}
+		actions = []dashboardAction{op("Open project shell", "attach"), op("Review changes", "review"), read("Project brief", "/brief"), read("Notes", "/notes"), read("Handoffs", "/wraps"), read("Capabilities", "/capability"), op("Rename", "rename"), op("Edit project", "edit")}
 	case "targets":
 		actions = []dashboardAction{post("Check connection", "/check"), op("Rename", "rename"), op("Edit target", "edit")}
 	case "approvals":
@@ -491,8 +493,7 @@ func (m *dashboard) readDetail(label string) tea.Cmd {
 	kind := sections[m.section]
 	if label == "Diff" {
 		if kind != "tasks" {
-			m.notice = "Diff review is available for task worktrees. Choose Tasks (2)."
-			return nil
+			return m.openReview()
 		}
 		return m.readResource(label, "/tasks/"+id(r)+"/diff")
 	}

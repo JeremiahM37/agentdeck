@@ -1,3 +1,4 @@
+import { openReview } from "/review.js";
 import { installTerminalScroll } from "/terminal-scroll.js";
 import '/ui-menu.js';
 const $ = (s) => document.querySelector(s);
@@ -767,3 +768,5 @@ act(async () => {
   select(p);
   if (info.files_available) fileLinks(p);
 })();
+
+$("#review").onclick = () => openReview({kind,id,name:info?.workdir,api: async path => (await request("/api"+path)).json()});

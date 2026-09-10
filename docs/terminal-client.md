@@ -107,3 +107,18 @@ exist. The Linux installer sets the URL and alias in its launcher.
 Inside an existing tmux workspace, native attachment opens a full-size popup
 (tmux 3.2 or newer). The attachment owns its keyboard input; Ctrl-b d closes it
 and returns to the same dashboard selection without detaching the outer workspace.
+
+## Review live code changes
+
+On a session or project, press `v` for live Git review. Left/right changes files,
+`s` switches working-tree versus staged changes, PgUp/PgDn scrolls, `r` refreshes
+the current file, and Esc returns. Tasks retain their captured diff on `v`; their
+actions menu also offers **Review live changes** for an existing attempt.
+
+The same review is available on the web through a session's **More → Review
+changes** or an attached terminal's **Tools → Review changes**. It includes file
+search, line numbers, mobile wrapping, and separate staged/working counts. It
+reads a snapshot when opened/refreshed; the agent can continue editing. Large
+patches are explicitly truncated at 512 KiB. Git and Python 3 run on the target,
+including SSH targets; there is no local-checkout assumption and no staging or
+checkout mutation.

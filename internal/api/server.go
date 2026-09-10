@@ -138,6 +138,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/term/{kind}/{id}/history", s.terminalHistory)
 	mux.HandleFunc("POST /api/term/{kind}/{id}/attachments", s.terminalUpload)
 	mux.HandleFunc("GET /api/term/{kind}/{id}/files", s.terminalFiles)
+	mux.HandleFunc("GET /api/term/{kind}/{id}/changes", s.terminalChanges)
 	mux.HandleFunc("GET /api/term/{kind}/{id}/file", s.terminalFile)
 	// ---- attached terminals (proxied on this origin; see termproxy.go) ----
 	mux.HandleFunc("/term/{kind}/{id}", s.termProxy)

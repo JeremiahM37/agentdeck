@@ -7,8 +7,8 @@
 
    Non-GET requests return early: the cache API rejects them outright, and
    swallowing one here would break any POST the page makes. */
-const CACHE = "agentdeck-v30";
-const SHELL = ["/", "/app.js", "/terminal-tabs.js", "/conversation.js", "/conversation.css", "/style.css", "/workspace.css", "/ui-menu.js", "/fonts.css", "/icon.svg", "/manifest.webmanifest"];
+const CACHE = "agentdeck-v31";
+const SHELL = ["/", "/review.js", "/review.css", "/app.js", "/terminal-tabs.js", "/conversation.js", "/conversation.css", "/style.css", "/workspace.css", "/ui-menu.js", "/fonts.css", "/icon.svg", "/manifest.webmanifest"];
 
 self.addEventListener("install", (e) => {
   e.waitUntil(caches.open(CACHE).then((c) => c.addAll(SHELL)).then(() => self.skipWaiting()));

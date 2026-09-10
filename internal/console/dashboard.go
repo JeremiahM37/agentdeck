@@ -97,6 +97,7 @@ type dashboard struct {
 	failure, notice                string
 	query                          textinput.Model
 	searching                      bool
+	review                         *codeReview
 	grouping                       int
 	attention, ended               bool
 	preview                        viewport.Model
@@ -330,10 +331,18 @@ func (m *dashboard) switchSection(i int) tea.Cmd {
 }
 func (m *dashboard) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch v := msg.(type) {
+	case reviewMsg:
+		m.receiveReview(v)
+		return m, nil
 	case tea.WindowSizeMsg:
 		m.width = v.Width
 		m.height = v.Height
 		m.layout()
+		if r := m.review; r != nil && !r.loading && r.failure == "" {
+			offset := r.viewport.YOffset
+			m.receiveReview(reviewMsg{owner: r, generation: r.generation, data: r.data})
+			r.viewport.SetYOffset(offset)
+		}
 		return m, nil
 	case tickMsg:
 		return m, tea.Batch(m.refresh(), nextTick())
@@ -410,6 +419,9 @@ func (m *dashboard) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, tea.Batch(m.refresh(), tea.WindowSize())
 	case tea.KeyMsg:
+		if m.review != nil {
+			return m, m.updateReview(v)
+		}
 		// A terminal read can contain several ordinary keystrokes. Process them
 		// in order, allowing '/' to focus search before its following text.
 		// Bracketed paste outside an input is data, never a command sequence.
@@ -644,6 +656,9 @@ var chosen = lipgloss.NewStyle().Foreground(lipgloss.Color("255")).Background(li
 
 func clip(s string, w int) string { return ansi.Truncate(s, max(0, w), "…") }
 func (m *dashboard) View() string {
+	if m.review != nil {
+		return m.reviewView()
+	}
 	if m.width < 35 || m.height < 12 {
 		return "AgentDeck\nResize to at least 35 × 12.\nq to quit"
 	}

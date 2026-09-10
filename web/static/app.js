@@ -1,3 +1,4 @@
+import { openReview } from "/review.js";
 import { TerminalTabs } from "/terminal-tabs.js";
 import { actionMenu } from "/ui-menu.js";
 import { openConversation } from "/conversation.js";
@@ -505,6 +506,7 @@ function sessionCard(s) {
     act("⌨ Attach", "attach", () => attachSession(s));
     act("Chat", "grow", () => openConversation({kind:"session",id:s.id,name:s.name,api,attachMic,onClose:refreshSessions}));
     actionRow = panel;
+    act("Review changes", "", () => openReview({kind:"session", id:s.id, name:s.name, api}));
     const native = document.createElement('a');
     native.className = 'b';
     native.href = `agentdeck://attach/session/${s.id}`;
