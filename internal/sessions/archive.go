@@ -105,7 +105,11 @@ func (m *Manager) Archive(ctx context.Context, id int64, stop bool) (*store.Sess
 	}
 	if err == nil {
 		now := store.Now()
-		err = m.DB.Update("sessions", id, map[string]any{"archived_at": now, "archive_text": snapshot, "ended_at": now, "status": StatusDead, "updated_at": now})
+		ended := now
+		if current.EndedAt != nil {
+			ended = *current.EndedAt
+		}
+		err = m.DB.Update("sessions", id, map[string]any{"archived_at": now, "archive_text": snapshot, "ended_at": ended, "status": StatusDead, "updated_at": now})
 	}
 	m.lifecycleMu.Unlock()
 	if err != nil {

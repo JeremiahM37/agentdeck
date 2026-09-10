@@ -42,7 +42,10 @@ def test_archive_requires_explicit_stop_and_unarchive_does_not_restart(real_term
     assert t['api'](path+'/archive/history')['text']==text
     assert t['api']('/sessions?archived=true')==[]
     assert [s['id'] for s in t['api']('/sessions?all=true')]==[t['id']]
+    # Archival is organization, not a new end event. Preserve its original time.
+    ended=t['api'](path)['ended_at']
     assert request(t,'POST',path+'/archive',{'stop':False})[0]==200
+    assert t['api'](path)['ended_at']==ended
     assert t['api'](path+'/archive/history')['text']==text
 
 
