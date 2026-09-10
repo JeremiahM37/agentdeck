@@ -111,10 +111,11 @@ func (s *Scheduler) stageRuntime(ctx context.Context, ex executor.Executor, work
 	// targets, so without this a remote agent has strictly fewer tools than a
 	// local one
 	mcp := store.UnjObj(c.Project.MCPJSON)
-	if len(mcp) > 0 {
-		if firstNonEmpty(c.Task.Agent, "claude") == "codex" && c.Project.StrictMCP != 0 {
-			return kw, fmt.Errorf("strict_mcp is unsupported for Codex additive configuration")
-		}
+	agent := firstNonEmpty(c.Task.Agent, "claude")
+	if agent == "codex" && c.Project.StrictMCP != 0 {
+		return kw, fmt.Errorf("strict_mcp is unsupported for Codex additive configuration")
+	}
+	if agent == "claude" && (len(mcp) > 0 || c.Project.StrictMCP != 0) {
 		payload := mcp
 		if _, ok := mcp["mcpServers"]; !ok {
 			payload = map[string]any{"mcpServers": mcp}
@@ -125,12 +126,11 @@ func (s *Scheduler) stageRuntime(ctx context.Context, ex executor.Executor, work
 		}
 		kw.MCPConfig = agents.MCPRel
 		kw.StrictMCP = c.Project.StrictMCP != 0
-		if firstNonEmpty(c.Task.Agent, "claude") == "codex" {
-			var err error
-			kw.ExtraArgs, err = agents.CodexMCPArgs(mcp)
-			if err != nil {
-				return kw, err
-			}
+	} else if agent == "codex" && len(mcp) > 0 {
+		var err error
+		kw.ExtraArgs, err = agents.CodexMCPArgs(mcp)
+		if err != nil {
+			return kw, err
 		}
 	}
 
@@ -144,7 +144,7 @@ func (s *Scheduler) stageRuntime(ctx context.Context, ex executor.Executor, work
 		}
 	}
 	memoryDir := c.Target.MemoryDir
-	agent := firstNonEmpty(c.Task.Agent, "claude")
+	agent = firstNonEmpty(c.Task.Agent, "claude")
 	if agent != "claude" {
 		memoryDir = "" // the memory layout is Claude Code's; nobody else reads it
 	}

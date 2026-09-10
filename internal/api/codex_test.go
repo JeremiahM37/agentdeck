@@ -137,6 +137,15 @@ func TestCodexLaunchSkipsClaudeOnlyFlags(t *testing.T) {
 	}
 }
 
+func TestCodexRejectsStrictMCPWithEmptyDeclaration(t *testing.T) {
+	h := newHarness(t)
+	p := h.project("cx-strict-empty", obj{"default_agent": "codex", "strict_mcp": true, "mcp": obj{}})
+	result := h.runToEnd(p.id(), nil)
+	if result.str("status") != "failed" {
+		t.Fatalf("strict MCP must fail for Codex even when empty: %v", result)
+	}
+}
+
 // ---- credentials -------------------------------------------------------------
 
 func withAgentCreds(t *testing.T) func(*config.Config) {

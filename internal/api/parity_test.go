@@ -172,6 +172,20 @@ func TestNoMCPConfiguredPassesNoFlag(t *testing.T) {
 	}
 }
 
+func TestStrictMCPEmptyClaudeStillUsesPrivateEmptyDocument(t *testing.T) {
+	h := newHarness(t)
+	p := h.project("strict-empty", obj{"strict_mcp": true, "mcp": obj{}})
+	h.run(p.id(), "strict empty", "do the thing", nil)
+	if got := string(h.staged("/.agentdeck/mcp.json")); got != `{"mcpServers":{}}` {
+		t.Fatalf("staged empty MCP document: %q", got)
+	}
+	cmd := h.launchCmd()
+	if !strings.Contains(cmd, "--mcp-config .agentdeck/mcp.json") ||
+		!strings.Contains(cmd, "--strict-mcp-config") {
+		t.Fatalf("strict empty Claude launch: %s", cmd)
+	}
+}
+
 // ---- permissions -------------------------------------------------------------
 
 func TestPermissionRulesShipInUngatedMode(t *testing.T) {

@@ -62,10 +62,19 @@ func TestInteractiveMCPManagerLaunchLifecycle(t *testing.T) {
 					filepath.Join(home, "sessions", cid+".jsonl"),
 					filepath.Join(home, "projects", claudeProjectSlug(repo), cid+".jsonl")})
 
-				target := insertLifecycleTarget(t, h, targetKind)
-				// SSH targets use root's real tmux server, which is shared by all
-				// localhost SSH tests. Keep every harness on a disjoint session-ID
-				// range so its adk-s<N> names cannot collide.
+				var remoteTmuxDir string
+				if targetKind == "ssh" {
+					var err error
+					remoteTmuxDir, err = os.MkdirTemp("/tmp", "agentdeck-ssh-tmux-")
+					if err != nil {
+						t.Fatal(err)
+					}
+					if err := os.Chmod(remoteTmuxDir, 0700); err != nil {
+						t.Fatal(err)
+					}
+					t.Cleanup(func() { _ = os.RemoveAll(remoteTmuxDir) })
+				}
+				target := insertLifecycleTarget(t, h, targetKind, remoteTmuxDir)
 				base := 10000 + lifecycleRigSeq.Add(1)*100
 				if _, err := h.App.DB.Exec(`INSERT INTO sessions
 					(id, target_id, name, agent, workdir, tmux_session, status, origin, created_at, updated_at, ended_at)
@@ -73,7 +82,14 @@ func TestInteractiveMCPManagerLaunchLifecycle(t *testing.T) {
 					base, target.ID, store.Now(), store.Now(), store.Now()); err != nil {
 					t.Fatal(err)
 				}
+				targetExecutor, err := h.App.Reg.For(target)
+				if err != nil {
+					t.Fatal(err)
+				}
 				if targetKind == "ssh" {
+					// The remote executor runs as root while the test process owns
+					// the temp tree. Remove only this test's private runtime before
+					// t.TempDir attempts its local cleanup.
 					t.Cleanup(func() {
 						ex, err := h.App.Reg.For(target)
 						if err == nil {
@@ -81,13 +97,13 @@ func TestInteractiveMCPManagerLaunchLifecycle(t *testing.T) {
 						}
 					})
 				}
-				targetExecutor, err := h.App.Reg.For(target)
-				if err != nil {
-					t.Fatal(err)
-				}
 				t.Cleanup(func() {
 					for id := base + 1; id <= base+10; id++ {
-						_, _ = targetExecutor.Run(context.Background(), fmt.Sprintf("tmux kill-session -t %s 2>/dev/null || true", shellQuoteForTest(fmt.Sprintf("adk-s%d", id))), executor.RunOpts{Timeout: 20})
+						name := fmt.Sprintf("adk-s%d", id)
+						check, checkErr := targetExecutor.Run(context.Background(), "tmux has-session -t "+shellQuoteForTest(name), executor.RunOpts{Timeout: 20})
+						if checkErr == nil && check.OK() {
+							_, _ = targetExecutor.Run(context.Background(), "tmux kill-session -t "+shellQuoteForTest(name), executor.RunOpts{Timeout: 20})
+						}
 					}
 				})
 				envName := "CODEX_HOME"
@@ -150,7 +166,7 @@ func TestInteractiveMCPManagerLaunchLifecycle(t *testing.T) {
 	}
 }
 
-func insertLifecycleTarget(t *testing.T, h *harness, kind string) *store.Target {
+func insertLifecycleTarget(t *testing.T, h *harness, kind, tmuxDir string) *store.Target {
 	t.Helper()
 	if kind == "local" {
 		target, err := h.App.DB.InsertTarget(&store.Target{Name: "lifecycle local", Kind: "local"})
@@ -159,9 +175,13 @@ func insertLifecycleTarget(t *testing.T, h *harness, kind string) *store.Target 
 		}
 		return target
 	}
+	prefix := ""
+	if tmuxDir != "" {
+		prefix = "mkdir -m 700 -p " + shellQuoteForTest(tmuxDir) + " && env TMUX_TMPDIR=" + shellQuoteForTest(tmuxDir) + " sh -c"
+	}
 	target, err := h.App.DB.InsertTarget(&store.Target{
 		Name: "lifecycle ssh", Kind: "ssh", Host: "127.0.0.1", User: "root", Port: 22,
-		KeyPath: "/home/admin/.ssh/id_ed25519",
+		KeyPath: "/home/admin/.ssh/id_ed25519", CommandPrefix: prefix,
 	})
 	if err != nil {
 		t.Fatal(err)

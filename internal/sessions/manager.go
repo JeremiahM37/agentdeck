@@ -410,45 +410,33 @@ func (m *Manager) Launch(ctx context.Context, o LaunchOpts) (*store.Session, err
 	var toolArgs []string
 	if project != nil {
 		mcp := store.UnjObj(project.MCPJSON)
-		if len(mcp) > 0 {
-			if agent == "claude" {
-				raw, mcpErr := agentcfg.MCPPayload(mcp)
-				if mcpErr != nil {
-					m.end(sess.ID, StatusDead)
-					return nil, mcpErr
-				}
-				nonce, nonceErr := interactiveMCPNonce()
-				if nonceErr != nil {
-					m.end(sess.ID, StatusDead)
-					return nil, nonceErr
-				}
-				rel := agentcfg.InteractiveMCPRel(sess.ID, nonce)
-				// Check every existing parent without resolving symlinks, then
-				// atomically create the unique leaf. Never follow a foreign tree.
-				guard := agentcfg.InteractiveMCPPrepareCommand(workdir, rel)
-				if result, guardErr := ex.Run(ctx, guard, executor.RunOpts{Timeout: 20}); guardErr != nil || !result.OK() {
-					m.end(sess.ID, StatusDead)
-					return nil, fmt.Errorf("interactive MCP runtime is not AgentDeck-owned")
-				}
-				tmp := workdir + "/" + strings.TrimSuffix(rel, "/mcp.json") + "/.mcp.tmp"
-				if mcpErr = ex.WriteFile(ctx, tmp, raw); mcpErr != nil {
-					m.end(sess.ID, StatusDead)
-					return nil, mcpErr
-				}
-				publish := agentcfg.InteractiveMCPPublishCommand(workdir, rel)
-				if result, chmodErr := ex.Run(ctx, publish, executor.RunOpts{Timeout: 20}); chmodErr != nil || !result.OK() {
-					m.end(sess.ID, StatusDead)
-					return nil, fmt.Errorf("could not secure interactive MCP runtime")
-				}
-				toolArgs = []string{"--mcp-config", rel}
-				if project.StrictMCP != 0 {
-					toolArgs = append(toolArgs, "--strict-mcp-config")
-				}
-			} else if agent == "codex" {
-				if project.StrictMCP != 0 {
-					m.end(sess.ID, StatusDead)
-					return nil, fmt.Errorf("strict_mcp is unsupported for Codex additive configuration")
-				}
+		if agent == "claude" && (len(mcp) > 0 || project.StrictMCP != 0) {
+			raw, mcpErr := agentcfg.MCPPayload(mcp)
+			if mcpErr != nil {
+				m.end(sess.ID, StatusDead)
+				return nil, mcpErr
+			}
+			nonce, nonceErr := interactiveMCPNonce()
+			if nonceErr != nil {
+				m.end(sess.ID, StatusDead)
+				return nil, nonceErr
+			}
+			rel := agentcfg.InteractiveMCPRel(sess.ID, nonce)
+			install := agentcfg.InteractiveMCPInstallCommand(workdir, rel, raw)
+			if result, installErr := ex.Run(ctx, install, executor.RunOpts{Timeout: 20}); installErr != nil || !result.OK() {
+				m.end(sess.ID, StatusDead)
+				return nil, fmt.Errorf("could not secure interactive MCP runtime")
+			}
+			toolArgs = []string{"--mcp-config", rel}
+			if project.StrictMCP != 0 {
+				toolArgs = append(toolArgs, "--strict-mcp-config")
+			}
+		} else if agent == "codex" {
+			if project.StrictMCP != 0 {
+				m.end(sess.ID, StatusDead)
+				return nil, fmt.Errorf("strict_mcp is unsupported for Codex additive configuration")
+			}
+			if len(mcp) > 0 {
 				toolArgs, err = agentcfg.CodexMCPArgs(mcp)
 				if err != nil {
 					m.end(sess.ID, StatusDead)
