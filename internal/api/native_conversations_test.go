@@ -107,3 +107,43 @@ func TestNativeHistoryUsesExactWorkspaceAndPagesWithoutMutation(t *testing.T) {
 		})
 	}
 }
+
+func TestCodexForkKeepsFirstHeaderIdentity(t *testing.T) {
+	requireRealTools(t)
+	h := newHarness(t, func(c *config.Config) { c.Mock = false })
+	root, home := t.TempDir(), t.TempDir()
+	target, _ := h.App.DB.InsertTarget(&store.Target{Name: "fork-header", Kind: "local"})
+	session, _ := h.App.DB.InsertSession(&store.Session{TargetID: target.ID, Name: "fork", Agent: "codex", Workdir: root, TmuxSession: "not-needed", Status: "dead"})
+	h.decode("PUT", "/api/agents", []obj{{"name": "codex", "command": "codex", "env": obj{"CODEX_HOME": home}}}, 200, nil)
+	child := "11111111-1111-4111-8111-111111111111"
+	parent := "22222222-2222-4222-8222-222222222222"
+	dir := filepath.Join(home, "sessions")
+	os.MkdirAll(dir, 0700)
+	rows := []obj{
+		{"type": "session_meta", "payload": obj{"id": child, "cwd": root, "source": "cli"}},
+		{"type": "session_meta", "payload": obj{"id": parent, "cwd": "/parent/workspace", "source": "cli"}},
+		{"type": "response_item", "payload": obj{"type": "message", "role": "assistant", "content": []obj{{"type": "output_text", "text": "Copied native fork history"}}}},
+	}
+	var body strings.Builder
+	for _, row := range rows {
+		data, _ := json.Marshal(row)
+		body.Write(data)
+		body.WriteByte('\n')
+	}
+	if err := os.WriteFile(filepath.Join(dir, child+".jsonl"), []byte(body.String()), 0600); err != nil {
+		t.Fatal(err)
+	}
+	var list struct{ Conversations []struct{ ID string } }
+	path := fmt.Sprintf("/api/sessions/%d/conversations", session.ID)
+	h.decode("GET", path, nil, 200, &list)
+	if len(list.Conversations) != 1 || list.Conversations[0].ID != child {
+		t.Fatalf("fork identity replaced by copied parent: %+v", list)
+	}
+	var history obj
+	h.decode("GET", path+"/"+child, nil, 200, &history)
+	data, _ := json.Marshal(history)
+	if !strings.Contains(string(data), "Copied native fork history") {
+		t.Fatal(string(data))
+	}
+	h.decode("GET", path+"/"+parent, nil, 409, nil)
+}

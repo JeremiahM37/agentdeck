@@ -47,6 +47,7 @@ def record(row):
 
 def metadata(file):
     cid = cwd = title = ''
+    codex_header_seen = False
     with open(file, 'rb') as f:
         for _ in range(80):
             if f.tell() >= LIMIT: break
@@ -55,7 +56,10 @@ def metadata(file):
             try: row = json.loads(line)
             except (ValueError, UnicodeError): continue
             if not isinstance(row, dict): continue
-            if agent == 'codex' and row.get('type') == 'session_meta':
+            if agent == 'codex' and row.get('type') == 'session_meta' and not codex_header_seen:
+                # Forks copy the parent's header into their history. The first
+                # native header belongs to this file; later headers are context.
+                codex_header_seen = True
                 p = row.get('payload', {})
                 if not isinstance(p,dict): continue
                 cid = p.get('id', p.get('session_id', '')); cwd = p.get('cwd', '')
