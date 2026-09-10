@@ -1,6 +1,6 @@
 # Multi-repository workspace implementation plan
 
-This is an internal staging design. Multi-repository UI selection is not available yet. Session creation accepts
+This is an internal staging design. Browser multi-repository selection is implemented; terminal creation selection is still pending. Session creation accepts
 `worktree.extra_repositories` entries with `project_id` and optional `base`.
 A primary project is required; all projects must use the same target, and a
 working-directory override is rejected for grouped creation. The planner, target validation and grouped creation/removal
@@ -103,3 +103,13 @@ errors. Terminal unit coverage rejects a stale previous-repository response.
 The first browser run exposed an unstable implicit accessible label containing
 option text; the select now has an explicit Repository label. All three final
 end-to-end cases pass. SWv47 is staged; deployed remainsv46.
+
+
+Browser creation now offers a collapsed Additional repositories section under
+worktree options. Only other registered projects on the primary target are
+eligible; add/remove and per-repository base fields retain draft values, cap seven
+extras, and clear incompatible selections when the primary project changes.
+The primary project's base and shared branch controls remain unchanged.
+`test_browser_creates_grouped_workspace` verifies390/1440 real creation with a
+base tag, exclusion of another target, no horizontal overflow, and draft retention
+after a503 followed by successful retry. Both cases pass. SWv48 is staged.

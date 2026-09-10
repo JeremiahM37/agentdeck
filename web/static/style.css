@@ -719,3 +719,5 @@ body.terminals-open { overflow: hidden; }
 .session-group > summary small {margin-left:10px;color:var(--ink-dim);font-weight:400;}
 .session-group-body {min-width:0;}
 .session-group-body .scard {margin-top:10px;}
+/* Extra repositories stay collapsed until a grouped workspace is needed. */
+#ns-repositories details{margin:12px 0}#ns-repositories summary{cursor:pointer;padding:8px 0;min-height:28px}.workspace-repository{margin-top:12px;padding:12px;border:1px solid var(--line);border-radius:8px;overflow-wrap:anywhere}#ns-repositories select{max-width:100%}

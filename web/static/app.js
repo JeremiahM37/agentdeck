@@ -1,3 +1,4 @@
+import { workspaceRepositories } from "/workspace-repositories.js";
 import { renderSessionGroups } from "/session-groups.js";
 import { CommandPalette } from "/command-palette.js";
 import { openArchiveHistory } from "/archive-history.js";
@@ -836,6 +837,7 @@ function renderNewSession(sheet) {
       <p class="subhint">A fresh session with separate files on a new branch. Starts from a committed revision; uncommitted edits stay in the original directory.</p>
       <label class="f" for="ns-worktree-base">Base branch, tag or commit</label><input class="f" id="ns-worktree-base" placeholder="HEAD — current committed revision">
       <label class="f" for="ns-worktree-branch">New branch name</label><input class="f" id="ns-worktree-branch" placeholder="Automatic unique branch">
+      <div id="ns-repositories"></div>
     </div>
     <label class="f">Start from</label>
     <select class="f" id="ns-start">
@@ -941,12 +943,14 @@ function renderNewSession(sheet) {
   // a blank room is for work that has no name yet; what it becomes is decided
   // afterwards, from the session card
   const projBox = $("#ns-project");
+  const repositories = workspaceRepositories($("#ns-repositories"), state.projects);
   // the blank room is offered first because it is the option people do not know
   // exists — but starting a session usually means starting it on a project, so
   // that stays the selected default whenever there is one
   if (state.projects.length) projBox.value = String(state.projects[0].id);
   const syncProjHint = () => {
     const blank = !projBox.value;
+    repositories.sync(projBox.value);
     $('#ns-worktree').disabled=blank;
     if(blank)$('#ns-worktree').checked=false;
     $('#ns-worktree-options').hidden=!$('#ns-worktree').checked;
@@ -1000,7 +1004,7 @@ function renderNewSession(sheet) {
         profile_id: profileBox.value ? Number(profileBox.value) : 0,
         project_id: projectID,
         scratch: projectID === null,
-        worktree: $("#ns-worktree").checked ? {base:$("#ns-worktree-base").value.trim(),branch:$("#ns-worktree-branch").value.trim()} : null,
+        worktree: $("#ns-worktree").checked ? {base:$("#ns-worktree-base").value.trim(),branch:$("#ns-worktree-branch").value.trim(),extra_repositories:repositories.value()} : null,
         name: $("#ns-name").value.trim(),
         group_path: $("#ns-group").value.trim(),
         agent: agentBox.value,

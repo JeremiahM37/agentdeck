@@ -53,3 +53,43 @@ def test_grouped_terminal_review_switches_repository(real_terminal):
         d.send('\t');d.wait('PRIMARY DIFF SENTINEL')
         d.send('\x1b');d.wait('Grouped review');d.quit()
     finally:d.close()
+
+
+@pytest.mark.parametrize('width',[390,1440])
+def test_browser_creates_grouped_workspace(page,real_terminal,width):
+    t=real_terminal;primary,_=setup(t)
+    repo=t['root'].parent/'extra';repo.mkdir()
+    subprocess.run(['git','init','-q',str(repo)],check=True)
+    (repo/'extra.txt').write_text('extra repository\n')
+    subprocess.run(['git','-C',str(repo),'add','.'],check=True)
+    subprocess.run(['git','-C',str(repo),'-c','user.name=Test','-c','user.email=test@example.invalid','commit','-qm','base'],check=True)
+    subprocess.run(['git','-C',str(repo),'tag','review-base'],check=True)
+    extra=t['api']('/projects',{'name':'Extra project','target_id':t['target_id'],'repo_path':str(repo)})
+    other_target=t['api']('/targets',{'name':'Other machine','kind':'local'})
+    t['api']('/projects',{'name':'Wrong target','target_id':other_target['id'],'repo_path':str(repo)})
+    page.set_viewport_size({'width':width,'height':900});page.goto(t['url']+'/#sessions')
+    page.locator('#sess-new').click();page.locator('#ns-project').select_option(str(primary['id']))
+    page.locator('#ns-name').fill('Browser grouped workspace');page.locator('#ns-worktree').check()
+    page.locator('#ns-repositories summary').click()
+    picker=page.get_by_label('Additional repository',exact=True)
+    expect(picker).not_to_contain_text('Wrong target')
+    picker.select_option(str(extra['id']));page.get_by_role('button',name='Add repository',exact=True).click()
+    page.get_by_label('Base for Extra project',exact=True).fill('review-base')
+    expect(page.locator('#ns-repositories summary')).to_contain_text('(1)')
+    assert page.locator('#sheet').evaluate('(e)=>e.scrollWidth<=e.clientWidth+1')
+    def unavailable(route):
+        if route.request.method=='POST':route.fulfill(status=503,content_type='application/json',body='{"detail":"Temporary creation failure"}')
+        else:route.continue_()
+    page.route('**/api/sessions',unavailable)
+    page.locator('#ns-go').click()
+    expect(page.locator('#toasts')).to_contain_text('Temporary creation failure')
+    expect(page.get_by_label('Base for Extra project',exact=True)).to_have_value('review-base')
+    expect(page.locator('#ns-repositories summary')).to_contain_text('(1)')
+    page.unroute('**/api/sessions',unavailable)
+    with page.expect_response(lambda r:r.request.method=='POST' and r.url.endswith('/sessions')) as response:
+        page.locator('#ns-go').click()
+    assert response.value.status==201,response.value.text()
+    row=response.value.json();repositories=row['workspace']['repositories']
+    assert len(repositories)==2 and repositories[1]['worktree']['base']=='review-base'
+    assert (Path(repositories[1]['worktree']['path'])/'extra.txt').read_text()=='extra repository\n'
+    assert row['workdir']==row['workspace']['path']
