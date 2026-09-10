@@ -33,7 +33,7 @@ class Dashboard:
         command=[_binary(),*args]
         if outer_tmux:command=["tmux","new-session","-s","dashboard-outer",*command]
         self.proc=subprocess.Popen(command,stdin=self.slave,stdout=self.slave,stderr=self.slave,
-          env={**t['env'],'AGENTDECK_API':t['url'],'TERM':'xterm-256color','AGENTDECK_ATTACH_HOST':''},
+          env={**t['env'],**({'XDG_CONFIG_HOME':str(t['root']/'.console-config')} if 'root' in t else {}),'AGENTDECK_API':t['url'],'TERM':'xterm-256color','AGENTDECK_ATTACH_HOST':''},
           preexec_fn=controlling_terminal)
     def pump(self,duration=.1):
         end=time.monotonic()+duration
@@ -180,4 +180,27 @@ def test_dashboard_edits_notification_settings_without_json(real_terminal):
         d.send('\t\tharmless-test-topic\x13');d.wait('Save settings completed')
         assert t['api']('/settings')['ntfy_topic']=='harmless-test-topic'
         d.quit()
+    finally:d.close()
+
+
+def test_dashboard_restores_group_layout_after_restart(real_terminal):
+    t=real_terminal
+    request=urllib.request.Request(t['url']+f"/api/sessions/{t['id']}", method='PATCH',
+        headers={'Content-Type':'application/json'},data=json.dumps({'group_path':'Work/Backend'}).encode())
+    with urllib.request.urlopen(request) as response:assert response.status==200
+    d=Dashboard(t)
+    try:
+        d.wait('Real terminal');d.send('ggg');d.wait('group: named group')
+        d.send('[');d.wait('▸ Backend (1)')
+        d.send('2gg');d.send('1');d.wait('group: named group')
+        d.quit()
+    finally:d.close()
+    d=Dashboard(t)
+    try:
+        d.wait('group: named group');d.wait('▸ Backend (1)')
+        assert 'Real terminal' not in d.text
+        d.send('/Real terminal\r');d.wait('Real terminal')
+        d.send('\x1b');d.wait('▸ Backend (1)')
+        d.quit()
+        subprocess.run(['tmux','has-session','-t','=terminal-test'],env=t['env'],check=True)
     finally:d.close()

@@ -50,11 +50,11 @@ in this document is not a substitute for that evidence.
 | Find, group, monitor, attach, detach, reconnect | Live dashboard + PTY tests; browser real tmux resize/reconnect/dual-client tests. Broader multi-session and saved-view UX comparison remains. |
 | Review ongoing work | Live staged/working review implemented for TUI and web; real Git API tests cover renames, binary/untracked files, path boundaries and unchanged index; Playwright covers desktop/mobile, stale responses and retained attachment; actual SSH target proof passed. Full rollout verification is recorded in shared memory. |
 | Branch a conversation / isolated parallel work | Native Claude/Codex workspace conversation picker, paginated reader, and exact-ID fork implemented in TUI/web. API, real tmux/PTY and mobile browser tests cover boundaries, unchanged original history and explicit confirmation. Installed Codex fork persisted a distinct ID; installed Claude loaded saved history with its native fork flag (no new turn). Fresh interactive worktree creation/removal now exists in both interfaces, with durable allocation, ownership checks, retained branches, local/SSH Git proof and mobile/desktop/PTy tests. Native forks still share their original workspace; automatic terminal-to-native identity and combined fork/isolation remain gaps. |
-| Organize large fleets | Named group paths now persist across projects/targets and inherit on forks/handoffs. TUI and web have nested collapse/counts; terminal search reveals folded children and selection/collapse survive refresh. Web keeps per-tab display state. Profile configuration, archive/recovery, persisted TUI view preferences and global conversation search remain. |
+| Organize large fleets | Named group paths now persist across projects/targets and inherit on forks/handoffs. TUI and web have nested collapse/counts; terminal search reveals folded children and selection/collapse survive refresh. Web keeps per-tab display state. TUI grouping is remembered per section/server and folded named groups survive restarts, with real PTY restart coverage. Profile configuration, archive/recovery and global conversation search remain. |
 | Agent setup | Custom commands exist; named agent settings, MCP/skills setup, installed-agent discovery and lifecycle need comparison with current upstream. |
 | Workspace setup | Task and single-repository interactive worktrees run on local/SSH targets. Multi-repository interactive workspaces and repo setup hooks need audit/implementation. |
 | Sandbox choices | Existing Proxmox sandbox path is not equivalent to portable Docker/Podman sandboxing; portability gap remains. |
-| Web everyday management | Global command search now reaches sessions, tasks, projects, settings and common actions from desktop/mobile; real browser/tmux tests cover attachment, retained terminal identity, keyboard selection, draft/focus restoration, and refresh failures. Mobile terminals now default to focused navigation with a one-button return, retained frames, visible file/tool controls, and Esc/Tab/arrows/Ctrl-C keys. Real tmux tests cover height gained, application cursor keys, offline recovery, rotation, and restored preferences. Internal terminal tabs, structured chat, PDFs, routines/takeover and approvals exist. Native conversation content is not yet part of global search. Benchmark the same create/find/attach/review/send/recover workflows against AoE desktop and phone; improve discoverability and consistency before claiming superiority. |
+| Web everyday management | Global command search now reaches sessions, tasks, projects, settings and common actions from desktop/mobile; real browser/tmux tests cover attachment, retained terminal identity, keyboard selection, draft/focus restoration, and refresh failures. Mobile terminals now default to focused navigation with a one-button return, retained frames, visible file/tool controls, and Esc/Tab/arrows/Ctrl-C keys in focused, expanded and standalone phone terminals. Real tmux tests cover height gained, application cursor keys, offline recovery, rotation, and restored preferences. Internal terminal tabs, structured chat, PDFs, routines/takeover and approvals exist. Native conversation content is not yet part of global search. Benchmark the same create/find/attach/review/send/recover workflows against AoE desktop and phone; improve discoverability and consistency before claiming superiority. |
 | Installation and keyboard UX | Linux and Windows SSH clients exist; installation portability, help consistency, terminal compatibility and first-run flows need further audit. |
 
 Current upstream evidence: the Agent Deck README lists session forks, archive,
@@ -62,3 +62,14 @@ MCP/skills managers, global search and settings; the AoE README lists profiles,
 repo hooks, multi-repo workspaces, portable containers and structured mobile
 views. These remain part of the comparison, not exclusions added to declare the
 current implementation sufficient.
+
+## Local terminal layout preferences
+
+The console remembers grouping separately for Sessions, Tasks and other sections,
+and remembers folded named session groups. Preferences live under the operating
+system user config directory at `agentdeck/console/<server-hash>.json` (on Linux,
+`$XDG_CONFIG_HOME/agentdeck/console`, or `~/.config/agentdeck/console`). Each server
+has a separate file. Remove its file while the dashboard is closed to reset the
+layout. Queries, selected sessions, attention filters and credentials are not
+saved. Invalid or newer-version files are preserved; the dashboard displays a
+notice and remains usable without saving over them.

@@ -100,6 +100,8 @@ type dashboard struct {
 	review                         *codeReview
 	native                         *nativeSelection
 	grouping                       int
+	groupingBySection              map[string]int
+	preferencePath                 string
 	collapsed                      map[string]bool
 	matched                        int
 	attention, ended               bool
@@ -119,6 +121,7 @@ type dashboard struct {
 // for pipes and accessibility via console --plain.
 func RunDashboard(c *Client, in io.Reader, out io.Writer, attach func(string, string) error) error {
 	m := newDashboard(c, attach)
+	m.loadPreferences()
 	_, err := tea.NewProgram(m, tea.WithInput(in), tea.WithOutput(out), tea.WithAltScreen(), tea.WithMouseCellMotion()).Run()
 	return err
 }
@@ -127,7 +130,7 @@ func newDashboard(c *Client, attach func(string, string) error) *dashboard {
 	q.Prompt = "/ "
 	q.Placeholder = "Search name, project, target, agent…"
 	q.CharLimit = 200
-	m := &dashboard{client: c, attach: attach, width: 100, height: 30, query: q, preview: viewport.New(50, 20)}
+	m := &dashboard{client: c, attach: attach, width: 100, height: 30, query: q, preview: viewport.New(50, 20), groupingBySection: map[string]int{}}
 	m.layout()
 	return m
 }
@@ -339,7 +342,9 @@ func (m *dashboard) updatePreview() {
 }
 func pretty(v any) string { b, _ := json.MarshalIndent(v, "", "  "); return string(b) }
 func (m *dashboard) switchSection(i int) tea.Cmd {
+	m.groupingBySection[sections[m.section]] = m.grouping
 	m.section = (i + len(sections)) % len(sections)
+	m.grouping = m.groupingBySection[sections[m.section]]
 	m.rows = nil
 	m.visible = nil
 	m.selected = 0
@@ -579,8 +584,13 @@ func (m *dashboard) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.updatePreview()
 			}
 		case "g":
-			m.grouping = (m.grouping + 1) % 4
+			modes := 3
+			if m.section == 0 {
+				modes = 4
+			}
+			m.grouping = (m.grouping + 1) % modes
 			m.filter()
+			m.savePreferences()
 		case " ":
 			m.toggleGroup()
 		case "[":
@@ -906,5 +916,6 @@ const dashboardHelp = ` Keyboard shortcuts
 
  Forms: Tab/Shift-Tab move; ←/→ choose named options; Ctrl-s submit; Esc cancel.
  Quit closes only this dashboard. Your tmux sessions keep running.
+ Grouping and folded groups are remembered for this server on this device.
 
  Press any key to close help.`

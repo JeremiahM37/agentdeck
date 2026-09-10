@@ -97,6 +97,7 @@ func (m *dashboard) setGroupCollapsed(path string, collapsed bool) {
 	}
 	m.ensureSelection()
 	m.updatePreview()
+	m.savePreferences()
 }
 func (m *dashboard) toggleGroup() {
 	if r := m.selectedGroup(); r != nil {
