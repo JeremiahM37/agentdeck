@@ -60,6 +60,74 @@ func (u *UI) request(method, path string, body any) error {
 	}
 	return e
 }
+
+// mcpSettings gives the plain terminal client the same complete add/edit/remove
+// editor as the dashboard. The server returns only redacted values; @file is
+// supported for multi-line JSON, and a conditional retry keeps the draft when a
+// browser or another terminal changed the project concurrently.
+func (u *UI) mcpSettings(path string) error {
+	data, err := u.Client.JSON("GET", path+"/mcp", nil)
+	if err != nil {
+		return err
+	}
+	var current struct {
+		MCP       map[string]any `json:"mcp"`
+		Revision  string         `json:"revision"`
+		StrictMCP bool           `json:"strict_mcp"`
+	}
+	if err := json.Unmarshal(data, &current); err != nil {
+		return err
+	}
+	u.say("MCP servers (redacted secrets are retained):")
+	u.show(data)
+	for {
+		s, err := u.ask("MCP JSON or @file (blank cancels)", "")
+		if err != nil || s == "" {
+			return err
+		}
+		b := []byte(s)
+		if strings.HasPrefix(s, "@") {
+			b, err = os.ReadFile(s[1:])
+			if err != nil {
+				return err
+			}
+		}
+		var servers map[string]any
+		if err := json.Unmarshal(b, &servers); err != nil {
+			u.say("MCP JSON must be an object: %v", err)
+			continue
+		}
+		strict, err := u.ask("Claude strict replacement (true/false)", fmt.Sprint(current.StrictMCP))
+		if err != nil {
+			return err
+		}
+		if strict != "true" && strict != "false" {
+			u.say("Enter true or false.")
+			continue
+		}
+		body := map[string]any{"mcp": servers, "revision": current.Revision, "strict_mcp": strict == "true"}
+		err = u.request("PUT", path+"/mcp", body)
+		if err == nil {
+			return nil
+		}
+		if he, ok := err.(*HTTPError); ok && he.Status == 409 {
+			u.say("MCP settings changed elsewhere; your draft is preserved.")
+			retry, askErr := u.ask("Retry this draft against the new settings? (yes/no)", "no")
+			if askErr != nil || retry != "yes" {
+				return err
+			}
+			fresh, freshErr := u.Client.JSON("GET", path+"/mcp", nil)
+			if freshErr != nil {
+				return freshErr
+			}
+			if freshErr = json.Unmarshal(fresh, &current); freshErr != nil {
+				return freshErr
+			}
+			continue
+		}
+		return err
+	}
+}
 func (u *UI) confirm(label string) bool {
 	s, e := u.ask(label+" — type yes to continue", "")
 	return e == nil && s == "yes"

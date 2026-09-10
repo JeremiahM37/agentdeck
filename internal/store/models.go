@@ -32,20 +32,22 @@ type Target struct {
 // Project is a repository on a target, plus every policy that governs agents
 // dispatched against it.
 type Project struct {
-	SetupCmd              string  `json:"setup_cmd"`
-	ID                    int64   `json:"id"`
-	Name                  string  `json:"name"`
-	TargetID              int64   `json:"target_id"`
-	RepoPath              string  `json:"repo_path"`
-	DefaultBaseBranch     string  `json:"default_base_branch"`
-	WorkrootOverride      string  `json:"workroot_override"`
-	PolicyJSON            string  `json:"policy_json"`
-	VerifyCmd             string  `json:"verify_cmd"`
-	KeepWorktrees         int     `json:"keep_worktrees"`
-	ReviewGate            int     `json:"review_gate"`
-	EnvJSON               string  `json:"env_json"`
-	ContextJSON           string  `json:"context_json"`
-	MCPJSON               string  `json:"mcp_json"`
+	SetupCmd          string `json:"setup_cmd"`
+	ID                int64  `json:"id"`
+	Name              string `json:"name"`
+	TargetID          int64  `json:"target_id"`
+	RepoPath          string `json:"repo_path"`
+	DefaultBaseBranch string `json:"default_base_branch"`
+	WorkrootOverride  string `json:"workroot_override"`
+	PolicyJSON        string `json:"policy_json"`
+	VerifyCmd         string `json:"verify_cmd"`
+	KeepWorktrees     int    `json:"keep_worktrees"`
+	ReviewGate        int    `json:"review_gate"`
+	EnvJSON           string `json:"env_json"`
+	ContextJSON       string `json:"context_json"`
+	// MCPJSON is credential-bearing storage and is exposed only through the
+	// redacted /projects/{id}/mcp endpoint. Never serialize it in a project row.
+	MCPJSON               string  `json:"-"`
 	StrictMCP             int     `json:"strict_mcp"`
 	PermissionsJSON       string  `json:"permissions_json"`
 	GateMatcher           string  `json:"gate_matcher"`

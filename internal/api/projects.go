@@ -152,6 +152,12 @@ func (s *Server) patchProject(w http.ResponseWriter, r *http.Request) {
 		httpError(w, 422, "%s", err.Error())
 		return
 	}
+	// Dedicated MCP edits use a conditional revision. Serialise legacy PATCHes
+	// that touch the same fields so they cannot interleave a read/modify/write.
+	if p.MCP != nil || p.StrictMCP != nil {
+		s.mcpMu.Lock()
+		defer s.mcpMu.Unlock()
+	}
 	if p.SetupCmd != nil && (len(*p.SetupCmd) > 16384 || strings.ContainsRune(*p.SetupCmd, 0)) {
 		httpError(w, 422, "setup_cmd must be at most 16384 bytes without NUL")
 		return

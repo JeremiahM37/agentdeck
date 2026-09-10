@@ -80,6 +80,8 @@ func (m *dashboard) choose(a dashboardAction) tea.Cmd {
 		return m.attachSelected(true)
 	case "group":
 		return m.groupForm()
+	case "mcp":
+		return m.mcpSettingsForm()
 	case "rename":
 		return m.renameForm()
 	case "edit":
@@ -178,7 +180,7 @@ func (m *dashboard) rowActions() []dashboardAction {
 	case "routines":
 		actions = []dashboardAction{post("Run now", "/run"), {Label: "Enable schedule", Method: "PATCH", Path: path, Body: map[string]any{"enabled": true}}, {Label: "Disable schedule", Method: "PATCH", Path: path, Body: map[string]any{"enabled": false}}, op("Rename", "rename"), op("Edit routine", "edit")}
 	case "projects":
-		actions = []dashboardAction{op("Open project shell", "attach"), op("Review changes", "review"), read("Project brief", "/brief"), read("Notes", "/notes"), read("Handoffs", "/wraps"), read("Capabilities", "/capability"), op("Rename", "rename"), op("Edit project", "edit")}
+		actions = []dashboardAction{op("Open project shell", "attach"), op("Review changes", "review"), read("Project brief", "/brief"), read("Notes", "/notes"), read("Handoffs", "/wraps"), read("Capabilities", "/capability"), op("MCP settings (add / edit / remove)", "mcp"), op("Rename", "rename"), op("Edit project", "edit")}
 	case "targets":
 		actions = []dashboardAction{post("Check connection", "/check"), read("Check agent commands", "/agents"), op("Rename", "rename"), op("Edit target", "edit")}
 	case "approvals":
@@ -327,7 +329,7 @@ func formBody(fields []field) (map[string]any, error) {
 				return nil, fmt.Errorf("Choose a project")
 			}
 			out[f.Key] = []int64{n}
-		case f.Key == "multi_repo" || f.Key == "isolated" || f.Key == "resume" || f.Key == "brief" || f.Key == "yolo" || f.Key == "enabled" || f.Key == "dispatch":
+		case f.Key == "multi_repo" || f.Key == "isolated" || f.Key == "resume" || f.Key == "brief" || f.Key == "yolo" || f.Key == "enabled" || f.Key == "dispatch" || f.Key == "strict_mcp":
 			out[f.Key] = v == "true"
 		default:
 			out[f.Key] = v
@@ -538,6 +540,69 @@ func (m *dashboard) jsonForm(title, method, path string, value any) tea.Cmd {
 			return nil
 		}
 		return m.request(title, method, path, data, false)
+	})
+}
+
+// mcpSettingsForm is the terminal equivalent of the project MCP editor. It
+// edits the redacted document through the conditional MCP endpoint, so
+// add/edit/remove remain available without opening a browser and a failed save
+// leaves the textarea intact for retry.
+func (m *dashboard) mcpSettingsForm() tea.Cmd {
+	r := m.current()
+	if r == nil || sections[m.section] != "projects" || m.busy {
+		return nil
+	}
+	m.busy = true
+	c, path := m.client, "/projects/"+id(r)+"/mcp"
+	return func() tea.Msg {
+		data, err := c.JSON("GET", path, nil)
+		return loadedFormMsg{"MCP settings (JSON)", "PUT", path, data, err}
+	}
+}
+
+func (m *dashboard) mcpSettingsLoaded(data []byte, path string) tea.Cmd {
+	var envelope struct {
+		MCP       map[string]any `json:"mcp"`
+		Revision  string         `json:"revision"`
+		StrictMCP bool           `json:"strict_mcp"`
+	}
+	if err := json.Unmarshal(data, &envelope); err != nil {
+		m.notice = "MCP settings: " + err.Error()
+		return nil
+	}
+	revision := envelope.Revision
+	return m.openForm("MCP settings (JSON) — add / edit / remove", []field{
+		{Key: "mcp", Label: "Servers JSON (redacted secrets are retained)", Value: pretty(envelope.MCP), Multiline: true, Required: true},
+		boolField("strict_mcp", "Claude strict replacement (Codex does not support this)", envelope.StrictMCP),
+	}, func(body map[string]any) tea.Cmd {
+		var servers map[string]any
+		if err := json.Unmarshal([]byte(str(body["mcp"])), &servers); err != nil {
+			m.notice = "MCP settings must be a JSON object: " + err.Error()
+			return nil
+		}
+		if m.busy {
+			return nil
+		}
+		m.busy = true
+		c := m.client
+		payload := map[string]any{"mcp": servers, "revision": revision, "strict_mcp": body["strict_mcp"]}
+		return func() tea.Msg {
+			result, err := c.JSON("PUT", path, payload)
+			if he, ok := err.(*HTTPError); ok && he.Status == 409 {
+				// Refresh only the revision. The form remains open with the
+				// user's draft, and the next explicit save resolves the conflict.
+				fresh, freshErr := c.JSON("GET", path, nil)
+				if freshErr == nil {
+					var latest struct {
+						Revision string `json:"revision"`
+					}
+					if json.Unmarshal(fresh, &latest) == nil && latest.Revision != "" {
+						revision = latest.Revision
+					}
+				}
+			}
+			return resultMsg{label: "Save MCP settings", data: result, err: err}
+		}
 	})
 }
 func (m *dashboard) editForm() tea.Cmd {

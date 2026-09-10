@@ -1372,20 +1372,17 @@ function projectCard(p) {
   mcpSection.className = "project-mcp";
   mcpSection.innerHTML = `<h4>Project MCP servers</h4>
     <p class="sub">Applied to new, resumed, and forked sessions. Running agent processes do not hot-reload. Codex uses additive settings; strict replacement is Claude-only.</p>
+    <label class="f">Claude strict MCP replacement
+      <select class="f project-mcp-strict"><option value="false">Off — add to the target settings</option><option value="true">On — replace inherited MCP settings</option></select>
+    </label>
     <div class="project-mcp-list"></div>
-    <div class="btnrow"><button class="b project-mcp-add">Add server</button><button class="b ok project-mcp-save">Save MCP settings</button></div>
+    <div class="btnrow"><button class="b project-mcp-add">Add server</button><button class="b project-mcp-reload">Reload</button><button class="b ok project-mcp-save">Save MCP settings</button></div>
     <div class="sub project-mcp-status" role="status"></div>`;
   el.appendChild(mcpSection);
   const mcpList = $(".project-mcp-list", mcpSection), mcpStatus = $(".project-mcp-status", mcpSection);
-  const sourceMCP = p.mcp && p.mcp.mcpServers ? p.mcp.mcpServers : (p.mcp || {});
-  const draft = JSON.parse(JSON.stringify(sourceMCP));
-  const sensitive = /token|secret|password|authorization|api[-_]?key/i;
-  const redactMCP = (value, key = "") => {
-    if (sensitive.test(key)) return "[secret retained]";
-    if (Array.isArray(value)) return value.map((v) => redactMCP(v, key));
-    if (value && typeof value === "object") return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, redactMCP(v, k)]));
-    return value;
-  };
+  let sourceMCP = {};
+  let mcpRevision = "";
+  const draft = {};
   const drawMCP = () => {
     mcpList.innerHTML = "";
     for (const [name, cfg] of Object.entries(draft)) {
@@ -1398,10 +1395,17 @@ function projectCard(p) {
       const type = cfg.url ? "http" : "stdio"; $(".mcp-type", row).value = type;
       const command = $(".mcp-command", row); command.value = cfg.url || cfg.command || "";
       const extra = $(".mcp-extra", row); extra.placeholder = type === "http" ? '{"headers":{}}' : '{"args":[],"env":{}}';
-      const extraObj = {}; if (cfg.args) extraObj.args = cfg.args; if (cfg.env) extraObj.env = cfg.env; if (cfg.headers) extraObj.headers = cfg.headers;
-      extra.value = JSON.stringify(redactMCP(extraObj), null, 2);
+      const extraObj = {...cfg}; delete extraObj.command; delete extraObj.url;
+      // The endpoint already returned opaque retention tokens. Keep those
+      // tokens visible in the draft so a save can restore the server value;
+      // never replace them with a second client-side placeholder.
+      extra.value = JSON.stringify(extraObj, null, 2);
       const remove = $(".mcp-remove", row); remove.onclick = () => { delete draft[name]; drawMCP(); };
       row.onchange = () => { mcpStatus.textContent = "Unsaved MCP changes"; };
+      $(".mcp-type", row).onchange = () => {
+        extra.placeholder = $(".mcp-type", row).value === "http" ? '{"headers":{}}' : '{"args":[],"env":{}}';
+        mcpStatus.textContent = "Unsaved MCP changes";
+      };
       mcpList.appendChild(row);
     }
   };
@@ -1413,19 +1417,54 @@ function projectCard(p) {
       if (!name || !/^[A-Za-z0-9_-]+$/.test(name) || next[name]) { invalid = "Names must be unique and use letters, digits, _ or -."; break; }
       if (!command) { invalid = `${name}: command or URL is required.`; break; }
       let extra = {}; try { extra = JSON.parse($(".mcp-extra", row).value || "{}"); } catch { invalid = `${name}: extra settings must be valid JSON.`; break; }
-      const original = sourceMCP[name] || {};
-      const retain = (key, value) => value === "[secret retained]" ? original[key] : value;
-      if (extra.headers) extra.headers = retain("headers", extra.headers);
-      if (extra.env) extra.env = retain("env", extra.env);
-      next[name] = type === "http" ? {url: command, ...(extra.headers ? {headers: extra.headers} : {})} : {command, ...(extra.args ? {args: extra.args} : {}), ...(extra.env ? {env: extra.env} : {})};
+      next[name] = type === "http" ? {url: command, ...extra} : {command, ...extra};
     }
     if (invalid) { mcpStatus.textContent = invalid; return; }
     const btn = $(".project-mcp-save", mcpSection); btn.disabled = true; mcpStatus.textContent = "Saving…";
-    try { await api(`/projects/${p.id}`, {method:"PATCH", body:{mcp: next}}); p.mcp = next; Object.keys(draft).forEach(k => delete draft[k]); Object.assign(draft, next); mcpStatus.textContent = "Saved. New and resumed/forked sessions will use this configuration."; }
-    catch (e) { mcpStatus.textContent = e.message; }
+    try {
+      const saved = await api(`/projects/${p.id}/mcp`, {method:"PUT", body:{mcp: next, revision:mcpRevision, strict_mcp: $(".project-mcp-strict", mcpSection).value === "true"}});
+      sourceMCP = saved.mcp || {}; mcpRevision = saved.revision || "";
+      Object.keys(draft).forEach(k => delete draft[k]); Object.assign(draft, JSON.parse(JSON.stringify(sourceMCP)));
+      $(".project-mcp-strict", mcpSection).value = saved.strict_mcp ? "true" : "false";
+      drawMCP();
+      mcpStatus.textContent = "Saved. New and resumed/forked sessions will use this configuration.";
+    }
+    catch (e) {
+      if (e.status === 409) {
+        // Refresh only the conditional revision. Keep the draft on screen so
+        // the next explicit Save is the user's conflict resolution, rather
+        // than silently replacing their edits with the other writer's copy.
+        try {
+          const latest = await api(`/projects/${p.id}/mcp`);
+          mcpRevision = latest.revision || mcpRevision;
+          mcpStatus.textContent = "MCP settings changed elsewhere; your draft is preserved. Review it, then Save again to replace the newer copy.";
+        } catch (refreshError) {
+          mcpStatus.textContent = "MCP settings changed elsewhere; your draft is preserved, but the new revision could not be loaded: " + refreshError.message;
+        }
+      } else {
+        mcpStatus.textContent = e.message;
+      }
+    }
     finally { btn.disabled = false; }
   };
+  const loadMCP = async (discardDraft = false) => {
+    if (!discardDraft && mcpRevision && mcpStatus.textContent.startsWith("Unsaved")) return;
+    try {
+      const loaded = await api(`/projects/${p.id}/mcp`);
+      sourceMCP = loaded.mcp || {}; mcpRevision = loaded.revision || "";
+      Object.keys(draft).forEach(k => delete draft[k]); Object.assign(draft, JSON.parse(JSON.stringify(sourceMCP)));
+      $(".project-mcp-strict", mcpSection).value = loaded.strict_mcp ? "true" : "false";
+      drawMCP(); mcpStatus.textContent = "MCP settings loaded.";
+    } catch (e) { mcpStatus.textContent = "Could not load MCP settings: " + e.message; }
+  };
+  $(".project-mcp-reload", mcpSection).onclick = () => {
+    if (mcpStatus.textContent.startsWith("Unsaved") || mcpStatus.textContent.includes("draft")) {
+      if (!confirm("Discard the unsaved MCP draft and reload the server settings?")) return;
+    }
+    loadMCP(true);
+  };
   drawMCP();
+  loadMCP();
   const sel = $(".cap-sel", el);
   const info = $(".cap-info", el);
   sel.value = p.capability_profile || "restricted";

@@ -539,6 +539,9 @@ func (m *dashboard) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if v.path == "/settings" {
 			return m, m.notificationForm(v.data)
 		}
+		if strings.HasSuffix(v.path, "/mcp") {
+			return m, m.mcpSettingsLoaded(v.data, v.path)
+		}
 		var body any
 		if e := json.Unmarshal(v.data, &body); e != nil {
 			m.notice = e.Error()

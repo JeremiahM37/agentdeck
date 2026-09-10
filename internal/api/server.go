@@ -53,6 +53,11 @@ type Server struct {
 	searchJobs  map[string]*conversationSearchJob
 	searchSlots chan struct{}
 
+	// mcpMu serialises conditional project MCP edits. The endpoint returns a
+	// revision instead of exposing credential-bearing values to its clients.
+	mcpMu  sync.Mutex
+	mcpKey []byte
+
 	uploadMu    sync.Mutex
 	uploadCount int
 
@@ -82,6 +87,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/projects", s.listProjects)
 	mux.HandleFunc("POST /api/projects", s.createProject)
 	mux.HandleFunc("PATCH /api/projects/{id}", s.patchProject)
+	mux.HandleFunc("GET /api/projects/{id}/mcp", s.projectMCP)
+	mux.HandleFunc("PUT /api/projects/{id}/mcp", s.putProjectMCP)
 	mux.HandleFunc("DELETE /api/projects/{id}", s.deleteProject)
 	mux.HandleFunc("GET /api/projects/usage", s.projectsUsage)
 	mux.HandleFunc("POST /api/projects/{id}/terminal", s.projectTerminal)

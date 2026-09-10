@@ -148,6 +148,59 @@ func TestDashboardFailedMutationKeepsDraft(t *testing.T) {
 		t.Fatal("failed request discarded draft")
 	}
 }
+
+func TestDashboardMCPSettingsEditorUsesRevisionAndKeepsDraftOnConflict(t *testing.T) {
+	requests, reads := 0, 0
+	var retryBody map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/projects/7/mcp" {
+			t.Fatalf("wrong MCP path: %s", r.URL.Path)
+		}
+		if r.Method == "GET" {
+			reads++
+			if reads == 1 {
+				fmt.Fprint(w, `{"mcp":{"fixture":{"command":"fixture"}},"revision":"rev-1","strict_mcp":false}`)
+			} else {
+				fmt.Fprint(w, `{"mcp":{"fixture":{"command":"other-writer"}},"revision":"rev-2","strict_mcp":false}`)
+			}
+			return
+		}
+		requests++
+		if requests == 1 {
+			w.WriteHeader(http.StatusConflict)
+			fmt.Fprint(w, `{"detail":"MCP settings changed elsewhere"}`)
+			return
+		}
+		if err := json.NewDecoder(r.Body).Decode(&retryBody); err != nil {
+			t.Fatal(err)
+		}
+		fmt.Fprint(w, `{"mcp":{},"revision":"rev-2","strict_mcp":false}`)
+	}))
+	defer srv.Close()
+	m := newDashboard(New(srv.URL, ""), nil)
+	m.section = 3
+	m.rows = []row{{"id": float64(7), "name": "Fixture"}}
+	m.filter()
+	msg := m.mcpSettingsForm()()
+	m.Update(msg)
+	if m.form == nil || m.form.fields[0].Key != "mcp" || !strings.Contains(m.form.fields[0].Value, "fixture") {
+		t.Fatalf("MCP form did not load: %#v", m.form)
+	}
+	m.form.editor.SetValue(`{"fixture":{"command":"changed"}}`)
+	cmd := m.updateForm(tea.KeyMsg{Type: tea.KeyCtrlS})
+	m.Update(cmd())
+	if m.form == nil || !strings.Contains(m.form.fields[0].Value, "changed") || !strings.Contains(m.notice, "changed elsewhere") {
+		t.Fatalf("conflict discarded MCP draft: form=%#v notice=%q", m.form, m.notice)
+	}
+	// A second Ctrl-s retries exactly the preserved draft with the refreshed
+	// revision; the fixture server accepts it to prove no re-fetch overwrote it.
+	m.form.editor.SetValue(`{"fixture":{"command":"changed"}}`)
+	cmd = m.updateForm(tea.KeyMsg{Type: tea.KeyCtrlS})
+	m.Update(cmd())
+	if m.form != nil || requests != 2 || retryBody["revision"] != "rev-2" {
+		t.Fatalf("MCP retry did not submit preserved draft: form=%v requests=%d", m.form != nil, requests)
+	}
+}
 func TestDashboardTaskCreateDispatchDoesNotDuplicateAfterPartialFailure(t *testing.T) {
 	creates, dispatches := 0, 0
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
