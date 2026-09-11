@@ -28,7 +28,7 @@ func TestLocalRuntimeRealProcessPersistenceAndConcurrency(t *testing.T) {
 	env := localTestEnv(state)
 	t.Cleanup(func() { _, _ = runLocalCLI(bin, env, "local", "stop") })
 
-	if out, err := runLocalCLI(bin, env, "local", "--help"); err != nil || !bytes.Contains(out, []byte("does not launch local claude")) {
+	if out, err := runLocalCLI(bin, env, "local", "--help"); err != nil || !bytes.Contains(out, []byte("agentdeck local status")) || !bytes.Contains(out, []byte("agentdeck local [COMMAND ...]")) {
 		t.Fatalf("local help: err=%v output=%s", err, out)
 	}
 	if _, err := os.Stat(filepath.Join(state, "agentdeck", "local")); !os.IsNotExist(err) {
@@ -97,6 +97,10 @@ func TestLocalRuntimeRealProcessPersistenceAndConcurrency(t *testing.T) {
 	if err != nil || !bytes.Contains(targets, []byte(`"name":"local"`)) {
 		t.Fatalf("local target seed: err=%v output=%s", err, targets)
 	}
+	attachOutput, attachErr := runLocalCLI(bin, env, "attach", "session", "999999")
+	if attachErr == nil || bytes.Contains(attachOutput, []byte("unknown client command")) {
+		t.Fatalf("local attach did not reach the local attachment API: err=%v output=%s", attachErr, attachOutput)
+	}
 	if out, err := runLocalCLI(bin, env, "local", "stop"); err != nil {
 		t.Fatalf("local stop: %v (%s)", err, out)
 	}
@@ -136,6 +140,30 @@ func TestExplicitRemoteFailureDoesNotFallbackToLocal(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(state, "agentdeck", "local")); !os.IsNotExist(err) {
 		t.Fatalf("explicit remote failure started local runtime: %v", err)
+	}
+}
+
+func TestHostedAttachMarkerReachesHostedLookup(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("hosted attachment uses POSIX terminal launch")
+	}
+	bin := filepath.Join(t.TempDir(), "agentdeck")
+	build := exec.Command("go", "build", "-o", bin, ".")
+	if out, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("build local CLI: %v\n%s", err, out)
+	}
+	state := t.TempDir()
+	env := localTestEnv(state)
+	env = append(env, "AGENTDECK_PORT=1")
+	out, err := runLocalCLI(bin, env, "--hosted-attach", "attach", "session", "17")
+	if err == nil {
+		t.Fatal("hosted attachment unexpectedly connected")
+	}
+	if bytes.Contains(out, []byte("usage: --hosted-attach")) {
+		t.Fatalf("hosted marker was parsed at the wrong argv offset: %s", out)
+	}
+	if _, statErr := os.Stat(filepath.Join(state, "agentdeck", "local")); !os.IsNotExist(statErr) {
+		t.Fatalf("hosted attachment started local runtime: %v", statErr)
 	}
 }
 

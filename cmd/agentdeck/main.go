@@ -43,7 +43,7 @@ func main() {
 		return
 	}
 	if len(os.Args) > 1 && os.Args[1] == "--hosted-attach" {
-		if err := hostedAttach(cfg, os.Args[1:]); err != nil {
+		if err := hostedAttach(cfg, os.Args[2:]); err != nil {
 			fmt.Fprintln(os.Stderr, err)
 			os.Exit(1)
 		}
