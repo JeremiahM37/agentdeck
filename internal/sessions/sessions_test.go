@@ -178,6 +178,12 @@ func TestDeriveStatus(t *testing.T) {
 	if got := DeriveStatus(prompt, Hash(prompt)); got != StatusWaiting {
 		t.Errorf("prompt: %s", got)
 	}
+	// Aider renders a bare > followed by blank tmux viewport rows. The prompt
+	// must still be visible to the priming path after those rows are captured.
+	aiderPrompt := "Aider v0.86.3.dev53+g5dc9490bb\nModel: openai/compat-fixture with whole edit format\nGit repo: none\nRepo-map: disabled\n>\n\n\n\n\n\n\n\n\n\n\n\n\n\n"
+	if got := DeriveStatus(aiderPrompt, Hash(aiderPrompt)); got != StatusWaiting {
+		t.Errorf("bare Aider prompt: %s", got)
+	}
 	// unchanged and unrecognisable: say idle rather than guess
 	quiet := "some output with no prompt shape at all"
 	if got := DeriveStatus(quiet, Hash(quiet)); got != StatusIdle {
