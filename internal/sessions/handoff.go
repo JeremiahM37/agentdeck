@@ -224,6 +224,9 @@ func (m *Manager) runHandoff(ctx context.Context, sess *store.Session, o Handoff
 // projectPrime pulls what the memory provider knows about a project, so a fresh
 // session starts with the project's knowledge and not just its predecessor's.
 func (m *Manager) projectPrime(ctx context.Context, projectName string) string {
+	if _, automatic := m.Memory.(memory.AutomaticProvider); automatic {
+		return ""
+	}
 	if projectName == "" {
 		return ""
 	}

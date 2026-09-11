@@ -337,6 +337,12 @@ func (s *Server) projectBriefWithMemory(ctx context.Context, proj *store.Project
 		parts = append(parts, strings.TrimRight(b.String(), "\n"))
 	}
 
+	if _, automatic := s.Memory.(memory.AutomaticProvider); automatic {
+		return strings.Join(parts, "\n\n"), memory.Brief{
+			Provider: s.Memory.Name(), Status: "deferred",
+			Message: "Automatic context follows the assigned project's memory policy at launch.", Facts: []memory.Fact{},
+		}
+	}
 	recalled := memory.LoadBrief(ctx, s.Memory, proj.Name)
 	if block := recalled.Prompt(); block != "" {
 		parts = append(parts, block)

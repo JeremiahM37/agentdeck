@@ -58,7 +58,12 @@ func New(cfg *config.Config, log *slog.Logger) (*App, error) {
 	provisioner := creds.New(cfg.ClaudeCredsPath, cfg.CodexCredsPath, cfg.AnthropicAPIKey, log)
 	var mem memory.Provider = memory.None{}
 	if cfg.GrimoireURL != "" {
-		mem = memory.NewGrimoire(cfg.GrimoireURL, cfg.GrimoireToken)
+		provider := memory.NewGrimoire(cfg.GrimoireURL, cfg.GrimoireToken)
+		if err := provider.ConfigureContext(cfg.GrimoireContextMode, cfg.GrimoireContextProjects); err != nil {
+			db.Close()
+			return nil, err
+		}
+		mem = provider
 	}
 	sessMgr := sessions.New(db, reg, b, sessions.Launcher{
 		ClaudeBin: cfg.ClaudeBin, CodexBin: cfg.CodexBin, GeminiBin: cfg.GeminiBin,
@@ -93,6 +98,7 @@ func New(cfg *config.Config, log *slog.Logger) (*App, error) {
 		return out
 	}
 	sched.Sessions = sessMgr
+	sched.Memory = mem
 	terms := terminal.NewManager()
 
 	srv := &api.Server{

@@ -57,6 +57,7 @@ type Manager struct {
 	checkpointGeneration      map[int64]uint64
 	checkpointWG              sync.WaitGroup
 	checkpointClosed          bool
+	contextDelivered          map[int64]contextDelivery
 }
 
 // New builds a session manager.
@@ -277,6 +278,10 @@ func (m *Manager) launch(ctx context.Context, o LaunchOpts) (*store.Session, err
 	spec.Args = append([]string(nil), spec.Args...)
 	for _, arg := range o.ExtraArgs {
 		spec.Args = append(spec.Args, shellq.Quote(arg))
+	}
+	recalled := m.automaticContext(ctx, sess, "")
+	if recalled.Context != "" {
+		o.Prime = recalled.Context + "\n" + o.Prime
 	}
 	// resuming replays a conversation, and the CLIs do not accept an opening
 	// message alongside that — so a prime on a resumed session still has to be
@@ -548,7 +553,10 @@ func (m *Manager) launch(ctx context.Context, o LaunchOpts) (*store.Session, err
 	if o.Prime != "" && argPrompt == "" {
 		// the fallback path: wait until the pane settles before typing, rather
 		// than guessing a delay and landing in whatever the CLI put on screen
-		go m.primeWhenReady(sess.ID, o.Prime)
+		go m.primeWhenReady(sess.ID, o.Prime, recalled.Keys...)
+	}
+	if argPrompt != "" {
+		m.recordContext(sess.ID, recalled)
 	}
 	// Bind new owned terminals as well as adopted ones to their tmux identity.
 	if identity := captureTrackingIdentity(ctx, ex, tmuxName); identity != "" {
@@ -630,7 +638,7 @@ func scratchSlug(label string) string {
 // Used only where the prompt cannot be an argument. A fixed delay is a race: the
 // paste lands in whatever the CLI is showing at that instant, which is how a
 // primed message once answered codex's self-update prompt.
-func (m *Manager) primeWhenReady(id int64, text string) {
+func (m *Manager) primeWhenReady(id int64, text string, keys ...string) {
 	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 	defer cancel()
 	var last string
@@ -666,8 +674,10 @@ func (m *Manager) primeWhenReady(id int64, text string) {
 		}
 		// settled for two consecutive polls and showing an input prompt
 		if stable >= 1 && DeriveStatus(pane, Hash(pane)) == StatusWaiting {
-			if err := m.SendText(ctx, id, text); err != nil {
+			if err := m.sendText(ctx, id, text, false); err != nil {
 				m.Log.Warn("priming session failed", "session", id, "err", err)
+			} else {
+				m.recordContext(id, memory.ContextResult{Keys: keys})
 			}
 			return
 		}
@@ -716,6 +726,9 @@ func (m *Manager) specs() []Spec {
 }
 
 func (m *Manager) end(id int64, status string) {
+	m.mu.Lock()
+	delete(m.contextDelivered, id)
+	m.mu.Unlock()
 	now := store.Now()
 	m.DB.Update("sessions", id, map[string]any{
 		"status": status, "ended_at": now, "updated_at": now})
@@ -726,11 +739,22 @@ func (m *Manager) end(id int64, status string) {
 // SendText types a message into a session and submits it — the phone-side
 // equivalent of typing at the terminal.
 func (m *Manager) SendText(ctx context.Context, id int64, text string) error {
+	return m.sendText(ctx, id, text, true)
+}
+
+func (m *Manager) sendText(ctx context.Context, id int64, text string, automatic bool) error {
 	m.sendMu.Lock()
 	defer m.sendMu.Unlock()
 	sess, ex, err := m.resolve(id)
 	if err != nil {
 		return err
+	}
+	recalled := memory.ContextResult{}
+	if automatic {
+		recalled = m.automaticContext(ctx, sess, text)
+		if recalled.Context != "" {
+			text = recalled.Context + "\n" + text
+		}
 	}
 	stage := fmt.Sprintf("/tmp/agentdeck-send-%d-%d", sess.ID, time.Now().UnixNano())
 	if err := ex.WriteFile(ctx, stage, []byte(text)); err != nil {
@@ -743,6 +767,9 @@ func (m *Manager) SendText(ctx context.Context, id int64, text string) error {
 	}
 	if !r.OK() {
 		return executor.Errf("send failed: %s", strings.TrimSpace(r.Stderr))
+	}
+	if automatic {
+		m.recordContext(id, recalled)
 	}
 	return nil
 }

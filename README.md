@@ -325,6 +325,13 @@ Pair it with a memory store — `AGENTDECK_GRIMOIRE_URL` gives sessions a projec
 briefing to start from and a place for handoffs to live. agentdeck works fine
 without one; the two compose, they do not depend on each other.
 
+With a configured Grimoire provider, automatic context is project-scoped by
+default for task dispatch, interactive launches, and messages sent through
+AgentDeck. `AGENTDECK_GRIMOIRE_CONTEXT_MODE=manual` disables automatic lookups;
+`all` explicitly broadens them. Per-project path mappings and byte budgets are
+configured with `AGENTDECK_GRIMOIRE_CONTEXT_PROJECTS`.
+See [selective memory](docs/AUTOMATIC_MEMORY.md) for scope, cost, and terminal limitations.
+
 Config via env: `AGENTDECK_PORT` (9110), `AGENTDECK_DB`, `AGENTDECK_BASE_URL`
 (URL targets use to reach this server for approval callbacks), `AGENTDECK_AUTH_TOKEN`
 (optional bearer), `AGENTDECK_VAPID_PUBLIC`/`_PRIVATE` (web push), `AGENTDECK_MOCK`.

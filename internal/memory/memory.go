@@ -83,9 +83,11 @@ func (None) Remember(context.Context, Entry) error { return nil }
 
 // Grimoire talks to a Grimoire instance over its HTTP API.
 type Grimoire struct {
-	BaseURL string
-	Token   string // X-Grimoire-Admin, only needed for gated surfaces
-	Client  *http.Client
+	ContextMode     string
+	ContextProjects map[string]ContextScope
+	BaseURL         string
+	Token           string // X-Grimoire-Admin, only needed for gated surfaces
+	Client          *http.Client
 	// MinScore is the relevance floor. A similarity search always returns its
 	// best N matches, and when a store holds little about a project those are
 	// whatever else is in it — measured here, a real match scored 0.37 while
@@ -97,10 +99,11 @@ type Grimoire struct {
 // NewGrimoire builds a Grimoire-backed provider.
 func NewGrimoire(baseURL, token string) *Grimoire {
 	return &Grimoire{
-		BaseURL:  strings.TrimRight(baseURL, "/"),
-		Token:    token,
-		Client:   &http.Client{Timeout: 8 * time.Second},
-		MinScore: 0.2,
+		BaseURL:     strings.TrimRight(baseURL, "/"),
+		Token:       token,
+		Client:      &http.Client{Timeout: 8 * time.Second},
+		MinScore:    0.2,
+		ContextMode: "project",
 	}
 }
 

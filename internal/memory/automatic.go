@@ -1,0 +1,131 @@
+package memory
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"io"
+	"net/http"
+	"net/url"
+	"regexp"
+	"strings"
+	"time"
+)
+
+type ContextScope struct {
+	Mode     string   `json:"mode"`
+	Paths    []string `json:"paths"`
+	MaxBytes int      `json:"max_bytes"`
+}
+
+type ContextResult struct {
+	Context string   `json:"context"`
+	Keys    []string `json:"keys"`
+}
+
+type AutomaticProvider interface {
+	Automatic(context.Context, string, string, []string) (ContextResult, error)
+}
+
+var projectSeparators = regexp.MustCompile(`[^a-z0-9]+`)
+
+func (g *Grimoire) ConfigureContext(mode, projects string) error {
+	if mode == "" {
+		mode = "project"
+	}
+	if mode != "project" && mode != "all" && mode != "manual" && mode != "off" {
+		return fmt.Errorf("invalid Grimoire context mode %q", mode)
+	}
+	configured := map[string]ContextScope{}
+	if projects != "" {
+		if err := json.Unmarshal([]byte(projects), &configured); err != nil {
+			return err
+		}
+	}
+	for project, scope := range configured {
+		if scope.Mode == "" {
+			scope.Mode = "scoped"
+		}
+		if scope.Mode != "scoped" && scope.Mode != "all" && scope.Mode != "manual" && scope.Mode != "off" {
+			return fmt.Errorf("invalid Grimoire context mode for project %q", project)
+		}
+		if scope.Mode == "scoped" && len(scope.Paths) == 0 {
+			return fmt.Errorf("Grimoire project %q has an empty memory scope", project)
+		}
+		configured[project] = scope
+	}
+	g.ContextMode, g.ContextProjects = mode, configured
+	return nil
+}
+
+func (g *Grimoire) ContextScope(project string) ContextScope {
+	if project == "" {
+		return ContextScope{Mode: "off"}
+	}
+	if scope, found := g.ContextProjects[project]; found {
+		return scope
+	}
+	if g.ContextMode == "off" || g.ContextMode == "manual" || g.ContextMode == "all" {
+		return ContextScope{Mode: g.ContextMode}
+	}
+	slug := strings.Trim(projectSeparators.ReplaceAllString(strings.ToLower(project), "-"), "-")
+	if slug == "" {
+		return ContextScope{Mode: "off"}
+	}
+	return ContextScope{Mode: "scoped", Paths: []string{
+		"memory/" + slug + ".md", "memory/" + slug + "/",
+		"Agent Memory/project_" + strings.ReplaceAll(slug, "-", "_") + ".md",
+	}}
+}
+
+func (g *Grimoire) Automatic(ctx context.Context, project, query string, excluded []string) (ContextResult, error) {
+	scope := g.ContextScope(project)
+	if scope.Mode == "manual" || scope.Mode == "off" {
+		return ContextResult{}, nil
+	}
+	budget := scope.MaxBytes
+	if budget <= 0 {
+		budget = 2400
+	}
+	if budget > 8000 {
+		budget = 8000
+	}
+	if len(query) > 8000 {
+		return ContextResult{}, nil
+	}
+	parameters := url.Values{"q": {query}, "scope": {scope.Mode}, "path": scope.Paths,
+		"max_bytes": {fmt.Sprint(budget)}, "limit": {"5"}, "exclude": {strings.Join(excluded, ",")}}
+	ctx, cancel := context.WithTimeout(ctx, 1500*time.Millisecond)
+	defer cancel()
+	request, err := http.NewRequestWithContext(ctx, "GET", g.BaseURL+"/api/memory/context?"+parameters.Encode(), nil)
+	if err != nil {
+		return ContextResult{}, err
+	}
+	g.auth(request)
+	response, err := g.Client.Do(request)
+	if err != nil {
+		return ContextResult{}, err
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		return ContextResult{}, fmt.Errorf("automatic memory: %s", response.Status)
+	}
+	var result ContextResult
+	if err := json.NewDecoder(io.LimitReader(response.Body, 64000)).Decode(&result); err != nil {
+		return ContextResult{}, err
+	}
+	if len(result.Context) > budget || len(result.Keys) > 10 {
+		return ContextResult{}, fmt.Errorf("automatic memory exceeded budget")
+	}
+	return result, nil
+}
+
+func Automatic(ctx context.Context, provider Provider, project, query string, excluded []string) ContextResult {
+	if automatic, ok := provider.(AutomaticProvider); ok {
+		result, err := automatic.Automatic(ctx, project, query, excluded)
+		if err == nil {
+			return result
+		}
+	}
+	return ContextResult{}
+}

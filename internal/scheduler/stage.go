@@ -11,6 +11,7 @@ import (
 	"github.com/JeremiahM37/agentdeck/internal/ctxbundle"
 	"github.com/JeremiahM37/agentdeck/internal/executor"
 	"github.com/JeremiahM37/agentdeck/internal/hooks"
+	"github.com/JeremiahM37/agentdeck/internal/memory"
 	"github.com/JeremiahM37/agentdeck/internal/store"
 )
 
@@ -119,6 +120,9 @@ func (s *Scheduler) stageRuntime(ctx context.Context, ex executor.Executor, work
 
 	prompt := firstNonEmpty(att.Prompt, c.Task.Prompt, c.Task.Title)
 	if !isReviewer {
+		if recalled := memory.Automatic(ctx, s.Memory, c.Project.Name, prompt, nil); recalled.Context != "" {
+			prompt = recalled.Context + "\n" + prompt
+		}
 		notes, err := s.DB.ProjectNotes(c.Project.ID, 12)
 		if err == nil && len(notes) > 0 {
 			texts := make([]string, 0, len(notes))

@@ -25,6 +25,7 @@ import (
 	"github.com/JeremiahM37/agentdeck/internal/config"
 	"github.com/JeremiahM37/agentdeck/internal/creds"
 	"github.com/JeremiahM37/agentdeck/internal/executor"
+	"github.com/JeremiahM37/agentdeck/internal/memory"
 	"github.com/JeremiahM37/agentdeck/internal/sandbox"
 	"github.com/JeremiahM37/agentdeck/internal/sinks"
 	"github.com/JeremiahM37/agentdeck/internal/skills"
@@ -62,6 +63,7 @@ type SessionPoller interface {
 
 // Scheduler drives every attempt from queued to finalised.
 type Scheduler struct {
+	Memory   memory.Provider
 	DB       *store.DB
 	Bus      *bus.Bus
 	Broker   *broker.Broker

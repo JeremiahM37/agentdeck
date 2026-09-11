@@ -66,8 +66,10 @@ type Config struct {
 	// Empty means agentdeck runs with no memory provider, which is a supported
 	// configuration and not a degraded one — the two tools compose, they do not
 	// depend on each other.
-	GrimoireURL   string
-	GrimoireToken string
+	GrimoireURL             string
+	GrimoireToken           string
+	GrimoireContextMode     string
+	GrimoireContextProjects string
 
 	// SessionPoll is how often live interactive sessions are refreshed. It is
 	// separate from TickInterval because a session poll costs one exec per
@@ -110,29 +112,31 @@ func Load() *Config {
 	}
 	cwd, _ := os.Getwd()
 	c := &Config{
-		DBPath:           env("AGENTDECK_DB", filepath.Join(cwd, "agentdeck.db")),
-		Port:             port,
-		Host:             env("AGENTDECK_HOST", "0.0.0.0"),
-		Mock:             os.Getenv("AGENTDECK_MOCK") == "1",
-		AuthToken:        os.Getenv("AGENTDECK_AUTH_TOKEN"),
-		TickInterval:     envSeconds("AGENTDECK_TICK", 2.0),
-		ApprovalPoll:     envSeconds("AGENTDECK_APPROVAL_POLL", 25),
-		ApprovalExpire:   envSeconds("AGENTDECK_APPROVAL_EXPIRE", 900),
-		JanitorDays:      envFloat("AGENTDECK_JANITOR_DAYS", 7),
-		MockAgentDelay:   envSeconds("AGENTDECK_MOCK_DELAY", 0.4),
-		VAPIDPrivateKey:  os.Getenv("AGENTDECK_VAPID_PRIVATE"),
-		VAPIDPublicKey:   os.Getenv("AGENTDECK_VAPID_PUBLIC"),
-		VAPIDEmail:       env("AGENTDECK_VAPID_EMAIL", "admin@example.com"),
-		HostClaudeConfig: env("AGENTDECK_HOST_CLAUDE_CONFIG", filepath.Join(home, ".claude.json")),
-		ClaudeBin:        env("AGENTDECK_CLAUDE_BIN", "claude"),
-		CodexBin:         env("AGENTDECK_CODEX_BIN", "codex"),
-		GeminiBin:        env("AGENTDECK_GEMINI_BIN", "gemini"),
-		AnthropicAPIKey:  os.Getenv("AGENTDECK_ANTHROPIC_API_KEY"),
-		ClaudeCredsPath:  env("AGENTDECK_CREDS", filepath.Join(home, ".claude", ".credentials.json")),
-		CodexCredsPath:   env("AGENTDECK_CODEX_CREDS", filepath.Join(home, ".codex", "auth.json")),
-		GrimoireURL:      os.Getenv("AGENTDECK_GRIMOIRE_URL"),
-		GrimoireToken:    os.Getenv("AGENTDECK_GRIMOIRE_TOKEN"),
-		SessionPoll:      envSeconds("AGENTDECK_SESSION_POLL", 3.0),
+		DBPath:                  env("AGENTDECK_DB", filepath.Join(cwd, "agentdeck.db")),
+		Port:                    port,
+		Host:                    env("AGENTDECK_HOST", "0.0.0.0"),
+		Mock:                    os.Getenv("AGENTDECK_MOCK") == "1",
+		AuthToken:               os.Getenv("AGENTDECK_AUTH_TOKEN"),
+		TickInterval:            envSeconds("AGENTDECK_TICK", 2.0),
+		ApprovalPoll:            envSeconds("AGENTDECK_APPROVAL_POLL", 25),
+		ApprovalExpire:          envSeconds("AGENTDECK_APPROVAL_EXPIRE", 900),
+		JanitorDays:             envFloat("AGENTDECK_JANITOR_DAYS", 7),
+		MockAgentDelay:          envSeconds("AGENTDECK_MOCK_DELAY", 0.4),
+		VAPIDPrivateKey:         os.Getenv("AGENTDECK_VAPID_PRIVATE"),
+		VAPIDPublicKey:          os.Getenv("AGENTDECK_VAPID_PUBLIC"),
+		VAPIDEmail:              env("AGENTDECK_VAPID_EMAIL", "admin@example.com"),
+		HostClaudeConfig:        env("AGENTDECK_HOST_CLAUDE_CONFIG", filepath.Join(home, ".claude.json")),
+		ClaudeBin:               env("AGENTDECK_CLAUDE_BIN", "claude"),
+		CodexBin:                env("AGENTDECK_CODEX_BIN", "codex"),
+		GeminiBin:               env("AGENTDECK_GEMINI_BIN", "gemini"),
+		AnthropicAPIKey:         os.Getenv("AGENTDECK_ANTHROPIC_API_KEY"),
+		ClaudeCredsPath:         env("AGENTDECK_CREDS", filepath.Join(home, ".claude", ".credentials.json")),
+		CodexCredsPath:          env("AGENTDECK_CODEX_CREDS", filepath.Join(home, ".codex", "auth.json")),
+		GrimoireURL:             os.Getenv("AGENTDECK_GRIMOIRE_URL"),
+		GrimoireToken:           os.Getenv("AGENTDECK_GRIMOIRE_TOKEN"),
+		GrimoireContextMode:     env("AGENTDECK_GRIMOIRE_CONTEXT_MODE", "project"),
+		GrimoireContextProjects: os.Getenv("AGENTDECK_GRIMOIRE_CONTEXT_PROJECTS"),
+		SessionPoll:             envSeconds("AGENTDECK_SESSION_POLL", 3.0),
 	}
 	c.BaseURL = env("AGENTDECK_BASE_URL", "http://127.0.0.1:"+strconv.Itoa(port))
 	return c
