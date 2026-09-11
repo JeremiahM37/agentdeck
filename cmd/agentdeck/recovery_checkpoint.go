@@ -4,11 +4,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"os/exec"
 	"path/filepath"
 
 	"github.com/JeremiahM37/agentdeck/internal/config"
+	"github.com/JeremiahM37/agentdeck/internal/executor"
 	"github.com/JeremiahM37/agentdeck/internal/sessions"
+	"github.com/JeremiahM37/agentdeck/internal/store"
 )
 
 func recoveryCheckpoint(cfg *config.Config, args []string) error {
@@ -20,7 +21,13 @@ func recoveryCheckpoint(cfg *config.Config, args []string) error {
 		return err
 	}
 	if args[0] == "export" {
-		m, err := sessions.ExportCheckpoint(context.Background(), cfg.DBPath, func(name string) bool { return exec.Command("tmux", "has-session", "-t", "="+name).Run() == nil })
+		// Export opens the source DB read-only and uses real target executors. In
+		// particular, do not call store.Open here: it would migrate the old DB
+		// before the checkpoint has captured it.
+		reg := executor.NewRegistry(false, 0)
+		m, err := sessions.ExportCheckpoint(context.Background(), cfg.DBPath, func(t *store.Target) (executor.Executor, error) {
+			return reg.For(t)
+		})
 		if err != nil {
 			return err
 		}
@@ -28,12 +35,20 @@ func recoveryCheckpoint(cfg *config.Config, args []string) error {
 			return err
 		}
 		fmt.Printf("exported %d session checkpoints to %s\n", len(m.Sessions), path)
+		for _, s := range m.Sessions {
+			if s.IdentityState == sessions.IdentityUnknown {
+				fmt.Printf("unsupported native identity for session %d; checkpoint coverage is incomplete\n", s.ID)
+			}
+		}
 		return nil
 	}
-	n, err := sessions.ImportCheckpoint(path, cfg.DBPath, "")
+	report, err := sessions.ImportCheckpoint(path, cfg.DBPath)
 	if err != nil {
 		return err
 	}
-	fmt.Printf("imported %d session checkpoints\n", n)
+	fmt.Printf("imported %d session checkpoints\n", report.Imported)
+	for _, skipped := range report.Skipped {
+		fmt.Printf("skipped session %d: %s\n", skipped.ID, skipped.Reason)
+	}
 	return nil
 }
