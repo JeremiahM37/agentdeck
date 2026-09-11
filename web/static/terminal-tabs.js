@@ -130,26 +130,34 @@ export class TerminalTabs {
     const win = tab.frame.contentWindow;
     let start = null;
     win.addEventListener('touchstart', (event) => {
+      if (!this.mobile.matches || this.root.hidden || tab.path !== this.active) { start = null; return; }
       if (event.touches.length !== 1) { start = null; return; }
       const touch = event.touches[0];
       const target = event.target;
       // Inputs, links, and xterm's modifier/key controls own their gestures.
       if (target?.closest?.('textarea,input,button,a,select,[contenteditable="true"]')) { start = null; return; }
-      start = {x: touch.clientX, y: touch.clientY, at: performance.now()};
+      start = {x: touch.clientX, y: touch.clientY, at: performance.now(), maxVertical: 0};
     }, {passive: true});
+    win.addEventListener('touchmove', (event) => {
+      if (!start || event.touches.length !== 1) { start = null; return; }
+      const touch = event.touches[0];
+      start.maxVertical = Math.max(start.maxVertical, Math.abs(touch.clientY - start.y));
+    }, {passive: true});
+    win.addEventListener('touchcancel', () => { start = null; }, {passive: true});
     win.addEventListener('touchend', (event) => {
-      if (!start || event.changedTouches.length !== 1) { start = null; return; }
+      if (!start || !this.mobile.matches || this.root.hidden || tab.path !== this.active || event.changedTouches.length !== 1) { start = null; return; }
       const touch = event.changedTouches[0];
       const dx = touch.clientX - start.x, dy = touch.clientY - start.y;
       const elapsed = performance.now() - start.at;
       const selection = win.getSelection?.();
-      const selected = selection && selection.toString();
+      const xterm = win.__adkTerminalState?.() || {};
+      const selected = (selection && selection.toString()) || xterm.hasSelection;
       const threshold = Math.max(72, Math.min(140, win.innerWidth * .22));
-      const flick = elapsed <= 550 && Math.abs(dx) >= threshold && Math.abs(dx) >= Math.abs(dy) * 1.6;
+      const flick = elapsed <= 550 && start.maxVertical < Math.max(48, threshold * .55) && Math.abs(dx) >= threshold && Math.abs(dx) >= Math.abs(dy) * 1.6;
       start = null;
       // A horizontal text selection or a vertical terminal scroll remains an
       // xterm gesture. Only an unambiguous one-finger flick changes tabs.
-      if (!flick || selected) return;
+      if (!flick || selected || (xterm.mouseTrackingMode && xterm.mouseTrackingMode !== 'none')) return;
       const moved = this.selectRelative(dx < 0 ? 1 : -1);
       if (moved) event.preventDefault();
     }, {passive: false});

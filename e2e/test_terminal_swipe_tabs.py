@@ -1,5 +1,4 @@
 """Real mobile terminal-tab gestures against two live tmux sessions."""
-import os
 import subprocess
 
 import pytest
@@ -9,11 +8,17 @@ from test_terminal_workspace import real_terminal
 
 
 def _touch_swipe(page, x1, y1, x2, y2):
+    _touch_path(page, [(x1, y1), (x2, y2)])
+
+
+def _touch_path(page, points):
     cdp = page.context.new_cdp_session(page)
+    x1, y1 = points[0]
     cdp.send("Input.dispatchTouchEvent", {"type": "touchStart",
         "touchPoints": [{"x": x1, "y": y1, "id": 1}]})
-    cdp.send("Input.dispatchTouchEvent", {"type": "touchMove",
-        "touchPoints": [{"x": x2, "y": y2, "id": 1}]})
+    for x, y in points[1:]:
+        cdp.send("Input.dispatchTouchEvent", {"type": "touchMove",
+            "touchPoints": [{"x": x, "y": y, "id": 1}]})
     cdp.send("Input.dispatchTouchEvent", {"type": "touchEnd", "touchPoints": []})
 
 
@@ -26,7 +31,7 @@ def test_mobile_swipe_switches_live_terminal_tabs_without_stealing_scroll_or_sel
     second_root.mkdir()
     subprocess.run(["tmux", "new-session", "-d", "-s", "terminal-two",
                     "-c", str(second_root), "bash --norc"], env=t["env"], check=True)
-    second = t["api"]("/sessions/adopt", {
+    t["api"]("/sessions/adopt", {
         "target_id": t["target_id"], "tmux_session": "terminal-two",
         "workdir": str(second_root), "name": "Second terminal", "agent": "claude",
     })
@@ -70,22 +75,22 @@ def test_mobile_swipe_switches_live_terminal_tabs_without_stealing_scroll_or_sel
     page.screenshot(path="/tmp/agentdeck-mobile-tabs-after-left.png", full_page=False)
 
     frame = [f for f in page.frames if "/terminal/session/" in f.url][-1]
-    frame.evaluate("""() => {
-      const row = document.querySelector('.xterm-rows');
-      if (!row) return;
-      const range = document.createRange(); range.selectNodeContents(row);
-      const sel = window.getSelection(); sel.removeAllRanges(); sel.addRange(range);
-    }""")
+    state = frame.evaluate("window.__adkTerminalState?.()")
+    assert state and state["mouseTrackingMode"] == "none"
+    assert frame.evaluate("window.__adkTerminalSelectAll?.()") is None
+    assert frame.evaluate("window.__adkTerminalState?.().hasSelection")
     active_before = page.locator('.terminal-tab[aria-selected="true"]').inner_text()
     # A horizontal text selection is owned by xterm and must not navigate.
-    _touch_swipe(page, box["x"] + box["width"] * .65, box["y"] + box["height"] * .5,
-                 box["x"] + box["width"] * .25, box["y"] + box["height"] * .5)
+    _touch_swipe(page, box["x"] + box["width"] * .25, box["y"] + box["height"] * .5,
+                 box["x"] + box["width"] * .65, box["y"] + box["height"] * .5)
     expect(page.locator('.terminal-tab[aria-selected="true"]')).to_have_text(active_before)
 
     frame.evaluate("window.getSelection()?.removeAllRanges()")
-    # Vertical reading/scroll gestures also stay in the terminal.
-    _touch_swipe(page, box["x"] + box["width"] * .5, box["y"] + box["height"] * .7,
-                 box["x"] + box["width"] * .5, box["y"] + box["height"] * .25)
+    # Vertical reading gestures that briefly backtrack into a diagonal path
+    # also stay in the terminal; endpoint-only checks would misclassify this.
+    _touch_path(page, [(box["x"] + box["width"] * .25, box["y"] + box["height"] * .7),
+                       (box["x"] + box["width"] * .28, box["y"] + box["height"] * .35),
+                       (box["x"] + box["width"] * .65, box["y"] + box["height"] * .5)])
     expect(page.locator('.terminal-tab[aria-selected="true"]')).to_have_text(active_before)
 
     # The compact toolbar keeps secondary actions reachable through its menu,

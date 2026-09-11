@@ -136,6 +136,14 @@ function select(p) {
   $('#compact-status').setAttribute('aria-label', p.connected ? 'Terminal connected' : 'Terminal reconnecting');
   document.querySelectorAll('[data-terminal-key]').forEach(button => button.disabled = !p.connected || p.paused);
 }
+// The containing tab strip uses this small read-only bridge to respect xterm's
+// own canvas selection and negotiated application mouse mode. DOM selection is
+// not reliable with xterm's renderer.
+window.__adkTerminalState = () => ({
+  hasSelection: !!active?.term?.hasSelection(),
+  mouseTrackingMode: active?.term?.modes?.mouseTrackingMode || 'none',
+});
+window.__adkTerminalSelectAll = () => active?.term?.selectAll();
 class Pane {
   constructor(el, url) {
     this.el = el;
@@ -464,6 +472,8 @@ document.querySelectorAll('[data-terminal-key]').forEach(button => {
     active.term.focus();
   };
 });
+$('#compact-upload').onclick = () => $('#upload').click();
+$('#compact-files').onclick = () => $('#files').click();
 document.addEventListener("visibilitychange", () => {
   if (!document.hidden) fitPanes();
 });
