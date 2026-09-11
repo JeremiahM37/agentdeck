@@ -22,16 +22,17 @@ remain unverified.
 
 ## TUI Alpha search
 
-Before the baseline fix, the TUI Alpha search showed all four unrelated rows.
+Before the baseline fix, the TUI Alpha search showed all four rows, including
+Alpha and three unrelated rows.
 The fixed `622f` build showed only Alpha, exactly 1 of 4 matches. These are
 match counts, not failure counts.
 
 The original raw before-fix output was overwritten. The recorded observation
 and this limitation are documented at
 `/tmp/agentdeck-parity-proof-v2/tui-pyte/prefix-observation.md`. Post-fix
-evidence is at `/tmp/agentdeck-parity-proof-v2/postfix-evidence.json` and
-`/tmp/agentdeck-parity-proof-v2/postfix-search-screen.txt`; the focused suite
-log is `/tmp/agentdeck-parity-proof-v2/focused-tests.log`.
+evidence is at `/tmp/agentdeck-parity-proof-v2/tui-pyte/postfix-evidence.json`
+and `/tmp/agentdeck-parity-proof-v2/tui-pyte/postfix-search-screen.txt`; the
+focused suite log is `/tmp/agentdeck-parity-proof-v2/focused-tests.log`.
 
 Generic-agent CLI proof and full release verification are separate pending
 work and are not represented as completed by this ledger.
