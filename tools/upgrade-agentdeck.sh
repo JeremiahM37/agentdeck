@@ -22,6 +22,12 @@ live=$(systemctl show "$unit" -p ExecStart --value | sed -n 's/.*path=\([^ ;]*\)
 [[ -n "$live" ]] || live=/usr/local/bin/agentdeck
 db=$(systemctl show "$unit" -p Environment --value | tr ' ' '\n' | sed -n 's/^AGENTDECK_DB=//p' | head -1)
 [[ -n "$db" ]] || { echo "AGENTDECK_DB is not present in the unit environment" >&2; exit 1; }
+service_user=$(systemctl show "$unit" -p User --value)
+[[ -n "$service_user" ]] || service_user=root
+service_home=$(getent passwd "$service_user" | cut -d: -f6)
+service_group=$(systemctl show "$unit" -p Group --value)
+[[ -n "$service_group" ]] || service_group=$(id -gn "$service_user")
+command -v runuser >/dev/null || { echo "runuser is required for a service-user export" >&2; exit 1; }
 main=$(systemctl show "$unit" -p MainPID --value)
 cg=$(systemctl show "$unit" -p ControlGroup --value)
 dropin=/etc/systemd/system/${unit}.service.d/10-session-persistence.conf
@@ -31,6 +37,8 @@ checkpoint="$backup/session-checkpoint.json"
 echo "unit=$unit"
 echo "live_binary=$live"
 echo "database=$db"
+echo "service_user=$service_user"
+echo "service_home=$service_home"
 echo "main_pid=$main"
 echo "control_group=$cg"
 echo "checkpoint_backup=$backup"
@@ -53,7 +61,7 @@ if (( ! apply )); then
   exit 0
 fi
 
-install -d -m 700 "$backup"
+install -d -m 700 -o "$service_user" -g "$service_group" "$backup"
 # SQLite's online backup API gives us a consistent source copy while the live
 # service is still running. A byte copy of a WAL database is not a backup.
 python3 - "$db" "$backup/agentdeck.db" <<'PY'
@@ -68,6 +76,7 @@ finally:
     source.close()
 PY
 chmod 600 "$backup/agentdeck.db"
+chown "$service_user:$service_group" "$backup/agentdeck.db"
 cp -a "$live" "$backup/old-agentdeck"
 if [[ -f "$dropin" ]]; then
   cp -a "$dropin" "$backup/old-session-persistence.conf"
@@ -100,7 +109,7 @@ if command -v tmux >/dev/null 2>&1; then
       [[ "$pane_pid" =~ ^[0-9]+$ && -r "/proc/$pane_pid/stat" ]] || continue
       pane_starttime=$(awk '{print $22}' "/proc/$pane_pid/stat")
       [[ -n "$pane_starttime" ]] && baseline_panes["$pane_pid"]="$pane_starttime"
-    done < <(env -u TMUX tmux list-panes -t "=$tmux_name" -F '#{pane_pid}' 2>/dev/null || true)
+    done < <(runuser -u "$service_user" -- env -u TMUX HOME="$service_home" tmux list-panes -t "=$tmux_name" -F '#{pane_pid}' 2>/dev/null || true)
   done < <(python3 - "$db" <<'PY'
 import sqlite3, sys
 db = sqlite3.connect("file:" + sys.argv[1] + "?mode=ro", uri=True)
@@ -116,7 +125,7 @@ PY
   )
 fi
 
-env -u TMUX AGENTDECK_DB="$db" "$binary" recovery-checkpoint export "$checkpoint"
+runuser -u "$service_user" -- env -u TMUX HOME="$service_home" AGENTDECK_DB="$db" "$binary" recovery-checkpoint export "$checkpoint"
 
 current_main_pid=$(systemctl show "$unit" -p MainPID --value)
 current_main_starttime=""
@@ -180,4 +189,4 @@ Environment=AGENTDECK_CHECKPOINT=$checkpoint
 EOF
 systemctl daemon-reload
 echo "prepared; checkpoint captured and binary installed; service was not restarted"
-echo "refresh checkpoint before the first manual restart if sessions changed: env -u TMUX AGENTDECK_DB=$db $live recovery-checkpoint export $checkpoint"
+echo "refresh checkpoint before the first manual restart if sessions changed: runuser -u $service_user -- env -u TMUX HOME=$service_home AGENTDECK_DB=$db $live recovery-checkpoint export $checkpoint"
