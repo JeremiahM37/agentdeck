@@ -3,6 +3,7 @@ package sessions
 import (
 	"encoding/json"
 	"fmt"
+	"reflect"
 	"sort"
 	"strings"
 
@@ -113,6 +114,14 @@ func ParseSpecs(raw string) []Spec {
 		if c.Name == "" || c.Command == "" {
 			continue
 		}
+		// The API returns built-ins with builtin:true. A GET/PUT round trip
+		// must leave an untouched built-in implicit; otherwise this entry would
+		// become a session-only custom override and lose built-in task support.
+		// The exact field comparison prevents the marker itself from granting
+		// capabilities to a changed definition.
+		if c.Builtin && isExactBuiltin(c) {
+			continue
+		}
 		c.Builtin = false
 		replaced := false
 		for i := range out {
@@ -127,6 +136,65 @@ func ParseSpecs(raw string) []Spec {
 	}
 	sort.SliceStable(out, func(i, j int) bool { return out[i].Name < out[j].Name })
 	return out
+}
+
+func isExactBuiltin(candidate Spec) bool {
+	for _, builtin := range Builtins() {
+		if candidate.Name != builtin.Name {
+			continue
+		}
+		candidate.Builtin = builtin.Builtin
+		return reflect.DeepEqual(candidate, builtin)
+	}
+	return false
+}
+
+// NormalizeBuiltinEntries removes exact built-ins returned by GET /api/agents
+// before settings are persisted. Changed entries are retained as explicit
+// custom overrides; their builtin marker is discarded and never grants
+// built-in capabilities.
+func NormalizeBuiltinEntries(raw string) (string, error) {
+	var entries []map[string]any
+	if err := json.Unmarshal([]byte(raw), &entries); err != nil {
+		return "", fmt.Errorf("agents must be a list of objects: %w", err)
+	}
+	canonical := make(map[string]map[string]any)
+	for _, builtin := range Builtins() {
+		encoded, _ := json.Marshal(builtin)
+		var value map[string]any
+		_ = json.Unmarshal(encoded, &value)
+		delete(value, "builtin")
+		canonical[builtin.Name] = value
+	}
+	out := make([]map[string]any, 0, len(entries))
+	for _, entry := range entries {
+		if entry == nil {
+			out = append(out, entry)
+			continue
+		}
+		name, _ := entry["name"].(string)
+		marked, _ := entry["builtin"].(bool)
+		candidate := make(map[string]any, len(entry))
+		for key, value := range entry {
+			if key != "builtin" {
+				candidate[key] = value
+			}
+		}
+		if marked {
+			if expected, ok := canonical[name]; ok && reflect.DeepEqual(candidate, expected) {
+				continue
+			}
+		}
+		// builtin is UI metadata, and a changed marker must become an explicit
+		// custom definition for the normal validation/merge path.
+		delete(candidate, "builtin")
+		out = append(out, candidate)
+	}
+	encoded, err := json.Marshal(out)
+	if err != nil {
+		return "", fmt.Errorf("encode agents: %w", err)
+	}
+	return string(encoded), nil
 }
 
 // ValidateSpecs rejects definitions that could not launch, so a bad one fails at

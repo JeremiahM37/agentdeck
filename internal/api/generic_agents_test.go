@@ -6,6 +6,22 @@ import (
 	"testing"
 )
 
+func TestNoOpAgentListRoundTripPreservesBuiltinTaskCapabilities(t *testing.T) {
+	h := newHarness(t)
+	builtins := h.getList("/api/agents")
+	if len(builtins) != 3 {
+		t.Fatalf("expected three built-ins, got %d", len(builtins))
+	}
+	h.decode("PUT", "/api/agents", builtins, 200, nil)
+	if got := h.App.DB.Setting("agents"); got != "[]" {
+		t.Fatalf("untouched built-ins should remain implicit in settings, got %s", got)
+	}
+	p := h.project("builtin-roundtrip", obj{"default_agent": "claude"})
+	if code := h.status("POST", "/api/tasks", obj{"project_id": p.id(), "title": "task", "prompt": "run"}); code != 201 {
+		t.Fatalf("no-op list/save round-trip disabled builtin task: %d", code)
+	}
+}
+
 func customAgent(name, command string) obj {
 	return obj{"name": name, "command": "interactive-" + command, "model_flag": "--model",
 		"task": obj{"command": command, "args": []string{"run", "--format", "json"},
@@ -123,7 +139,7 @@ func TestCustomTaskRejectsUnmappedProjectMCP(t *testing.T) {
 
 func TestCustomClaudeOverrideCannotClaimGatedApprovals(t *testing.T) {
 	h := newHarness(t)
-	h.decode("PUT", "/api/agents", []obj{{"name": "claude", "command": "my-claude",
+	h.decode("PUT", "/api/agents", []obj{{"name": "claude", "command": "my-claude", "builtin": true,
 		"task": obj{"command": "my-claude", "prompt_template": "stdin", "output_mode": "plain"}}}, 200, nil)
 	p := h.project("custom-claude", obj{"default_agent": "claude", "default_permission_mode": "default"})
 	if code := h.status("POST", "/api/tasks", obj{"project_id": p.id(), "title": "gated", "prompt": "run"}); code != 400 {

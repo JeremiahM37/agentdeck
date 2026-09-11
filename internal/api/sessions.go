@@ -653,6 +653,11 @@ func (s *Server) putAgents(w http.ResponseWriter, r *http.Request) {
 		httpError(w, 400, "%s", err.Error())
 		return
 	}
+	body, err = sessions.NormalizeBuiltinEntries(body)
+	if err != nil {
+		httpError(w, 400, "%s", err.Error())
+		return
+	}
 	if err := sessions.ValidateSpecs(body); err != nil {
 		httpError(w, 400, "%s", err.Error())
 		return
