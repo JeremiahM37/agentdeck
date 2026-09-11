@@ -33,6 +33,19 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y bubblewrap tmux ttyd
+          # GitHub-hosted runners deny an unprivileged bwrap process the
+          # RTM_NEWADDR operation needed to bring up loopback in its private
+          # network namespace. The runner remains disposable; invoke only
+          # bwrap through passwordless sudo so its own namespace setup can
+          # configure loopback. All test processes still drop to nobody via
+          # the reviewed runner's --uid/--gid mapping.
+          mkdir -p "$RUNNER_TEMP/adk-test-bin"
+          cat > "$RUNNER_TEMP/adk-test-bin/bwrap" <<'EOF'
+          #!/bin/sh
+          exec sudo -n /usr/bin/bwrap "$@"
+          EOF
+          chmod 0755 "$RUNNER_TEMP/adk-test-bin/bwrap"
+          echo "$RUNNER_TEMP/adk-test-bin" >> "$GITHUB_PATH"
           uid=$(id -u)
           user=$(id -un)
           sudo loginctl enable-linger "$user"
@@ -81,7 +94,7 @@ jobs:
       - name: Install Playwright
         run: |
           python -m pip install --upgrade pip
-          pip install pytest playwright pyte==0.8.2
+          pip install pytest playwright pyte==0.8.2 asyncssh
           python -m playwright install --with-deps chromium
       - name: Install terminal tools
         run: sudo apt-get update && sudo apt-get install -y tmux ttyd
