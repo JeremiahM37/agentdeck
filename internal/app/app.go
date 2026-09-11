@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net/http"
 
+	"github.com/JeremiahM37/agentdeck/internal/agents"
 	"github.com/JeremiahM37/agentdeck/internal/api"
 	"github.com/JeremiahM37/agentdeck/internal/broker"
 	"github.com/JeremiahM37/agentdeck/internal/bus"
@@ -64,6 +65,30 @@ func New(cfg *config.Config, log *slog.Logger) (*App, error) {
 	// without a restart
 	sessMgr.Specs = func() []sessions.Spec { return sessions.ParseSpecs(db.Setting("agents")) }
 	sched := scheduler.New(db, b, br, notifier, reg, cfg, provisioner, log)
+	sched.AgentDefinitions = func() map[string]agents.TaskDefinition {
+		out := map[string]agents.TaskDefinition{}
+		for _, raw := range sessMgr.Specs() {
+			resolved := sessMgr.Resolve(raw)
+			if resolved.Builtin {
+				out[resolved.Name] = agents.TaskDefinition{Name: resolved.Name, Builtin: true}
+				continue
+			}
+			if resolved.Task == nil {
+				continue
+			}
+			command := resolved.Task.Command
+			if command == "" {
+				command = resolved.Command
+			}
+			out[resolved.Name] = agents.TaskDefinition{
+				Name: resolved.Name, Command: command, Args: append([]string(nil), resolved.Task.Args...),
+				ModelFlag: resolved.ModelFlag, PromptTemplate: resolved.Task.PromptTemplate, OutputMode: resolved.Task.OutputMode,
+				PermissionArgs: cloneArgs(resolved.Task.PermissionArgs),
+				Env:            cloneStringMap(resolved.Env),
+			}
+		}
+		return out
+	}
 	sched.Sessions = sessMgr
 	terms := terminal.NewManager()
 
@@ -87,6 +112,28 @@ func New(cfg *config.Config, log *slog.Logger) (*App, error) {
 	}
 	sched.Start()
 	return app, nil
+}
+
+func cloneArgs(in map[string][]string) map[string][]string {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make(map[string][]string, len(in))
+	for k, values := range in {
+		out[k] = append([]string(nil), values...)
+	}
+	return out
+}
+
+func cloneStringMap(in map[string]string) map[string]string {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make(map[string]string, len(in))
+	for k, v := range in {
+		out[k] = v
+	}
+	return out
 }
 
 // Handler is the HTTP handler for this app.

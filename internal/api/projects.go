@@ -17,7 +17,6 @@ import (
 )
 
 var (
-	agentNames      = []string{"claude", "codex", "gemini"}
 	permissionModes = []string{"default", "acceptEdits", "plan", "bypassPermissions"}
 	capProfiles     = []string{"restricted", "parity"}
 )
@@ -74,8 +73,8 @@ func (s *Server) createProject(w http.ResponseWriter, r *http.Request) {
 		httpError(w, 422, "name and repo_path are required")
 		return
 	}
-	if in.DefaultAgent != nil && !oneOf(*in.DefaultAgent, agentNames...) {
-		httpError(w, 422, "default_agent must be one of %v", agentNames)
+	if in.DefaultAgent != nil && !s.knownAgent(*in.DefaultAgent) {
+		httpError(w, 422, "default_agent must be one of %v", s.knownAgentNames())
 		return
 	}
 	if in.CapabilityProfile != nil && !oneOf(*in.CapabilityProfile, capProfiles...) {
@@ -166,8 +165,8 @@ func (s *Server) patchProject(w http.ResponseWriter, r *http.Request) {
 		httpError(w, 422, "setup_cmd must be at most 16384 bytes without NUL")
 		return
 	}
-	if p.DefaultAgent != nil && !oneOf(*p.DefaultAgent, agentNames...) {
-		httpError(w, 422, "default_agent must be one of %v", agentNames)
+	if p.DefaultAgent != nil && !s.knownAgent(*p.DefaultAgent) {
+		httpError(w, 422, "default_agent must be one of %v", s.knownAgentNames())
 		return
 	}
 	if p.CapabilityProfile != nil && !oneOf(*p.CapabilityProfile, capProfiles...) {

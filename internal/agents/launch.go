@@ -29,6 +29,36 @@ type Launcher struct {
 	GeminiBin string
 }
 
+// TaskDefinition describes the non-interactive invocation for a configured
+// agent. Built-in agents keep their dedicated adapters; custom definitions use
+// this deliberately small contract so a CLI can be backed by any provider or
+// local model through its environment.
+type TaskDefinition struct {
+	Name           string   `json:"name"`
+	Command        string   `json:"command"`
+	Args           []string `json:"args,omitempty"`
+	ModelFlag      string   `json:"model_flag,omitempty"`
+	PromptArg      bool     `json:"prompt_arg,omitempty"`
+	PromptTemplate string   `json:"prompt_template,omitempty"`
+	OutputMode     string   `json:"output_mode,omitempty"`
+	// PermissionArgs explicitly maps AgentDeck modes to this CLI's flags.
+	// acceptEdits may be omitted when the CLI's native default is acceptable;
+	// plan and bypassPermissions require an explicit mapping.
+	PermissionArgs map[string][]string `json:"permission_args,omitempty"`
+	Env            map[string]string   `json:"env,omitempty"`
+	Builtin        bool                `json:"builtin,omitempty"`
+}
+
+// TaskLaunchConfig is the immutable, private snapshot attached to a queued
+// attempt. It keeps registry and project environment edits from changing work
+// that was already accepted by the operator.
+type TaskLaunchConfig struct {
+	Version    int               `json:"version"`
+	Agent      string            `json:"agent"`
+	Definition TaskDefinition    `json:"definition"`
+	Env        map[string]string `json:"env"`
+}
+
 // LaunchSpec is one attempt's launch parameters.
 type LaunchSpec struct {
 	Agent          string
@@ -42,6 +72,9 @@ type LaunchSpec struct {
 	SettingsPath   string
 	MCPConfig      string
 	StrictMCP      bool
+	// Definition is set for a configured custom agent. Leaving it nil preserves
+	// the existing built-in adapter behavior and its provider-specific flags.
+	Definition *TaskDefinition
 	// ExtraArgs are provider-specific flags, already validated by the adapter.
 	ExtraArgs []string
 }
@@ -102,6 +135,9 @@ func (l Launcher) Command(s LaunchSpec) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	if s.Definition != nil && !s.Definition.Builtin {
+		return genericTaskCommand(s, prefix, *s.Definition)
+	}
 	if s.Agent == "" || s.Agent == "claude" {
 		return l.claudeCommand(s, prefix), nil
 	}
@@ -147,6 +183,161 @@ func (l Launcher) Command(s LaunchSpec) (string, error) {
 	inner := fmt.Sprintf("cd %s && %s%s < /dev/null > %s/events.jsonl 2> %s/stderr.log; echo $? > %s/exit_code",
 		s.Worktree, prefix, strings.Join(parts, " "), rt, rt, rt)
 	return "tmux new-session -d -s " + s.TmuxSession + " " + shellQuote(inner), nil
+}
+
+// genericTaskCommand launches a configured CLI as a bounded background task.
+// The prompt is either an argument or stdin, as declared by the definition;
+// no provider-specific flags are invented. A tmux pane's stdin never reaches
+// EOF, so stdin delivery is implemented by an explicit file pipeline.
+func genericTaskCommand(s LaunchSpec, prefix string, d TaskDefinition) (string, error) {
+	if strings.TrimSpace(d.Command) == "" {
+		return "", fmt.Errorf("agent %q has no command", d.Name)
+	}
+	mode := d.OutputMode
+	if mode == "" {
+		mode = "plain"
+	}
+	if mode != "plain" && mode != "jsonl" {
+		return "", fmt.Errorf("agent %q has unsupported task output mode %q", d.Name, mode)
+	}
+	if s.PermissionMode == "plan" || s.PermissionMode == "bypassPermissions" {
+		args, ok := d.PermissionArgs[s.PermissionMode]
+		if !ok || !permissionArgsConfigured(args) {
+			return "", fmt.Errorf("agent %q does not support permission mode %q; configure permission_args or use acceptEdits",
+				d.Name, s.PermissionMode)
+		}
+	}
+	parts := []string{d.Command}
+	for _, arg := range d.Args {
+		parts = append(parts, shellQuote(arg))
+	}
+	if s.Model != "" && d.ModelFlag != "" {
+		parts = append(parts, shellQuote(d.ModelFlag), shellQuote(s.Model))
+	}
+	if args := d.PermissionArgs[s.PermissionMode]; len(args) > 0 {
+		for _, arg := range args {
+			parts = append(parts, shellQuote(arg))
+		}
+	}
+	invocation := strings.Join(parts, " ")
+	promptMode := d.PromptTemplate
+	if promptMode == "" && d.PromptArg {
+		promptMode = "{prompt}"
+	}
+	if promptMode == "stdin" {
+		invocation = `cat .agentdeck/prompt.md | ` + prefix + invocation
+	} else {
+		if promptMode == "" {
+			return "", fmt.Errorf("agent %q task prompt_template is required", d.Name)
+		}
+		if !strings.Contains(promptMode, "{prompt}") && !strings.Contains(promptMode, "{prompt_file}") {
+			return "", fmt.Errorf("agent %q task prompt_template must contain {prompt} or {prompt_file}", d.Name)
+		}
+		args, err := renderPromptTemplate(promptMode)
+		if err != nil {
+			return "", fmt.Errorf("agent %q: %w", d.Name, err)
+		}
+		invocation = prefix + invocation + " " + strings.Join(args, " ")
+	}
+	rt := RuntimeDir(s.Worktree)
+	quotedRT := shellQuote(rt)
+	inner := fmt.Sprintf("cd %s && %s > %s/events.jsonl 2> %s/stderr.log; echo $? > %s/exit_code",
+		shellQuote(s.Worktree), invocation, quotedRT, quotedRT, quotedRT)
+	if promptMode != "stdin" {
+		inner = fmt.Sprintf("cd %s && %s < /dev/null > %s/events.jsonl 2> %s/stderr.log; echo $? > %s/exit_code",
+			shellQuote(s.Worktree), invocation, quotedRT, quotedRT, quotedRT)
+	}
+	return "tmux new-session -d -s " + shellQuote(s.TmuxSession) + " " + shellQuote(inner), nil
+}
+
+func permissionArgsConfigured(args []string) bool {
+	if len(args) == 0 {
+		return false
+	}
+	for _, arg := range args {
+		if strings.TrimSpace(arg) == "" {
+			return false
+		}
+	}
+	return true
+}
+
+// renderPromptTemplate treats the template as a list of argument tokens. This
+// keeps multiline prompts and literal provider flags safe while still allowing
+// forms such as "--message {prompt}" and "--prompt-file {prompt_file}".
+func renderPromptTemplate(template string) ([]string, error) {
+	var out []string
+	tokens, err := promptTemplateTokens(template)
+	if err != nil {
+		return nil, err
+	}
+	for _, token := range tokens {
+		switch token {
+		case "{prompt}":
+			out = append(out, `"$(cat .agentdeck/prompt.md)"`)
+		case "{prompt_file}":
+			out = append(out, shellQuote(".agentdeck/prompt.md"))
+		default:
+			if strings.Contains(token, "{prompt}") || strings.Contains(token, "{prompt_file}") {
+				return nil, fmt.Errorf("prompt placeholders must be whole argument tokens")
+			}
+			out = append(out, shellQuote(strings.Trim(token, `"'`)))
+		}
+	}
+	return out, nil
+}
+
+// promptTemplateTokens is a small argument tokenizer, rather than a shell
+// parser. It accepts whitespace-separated arguments with single/double quotes
+// and backslash escapes, then shell-quotes every literal token when rendering.
+// This supports a flag such as --name "two words" without accepting arbitrary
+// command substitutions from the configured template.
+func promptTemplateTokens(template string) ([]string, error) {
+	var tokens []string
+	var token strings.Builder
+	var quote rune
+	escaped := false
+	flush := func() {
+		if token.Len() > 0 {
+			tokens = append(tokens, token.String())
+			token.Reset()
+		}
+	}
+	for _, r := range template {
+		if escaped {
+			token.WriteRune(r)
+			escaped = false
+			continue
+		}
+		if r == '\\' {
+			escaped = true
+			continue
+		}
+		if quote != 0 {
+			if r == quote {
+				quote = 0
+			} else {
+				token.WriteRune(r)
+			}
+			continue
+		}
+		switch {
+		case r == '\'' || r == '"':
+			quote = r
+		case r == ' ' || r == '\t' || r == '\n' || r == '\r':
+			flush()
+		default:
+			token.WriteRune(r)
+		}
+	}
+	if escaped {
+		token.WriteByte('\\')
+	}
+	if quote != 0 {
+		return nil, fmt.Errorf("prompt_template has an unterminated quote")
+	}
+	flush()
+	return tokens, nil
 }
 
 func (l Launcher) claudeCommand(s LaunchSpec, prefix string) string {

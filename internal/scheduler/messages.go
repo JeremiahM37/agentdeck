@@ -131,6 +131,18 @@ func (s *Scheduler) deliverTaskMessages(ctx context.Context, id int64) error {
 			}
 		}
 	}
+	launchJSON := ""
+	if !backlog && queueID == nil {
+		project, err := s.DB.Project(task.ProjectID)
+		if err != nil {
+			return err
+		}
+		config, err := s.taskLaunchConfig(&store.Attempt{}, &runCtx{Task: task, Project: project})
+		if err != nil {
+			return err
+		}
+		launchJSON = store.J(config)
+	}
 	token, err := randomToken()
 	if err != nil {
 		return err
@@ -181,8 +193,8 @@ func (s *Scheduler) deliverTaskMessages(ctx context.Context, id int64) error {
 		if err = tx.QueryRow("SELECT COALESCE(MAX(n),0)+1 FROM attempts WHERE task_id=?", id).Scan(&next); err != nil {
 			return err
 		}
-		res, err := tx.Exec(`INSERT INTO attempts(task_id,n,status,token,prompt,resume_session,worktree_path,branch,model)
-  VALUES(?,?,'queued',?,?,?,?,?,?)`, id, next, token, opts.Prompt, opts.ResumeSession, opts.WorktreePath, opts.Branch, opts.Model)
+		res, err := tx.Exec(`INSERT INTO attempts(task_id,n,status,token,prompt,resume_session,worktree_path,branch,model,launch_config_json)
+	VALUES(?,?,'queued',?,?,?,?,?,?,?)`, id, next, token, opts.Prompt, opts.ResumeSession, opts.WorktreePath, opts.Branch, opts.Model, launchJSON)
 		if err != nil {
 			return err
 		}

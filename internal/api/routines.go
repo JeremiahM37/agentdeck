@@ -10,7 +10,6 @@ import (
 
 	"github.com/JeremiahM37/agentdeck/internal/routines"
 	"github.com/JeremiahM37/agentdeck/internal/scheduler"
-	"github.com/JeremiahM37/agentdeck/internal/sessions"
 	"github.com/JeremiahM37/agentdeck/internal/store"
 )
 
@@ -119,10 +118,26 @@ func (s *Server) patchRoutine(w http.ResponseWriter, r *http.Request) {
 	// the same validation the create path does — an agent that does not exist
 	// saves happily and then fails at dispatch, hours later, on a schedule
 	if in.Agent != "" {
-		if _, ok := sessions.Find(s.agentSpecs(), in.Agent); !ok {
-			httpError(w, 400, "unknown agent %q — define it in /api/agents", in.Agent)
+		if _, ok := s.taskAgent(in.Agent); !ok {
+			httpError(w, 400, "agent %q has no non-interactive task definition", in.Agent)
 			return
 		}
+	}
+	projectIDs := row.ProjectIDs
+	if len(in.ProjectIDs) > 0 {
+		projectIDs = in.ProjectIDs
+	}
+	permissionMode := row.PermissionMode
+	if in.PermissionMode != "" {
+		permissionMode = in.PermissionMode
+	}
+	agent := row.Agent
+	if in.Agent != "" {
+		agent = in.Agent
+	}
+	if err := s.validateRoutinePermission(agent, permissionMode, projectIDs); err != nil {
+		httpError(w, 400, "%s", err)
+		return
 	}
 	for key, val := range map[string]string{
 		"agent": in.Agent, "model": in.Model, "permission_mode": in.PermissionMode,
@@ -265,11 +280,47 @@ func (s *Server) validateRoutine(in routineIn) error {
 		return err
 	}
 	if in.Agent != "" {
-		if _, ok := sessions.Find(s.agentSpecs(), in.Agent); !ok {
-			return fmt.Errorf("unknown agent %q", in.Agent)
+		if _, ok := s.taskAgent(in.Agent); !ok {
+			return fmt.Errorf("agent %q has no non-interactive task definition", in.Agent)
 		}
 	}
-	return s.validateProjects(in.ProjectIDs)
+	if err := s.validateProjects(in.ProjectIDs); err != nil {
+		return err
+	}
+	if err := s.validateRoutinePermission(in.Agent, in.PermissionMode, in.ProjectIDs); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (s *Server) validateRoutinePermission(agent, mode string, projectIDs []int64) error {
+	if agent != "" {
+		spec, ok := s.taskAgent(agent)
+		if !ok {
+			return fmt.Errorf("agent %q has no non-interactive task definition", agent)
+		}
+		if mode == "" {
+			return nil
+		}
+		return taskPermissionError(spec, mode)
+	}
+	for _, id := range projectIDs {
+		project, err := s.DB.Project(id)
+		if err != nil {
+			return err
+		}
+		name := firstNonEmptyStr(project.DefaultAgent, "claude")
+		spec, ok := s.taskAgent(name)
+		if !ok {
+			return fmt.Errorf("project %q default agent %q has no non-interactive task definition", project.Name, name)
+		}
+		if mode != "" {
+			if err := taskPermissionError(spec, mode); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }
 
 func (s *Server) validateProjects(ids []int64) error {

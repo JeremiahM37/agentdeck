@@ -14,12 +14,60 @@ import (
 	"github.com/JeremiahM37/agentdeck/internal/store"
 )
 
+// taskLaunchConfig resolves the configured task adapter once, or returns the
+// immutable snapshot stored when this attempt was queued.
+func (s *Scheduler) taskLaunchConfig(att *store.Attempt, c *runCtx) (agents.TaskLaunchConfig, error) {
+	if att.LaunchConfigJSON != "" {
+		var saved agents.TaskLaunchConfig
+		if err := json.Unmarshal([]byte(att.LaunchConfigJSON), &saved); err != nil || saved.Version != 1 || saved.Agent == "" {
+			return saved, fmt.Errorf("attempt task launch configuration is unreadable")
+		}
+		if saved.Agent != firstNonEmpty(c.Task.Agent, "claude") {
+			return saved, fmt.Errorf("attempt task launch agent no longer matches its task")
+		}
+		return saved, nil
+	}
+	agent := firstNonEmpty(c.Task.Agent, "claude")
+	var def agents.TaskDefinition
+	if s.AgentDefinitions != nil {
+		var ok bool
+		def, ok = s.AgentDefinitions()[agent]
+		if !ok {
+			return agents.TaskLaunchConfig{}, fmt.Errorf("agent %q has no non-interactive task definition", agent)
+		}
+	} else {
+		// Legacy test schedulers and old databases still use the built-in adapters.
+		switch agent {
+		case "claude", "codex", "gemini":
+			def = agents.TaskDefinition{Name: agent, Builtin: true}
+		default:
+			return agents.TaskLaunchConfig{}, fmt.Errorf("agent %q has no non-interactive task definition", agent)
+		}
+	}
+	env := map[string]string{}
+	if s.Creds != nil {
+		for k, v := range s.Creds.BaseAgentEnv() {
+			env[k] = v
+		}
+	}
+	for k, v := range def.Env {
+		env[k] = v
+	}
+	for k, v := range projectEnv(c.Project) {
+		env[k] = v
+	}
+	return agents.TaskLaunchConfig{Version: 1, Agent: agent, Definition: def, Env: env}, nil
+}
+
 // launchKW is what stageRuntime tells the launcher about the files it wrote.
 type launchKW struct {
 	SettingsPath string
 	MCPConfig    string
 	StrictMCP    bool
 	ExtraArgs    []string
+	Agent        string
+	Env          map[string]string
+	Definition   *agents.TaskDefinition
 }
 
 // EffectiveMCPServers lists the server names this attempt can actually reach, so
@@ -56,6 +104,16 @@ func EffectiveMCPServers(hostConfigPath string, project *store.Project, target *
 func (s *Scheduler) stageRuntime(ctx context.Context, ex executor.Executor, workdir string,
 	att *store.Attempt, c *runCtx) (launchKW, error) {
 	var kw launchKW
+	launchConfig, err := s.taskLaunchConfig(att, c)
+	if err != nil {
+		return kw, err
+	}
+	kw.Agent = launchConfig.Agent
+	kw.Env = launchConfig.Env
+	if !launchConfig.Definition.Builtin {
+		def := launchConfig.Definition
+		kw.Definition = &def
+	}
 	rt := agents.RuntimeDir(workdir)
 	isReviewer := c.Task.CreatedBy == "reviewer-gate"
 
@@ -111,7 +169,10 @@ func (s *Scheduler) stageRuntime(ctx context.Context, ex executor.Executor, work
 	// targets, so without this a remote agent has strictly fewer tools than a
 	// local one
 	mcp := store.UnjObj(c.Project.MCPJSON)
-	agent := firstNonEmpty(c.Task.Agent, "claude")
+	agent := launchConfig.Agent
+	if !launchConfig.Definition.Builtin && (len(mcp) > 0 || c.Project.StrictMCP != 0) {
+		return kw, fmt.Errorf("agent %q has no MCP capability mapping; configure MCP flags in its task definition or use a built-in agent", agent)
+	}
 	// Snapshot the complete project launch policy before branching by agent.
 	// Takeover must continue the attempt even if the project is edited later;
 	// the explicit marker distinguishes a captured empty declaration from an
@@ -170,7 +231,6 @@ func (s *Scheduler) stageRuntime(ctx context.Context, ex executor.Executor, work
 		}
 	}
 	memoryDir := c.Target.MemoryDir
-	agent = firstNonEmpty(c.Task.Agent, "claude")
 	if agent != "claude" {
 		memoryDir = "" // the memory layout is Claude Code's; nobody else reads it
 	}

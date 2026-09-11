@@ -47,6 +47,36 @@ func TestDashboardSearchGroupingAndSelectionSurviveRefresh(t *testing.T) {
 		t.Fatal("target grouping not applied")
 	}
 }
+
+func TestDashboardSearchKeepsWordsInsideFields(t *testing.T) {
+	m := newDashboard(New("http://unused", ""), nil)
+	m.rows = []row{
+		{"id": float64(1), "name": "Alpha", "project_name": "Backend", "target_name": "Laptop", "status": "idle"},
+		{"id": float64(2), "name": "Delta", "project_name": "Alpha", "target_name": "Laptop", "status": "idle"},
+		{"id": float64(3), "name": "Build", "project_name": "Nightly", "target_name": "Shift", "status": "idle"},
+		{"id": float64(4), "name": "安全🧪", "project_name": "Lab", "target_name": "Laptop", "status": "idle"},
+	}
+	m.query.SetValue("Alpha")
+	m.filter()
+	if len(m.visible) != 2 {
+		t.Fatalf("single-field search should match both Alpha fields: %#v", m.visible)
+	}
+	m.query.SetValue("night shift")
+	m.filter()
+	if len(m.visible) != 1 || id(m.visible[0]) != "3" {
+		t.Fatalf("multiword search should span fields by word: %#v", m.visible)
+	}
+	m.query.SetValue("taal")
+	m.filter()
+	if len(m.visible) != 0 {
+		t.Fatalf("search must not bridge fields: %#v", m.visible)
+	}
+	m.query.SetValue("安全")
+	m.filter()
+	if len(m.visible) != 1 || id(m.visible[0]) != "4" {
+		t.Fatalf("unicode field search: %#v", m.visible)
+	}
+}
 func TestDashboardIgnoresStaleResponsesAndKeepsRowsOnFailure(t *testing.T) {
 	m := sampleDashboard()
 	cmd := m.refresh()

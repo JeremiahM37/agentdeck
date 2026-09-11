@@ -59,9 +59,23 @@ type Spec struct {
 	// so the tool is asked rather than remembered. Empty means no catalog, and
 	// the UI falls back to whatever you have already run.
 	ModelsCommand string `json:"models_command,omitempty"`
+	// Task is optional because a configured CLI may be interactive-only. Its
+	// command/args are independent from the interactive invocation above.
+	Task *TaskSpec `json:"task,omitempty"`
 	// Builtin marks the three that ship with agentdeck, so the UI can show which
 	// are yours.
 	Builtin bool `json:"builtin,omitempty"`
+}
+
+// TaskSpec describes a configured CLI's non-interactive one-shot command.
+// PromptTemplate is appended to the command and must contain {prompt} or
+// {prompt_file}; stdin is also supported when the value is exactly "stdin".
+type TaskSpec struct {
+	Command        string              `json:"command,omitempty"`
+	Args           []string            `json:"args,omitempty"`
+	PromptTemplate string              `json:"prompt_template"`
+	OutputMode     string              `json:"output_mode,omitempty"`
+	PermissionArgs map[string][]string `json:"permission_args,omitempty"`
 }
 
 // Builtins are the agents agentdeck knows without being told.
@@ -138,11 +152,100 @@ func ValidateSpecs(raw string) error {
 		if strings.TrimSpace(c.Command) == "" {
 			return fmt.Errorf("agent %q has no command", name)
 		}
+		if c.Task != nil {
+			if c.Task.OutputMode != "" && c.Task.OutputMode != "plain" && c.Task.OutputMode != "jsonl" {
+				return fmt.Errorf("agent %q: task.output_mode must be plain or jsonl", name)
+			}
+			if err := validTaskPromptTemplate(c.Task.PromptTemplate); err != nil {
+				return fmt.Errorf("agent %q: %w", name, err)
+			}
+		}
+		if c.Task != nil {
+			for mode := range c.Task.PermissionArgs {
+				if mode != "acceptEdits" && mode != "plan" && mode != "bypassPermissions" {
+					return fmt.Errorf("agent %q: permission_args has unsupported mode %q", name, mode)
+				}
+			}
+			for _, mode := range []string{"plan", "bypassPermissions"} {
+				if args, ok := c.Task.PermissionArgs[mode]; ok && !TaskPermissionArgsConfigured(args) {
+					return fmt.Errorf("agent %q: permission_args.%s must contain a non-empty flag", name, mode)
+				}
+			}
+		}
 		for k := range c.Env {
 			if !validEnvName(k) {
 				return fmt.Errorf("agent %q: invalid env var name %q", name, k)
 			}
 		}
+	}
+	return nil
+}
+
+// TaskPermissionArgsConfigured distinguishes a real capability mapping from
+// an empty JSON array that would silently claim a mode while emitting no flag.
+func TaskPermissionArgsConfigured(args []string) bool {
+	if len(args) == 0 {
+		return false
+	}
+	for _, arg := range args {
+		if strings.TrimSpace(arg) == "" {
+			return false
+		}
+	}
+	return true
+}
+
+func validTaskPromptTemplate(template string) error {
+	if template == "stdin" {
+		return nil
+	}
+	if strings.TrimSpace(template) == "" {
+		return fmt.Errorf("task.prompt_template is required")
+	}
+	if err := validTaskTemplateQuotes(template); err != nil {
+		return err
+	}
+	found := false
+	for _, token := range strings.Fields(template) {
+		token = strings.Trim(token, `"'`)
+		if token == "{prompt}" || token == "{prompt_file}" {
+			found = true
+			continue
+		}
+		if strings.Contains(token, "{prompt}") || strings.Contains(token, "{prompt_file}") {
+			return fmt.Errorf("task.prompt_template placeholders must be whole argument tokens")
+		}
+	}
+	if !found {
+		return fmt.Errorf("task.prompt_template must contain {prompt} or {prompt_file}")
+	}
+	return nil
+}
+
+func validTaskTemplateQuotes(template string) error {
+	var quote rune
+	escaped := false
+	for _, r := range template {
+		if escaped {
+			escaped = false
+			continue
+		}
+		if r == '\\' {
+			escaped = true
+			continue
+		}
+		if quote != 0 {
+			if r == quote {
+				quote = 0
+			}
+			continue
+		}
+		if r == '\'' || r == '"' {
+			quote = r
+		}
+	}
+	if quote != 0 {
+		return fmt.Errorf("task.prompt_template has an unterminated quote")
 	}
 	return nil
 }

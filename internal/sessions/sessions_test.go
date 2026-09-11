@@ -471,8 +471,10 @@ func TestValidateSpecsRejectsWhatCannotLaunch(t *testing.T) {
 	for _, bad := range []string{
 		`[{"command":"x"}]`, // no name
 		`[{"name":"x"}]`,    // no command
-		`[{"name":"a","command":"a"},{"name":"a","command":"b"}]`, // duplicate
-		`[{"name":"a","command":"a","env":{"BAD-NAME":"1"}}]`,     // hostile env key
+		`[{"name":"a","command":"a"},{"name":"a","command":"b"}]`,                                                         // duplicate
+		`[{"name":"a","command":"a","env":{"BAD-NAME":"1"}}]`,                                                             // hostile env key
+		`[{"name":"a","command":"a","task":{"prompt_template":"{prompt}","permission_args":{"plan":[]}}}]`,                // empty capability
+		`[{"name":"a","command":"a","task":{"prompt_template":"{prompt}","permission_args":{"bypassPermissions":[""]}}}]`, // blank flag
 		`{"name":"a"}`, // not a list
 	} {
 		if err := ValidateSpecs(bad); err == nil {

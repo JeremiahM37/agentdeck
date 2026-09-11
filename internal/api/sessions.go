@@ -631,7 +631,8 @@ func (s *Server) agentSpecs() []sessions.Spec {
 }
 
 func (s *Server) listAgents(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, 200, s.agentSpecs())
+	w.Header().Set("Cache-Control", "no-store")
+	writeJSON(w, 200, s.agentViews(s.agentSpecs()))
 }
 
 // putAgents replaces the custom agent definitions. Built-ins are always present;
@@ -647,6 +648,11 @@ func (s *Server) putAgents(w http.ResponseWriter, r *http.Request) {
 	if body == "" {
 		body = "[]"
 	}
+	body, err = s.agentConfigWithRetainedSecrets(body)
+	if err != nil {
+		httpError(w, 400, "%s", err.Error())
+		return
+	}
 	if err := sessions.ValidateSpecs(body); err != nil {
 		httpError(w, 400, "%s", err.Error())
 		return
@@ -655,7 +661,8 @@ func (s *Server) putAgents(w http.ResponseWriter, r *http.Request) {
 		respondErr(w, err)
 		return
 	}
-	writeJSON(w, 200, s.agentSpecs())
+	w.Header().Set("Cache-Control", "no-store")
+	writeJSON(w, 200, s.agentViews(s.agentSpecs()))
 }
 
 // defaultTargetID picks where a session with no project and no named host should

@@ -106,11 +106,15 @@ Environment=AGENTDECK_CODEX_BIN=/home/you/.local/bin/codex
 
 `AGENTDECK_CLAUDE_BIN` and `AGENTDECK_GEMINI_BIN` work the same way.
 
-## Any CLI, for sessions
+## Any CLI, for sessions and tasks
 
-Dispatched tasks use the three built-in adapters, because a task needs its output
-parsed into a timeline. An interactive **session** does not — a human is reading
-the terminal — so any CLI can drive one. Define it once:
+An interactive session can use any configured CLI. A background task can use one
+too when its definition includes a non-interactive `task` invocation. Keeping
+the two invocations separate matters for CLIs whose interactive UI and batch
+runner have different commands (for example, an interactive TUI versus a
+`run`/`--message` command).
+
+Define a session-only CLI:
 
 ```bash
 curl -X PUT .../api/agents -d '[{
@@ -124,20 +128,62 @@ curl -X PUT .../api/agents -d '[{
 ```
 
 `prompt_arg` says the CLI accepts an opening message as a positional argument.
-When it does, the project briefing rides on the command line and there is no
-timing to lose; when it does not, agentdeck waits for the pane to settle at a
-prompt and types it in. A definition sharing a built-in's name overrides it,
-which is how a CLI whose flags have drifted gets fixed without a release.
+When it does, the project briefing rides on the command line; otherwise
+agentdeck types it after the pane settles. A definition sharing a built-in's
+name overrides it, which is how a CLI whose flags have drifted gets fixed
+without a release.
+
+Add a task definition when the CLI supports a bounded one-shot command:
+
+```json
+{
+  "name": "aider",
+  "command": "aider",
+  "model_flag": "--model",
+  "env": {"OPENAI_API_BASE": "http://ollama-host:11434/v1"},
+  "task": {
+    "command": "aider",
+    "args": ["--no-auto-commits"],
+    "prompt_template": "--message {prompt}",
+    "output_mode": "plain",
+    "permission_args": {"bypassPermissions": ["--yes"]}
+  }
+}
+```
+
+`task.command` falls back to the interactive command when omitted. `args` are
+individual tokens. `prompt_template` is either `stdin`, or an individual-token
+template containing `{prompt}` or `{prompt_file}`; arbitrary shell text is
+rejected. Prompt-argument tasks receive `< /dev/null` so a CLI cannot wait on a
+tmux pane's open stdin. `plain` captures ordinary text and `jsonl` normalizes
+recognized event objects while preserving unknown records.
+
+The task field is also the capability declaration: omitted `task` means
+session-only and task/routine creation explains how to fix it. `default` gated
+approvals are only available to Claude. `plan` and `bypassPermissions` require
+explicit `permission_args` for a custom CLI; `acceptEdits` uses the CLI's native
+default when no mapping is supplied. Project MCP is translated only for the
+built-in Claude and Codex adapters; a custom task with MCP fails early with an
+actionable capability error instead of silently claiming tools it cannot pass.
+
+Agent-wide and project environment values are layered for both sessions and
+tasks. This is the provider/local-model configuration door: use the CLI's
+documented variables such as `OPENAI_BASE_URL`/`OPENAI_API_KEY` or
+`ANTHROPIC_BASE_URL`/`ANTHROPIC_AUTH_TOKEN`, while keeping a runnable CLI
+command in the definition. An HTTP endpoint by itself is not an executable
+agent. The `/api/agents` response redacts credential-shaped environment values
+with typed retention markers; send those markers back when editing another
+field so the stored secret is retained without entering the browser response.
 
 A project's `env` is layered over the agent's, so pointing one project at a local
 model does not require redefining the agent.
 
-## Adding an agent (as a first-class task adapter)
-
-Add a case to two functions in `internal/agents/`: build the inner shell command
-in `Launcher.Command` (launch.go), and map the CLI's output to AgentDeck's event
-types (`init` / `text` / `tool_use` / `tool_result` / `result`) in
-`ParseStreamLines` (parse.go).
+Built-in adapters still handle Claude, Codex and Gemini's provider-specific
+flags and event formats. Custom tasks use the generic invocation above, so no
+backend code change is needed for each additional CLI. A custom JSONL event
+with `type` set to `init`, `text`, `tool_use`, `tool_result` or `result` is
+normalized directly; other JSON records and plain output remain visible in the
+timeline.
 
 One trap worth inheriting: both codex and gemini read stdin even when the prompt
 is passed as an argument, and a tmux pane's stdin never reaches EOF — so the

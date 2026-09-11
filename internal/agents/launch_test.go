@@ -198,3 +198,54 @@ func TestCodexFollowupResumesWithTheOriginalPermissions(t *testing.T) {
 	cmd := mustCommand(t, LaunchSpec{Agent: "codex", Worktree: "/wt/task1-a1", TmuxSession: "adk-2", PermissionMode: "acceptEdits", ResumeSession: "thread-123"})
 	hasAll(t, cmd, "codex exec --json --sandbox workspace-write resume thread-123", "prompt.md")
 }
+
+func TestGenericTaskUsesIndependentCommandAndPromptTemplate(t *testing.T) {
+	cmd := mustCommand(t, LaunchSpec{Agent: "opencode", Worktree: "/tmp/work dir",
+		TmuxSession: "adk-99", PermissionMode: "acceptEdits", Model: "local/qwen",
+		Env: map[string]string{"OPENAI_BASE_URL": "http://127.0.0.1:11434/v1"},
+		Definition: &TaskDefinition{Name: "opencode", Command: "opencode",
+			Args: []string{"run", "--format", "json"}, ModelFlag: "--model",
+			PromptTemplate: "--prompt {prompt}", OutputMode: "jsonl"}})
+	hasAll(t, cmd, "opencode run --format json --model local/qwen --prompt",
+		"OPENAI_BASE_URL=http://127.0.0.1:11434/v1", "< /dev/null",
+		"/tmp/work dir", "events.jsonl")
+	if strings.Contains(cmd, "claude -p") || strings.Contains(cmd, "codex exec") {
+		t.Fatalf("custom task received a built-in adapter: %s", cmd)
+	}
+}
+
+func TestGenericTaskCanDeliverPromptOnStdin(t *testing.T) {
+	cmd := mustCommand(t, LaunchSpec{Agent: "aider", Worktree: "/wt", TmuxSession: "s",
+		PermissionMode: "acceptEdits", Definition: &TaskDefinition{Name: "aider",
+			Command: "aider", PromptTemplate: "stdin"}})
+	hasAll(t, cmd, "cat .agentdeck/prompt.md | aider")
+	if strings.Contains(cmd, "< /dev/null") {
+		t.Fatalf("stdin prompt must remain attached to the command: %s", cmd)
+	}
+}
+
+func TestGenericPromptTemplateQuotesLiteralTokens(t *testing.T) {
+	rendered, err := renderPromptTemplate(`--message '{prompt}' --name "two words"`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := strings.Join(rendered, " "), `--message "$(cat .agentdeck/prompt.md)" --name 'two words'`; got != want {
+		t.Fatalf("rendered template: %q, want %q", got, want)
+	}
+	cmd := mustCommand(t, LaunchSpec{Agent: "custom", Worktree: "/wt/with space", TmuxSession: "s",
+		PermissionMode: "acceptEdits", Definition: &TaskDefinition{Name: "custom", Command: "runner",
+			Args:           []string{"--label", "snow ☃", "--literal", "$(echo p)"},
+			PromptTemplate: `--message '{prompt}' --name "two words"`}})
+	hasAll(t, cmd, `--literal`, `--name`, `"$(cat .agentdeck/prompt.md)"`)
+}
+
+func TestGenericTaskRejectsUnsupportedPermissionMode(t *testing.T) {
+	for _, args := range []([]string){nil, {}, {""}, {"  "}} {
+		_, err := launcher().Command(LaunchSpec{Agent: "custom", Worktree: "/wt", TmuxSession: "s",
+			PermissionMode: "plan", Definition: &TaskDefinition{Name: "custom", Command: "custom",
+				PromptTemplate: "{prompt}", PermissionArgs: map[string][]string{"plan": args}}})
+		if err == nil || !strings.Contains(err.Error(), "permission mode") {
+			t.Fatalf("expected an actionable permission capability error for %#v, got %v", args, err)
+		}
+	}
+}

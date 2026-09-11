@@ -10,7 +10,6 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/JeremiahM37/agentdeck/internal/agents"
 	"github.com/JeremiahM37/agentdeck/internal/executor"
 	"github.com/JeremiahM37/agentdeck/internal/scheduler"
 	"github.com/JeremiahM37/agentdeck/internal/skills"
@@ -73,8 +72,8 @@ func (s *Server) createTask(w http.ResponseWriter, r *http.Request) {
 		httpError(w, 422, "title is required")
 		return
 	}
-	if in.Agent != nil && !oneOf(*in.Agent, agentNames...) {
-		httpError(w, 422, "agent must be one of %v", agentNames)
+	if in.Agent != nil && !s.knownAgent(*in.Agent) {
+		httpError(w, 422, "agent must be one of %v", s.knownAgentNames())
 		return
 	}
 	if in.PermissionMode != nil && !oneOf(*in.PermissionMode, permissionModes...) {
@@ -95,9 +94,14 @@ func (s *Server) createTask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	agent := strOr(in.Agent, orDefault(project.DefaultAgent, "claude"))
+	if _, ok := s.taskAgent(agent); !ok {
+		httpError(w, 422, "agent %q has no non-interactive task definition; configure agent.task or use it for sessions only", agent)
+		return
+	}
 	mode := strOr(in.PermissionMode, orDefault(project.DefaultPermissionMode, "acceptEdits"))
-	if mode == "default" && !agents.GatedCapable[agent] {
-		httpError(w, 400, "agent %q does not support gated approvals; use acceptEdits/plan", agent)
+	spec, _ := s.taskAgent(agent)
+	if err := taskPermissionError(spec, mode); err != nil {
+		httpError(w, 400, "%s", err)
 		return
 	}
 	task, err := s.DB.InsertTask(&store.Task{
@@ -133,6 +137,17 @@ func (s *Server) patchTask(w http.ResponseWriter, r *http.Request) {
 	if err := decodeBody(r, &p); err != nil {
 		httpError(w, 422, "%s", err.Error())
 		return
+	}
+	if p.PermissionMode != nil {
+		spec, exists := s.taskAgent(task.Agent)
+		if !exists {
+			httpError(w, 422, "agent %q has no non-interactive task definition", task.Agent)
+			return
+		}
+		if err := taskPermissionError(spec, *p.PermissionMode); err != nil {
+			httpError(w, 400, "%s", err)
+			return
+		}
 	}
 	fields := map[string]any{}
 	setStr(fields, "title", p.Title)
@@ -202,6 +217,15 @@ func (s *Server) dispatchTask(w http.ResponseWriter, r *http.Request) {
 	if body.PermissionMode != "" {
 		if !oneOf(body.PermissionMode, permissionModes...) {
 			httpError(w, 422, "permission_mode must be one of %v", permissionModes)
+			return
+		}
+		spec, exists := s.taskAgent(task.Agent)
+		if !exists {
+			httpError(w, 422, "agent %q has no non-interactive task definition", task.Agent)
+			return
+		}
+		if err := taskPermissionError(spec, body.PermissionMode); err != nil {
+			httpError(w, 400, "%s", err)
 			return
 		}
 		fields["permission_mode"] = body.PermissionMode
