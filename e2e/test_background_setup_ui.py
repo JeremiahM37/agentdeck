@@ -61,10 +61,13 @@ def test_terminal_background_setup_updates_selected_preview(real_terminal):
     t=real_terminal;release=hold_second_checkout(t);d=Dashboard(t)
     try:
         d.wait('Real terminal');d.send('/Real terminal\r');d.send('n');d.wait('New session')
-        d.send('Slow terminal setup');d.send('\t'*8+'\x1b[C\t\x1b[C\x13')
+        d.send('Slow terminal setup');d.send('\t\t\x1b[C'+'\t'*6+'\x1b[C\t\x1b[C\x13')
         d.wait('Workspace repositories:');d.send('\x13');d.wait('Base (blank uses committed HEAD)')
         d.send('HEAD\x13');d.wait('Create session');d.send('\x13');d.wait('Workspace setup started')
-        d.send('/\x01\x0bSlow terminal setup\r');d.send('j');d.wait('Setting up workspace')
+        # The new session is created from the unassigned adopted terminal, so
+        # the prior search still hides it. Clear that filter, then move to the
+        # newly created row immediately above the selected terminal.
+        d.send('\x1b');d.send('k');d.wait('Setting up workspace')
         d.wait('Isolated project: ready',timeout=15);d.wait('Second repository: creating')
         d.send('\r');d.wait('Workspace is setting up')
         release.touch();d.wait('Second repository: ready',timeout=15)
