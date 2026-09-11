@@ -1,63 +1,50 @@
-/* agentdeck service worker.
-
-   The app shell is NETWORK-FIRST with a cache fallback: this is a self-hosted app
-   that updates in place, and cache-first strands an installed phone on the
-   previous build until CACHE_NAME moves. Everything else (font, icon) is
-   cache-first because it is immutable.
-
-   Non-GET requests return early: the cache API rejects them outright, and
-   swallowing one here would break any POST the page makes. */
-const CACHE = "agentdeck-v66";
-const SHELL = ["/workspace-extension.js", "/agent-commands.js", "/sheet-focus.js", "/launch-profiles.js", "/launch-profiles.css", "/agent-settings.js", "/agent-settings.css", "/native-search.js", "/native-search.css", "/", "/command-palette.js", "/command-palette.css", "/session-groups.js", "/native-history.js", "/native-history.css", "/review.js", "/review.css", "/app.js", "/terminal-tabs.js", "/conversation.js", "/conversation.css", "/style.css", "/workspace.css", "/ui-menu.js", "/fonts.css", "/icon.svg", "/manifest.webmanifest"];
-
-self.addEventListener("install", (e) => {
-  e.waitUntil(caches.open(CACHE).then((c) => c.addAll(SHELL)).then(() => self.skipWaiting()));
+/// <reference lib="webworker" />
+const worker = self;
+const CACHE = "agentdeck-react-407dd455e1bc";
+worker.addEventListener('install', event => event.waitUntil((async () => { await (await caches.open(CACHE)).addAll(["/","/icon.svg","/manifest.webmanifest","/fonts.css","/fonts/inter-latin.woff2","/fonts/inter-latin-ext.woff2","/react/assets/Review-DR5PCwew.css","/react/assets/Review-yknlI8gi.js","/react/assets/app-CJfK-5iN.js","/react/assets/app-Cb4BDn83.css","/react/assets/terminal-B8KPvt2e.css","/react/assets/terminal-Cgf7k_q6.js"]); await worker.skipWaiting(); })()));
+worker.addEventListener('activate', event => event.waitUntil((async () => { await Promise.all((await caches.keys()).filter(key => key.startsWith('agentdeck-') && key !== CACHE).map(key => caches.delete(key))); await worker.clients.claim(); })()));
+worker.addEventListener('fetch', event => {
+    const request = event.request, url = new URL(request.url);
+    if (request.method !== 'GET' || url.origin !== worker.location.origin || /^\/(api|term|terminal)\//.test(url.pathname))
+        return;
+    const immutable = url.pathname.startsWith('/react/assets/') || url.pathname.startsWith('/fonts/') || url.pathname === '/icon.svg';
+    event.respondWith((async () => {
+        const cache = await caches.open(CACHE);
+        if (immutable) {
+            const cached = await cache.match(request);
+            if (cached)
+                return cached;
+        }
+        try {
+            const response = await fetch(request);
+            if (response.ok)
+                await cache.put(request, response.clone());
+            return response;
+        }
+        catch {
+            return await cache.match(request) || (request.mode === 'navigate' ? await cache.match('/') : undefined) || new Response('AgentDeck is offline', { status: 503 });
+        }
+    })());
 });
-
-self.addEventListener("activate", (e) => {
-  e.waitUntil(caches.keys()
-    .then((keys) => Promise.all(keys.filter((k) => k !== CACHE).map((k) => caches.delete(k))))
-    .then(() => self.clients.claim()));
+worker.addEventListener('push', event => {
+    let data = {};
+    try {
+        data = event.data?.json() || {};
+    }
+    catch { }
+    const options = { body: data.body || '', icon: '/icon.svg', badge: '/icon.svg', data: { url: data.url || '/' }, actions: data.kind === 'approval' ? [{ action: 'open', title: 'Review' }] : [] };
+    event.waitUntil(worker.registration.showNotification(data.title || 'agentdeck', options));
 });
-
-self.addEventListener("fetch", (e) => {
-  if (e.request.method !== "GET") return;
-  const url = new URL(e.request.url);
-  if (url.origin !== location.origin) return;
-  // never cache the API or the SSE streams — they are live state
-  if (url.pathname.startsWith("/api/") || url.pathname.startsWith("/term/") || url.pathname.startsWith("/terminal/")) return;
-
-  if (url.pathname.startsWith("/fonts/") || url.pathname === "/icon.svg") {
-    e.respondWith(caches.match(e.request).then((hit) => hit || fetch(e.request)));
-    return;
-  }
-  e.respondWith(
-    fetch(e.request)
-      .then((resp) => {
-        const copy = resp.clone();
-        caches.open(CACHE).then((c) => c.put(e.request, copy)).catch(() => {});
-        return resp;
-      })
-      .catch(() => caches.match(e.request).then((hit) => hit || caches.match("/"))));
-});
-
-self.addEventListener("push", (e) => {
-  let data = {};
-  try { data = e.data ? e.data.json() : {}; } catch {}
-  e.waitUntil(self.registration.showNotification(data.title || "agentdeck", {
-    body: data.body || "", icon: "/icon.svg", badge: "/icon.svg",
-    data: { url: data.url || "/" },
-    actions: data.kind === "approval"
-      ? [{ action: "open", title: "Review" }] : [],
-  }));
-});
-
-self.addEventListener("notificationclick", (e) => {
-  e.notification.close();
-  const url = (e.notification.data && e.notification.data.url) || "/";
-  e.waitUntil(clients.matchAll({ type: "window", includeUncontrolled: true })
-    .then((list) => {
-      for (const c of list) if ("focus" in c) return c.focus();
-      return clients.openWindow(url);
-    }));
+worker.addEventListener('notificationclick', event => {
+    event.notification.close();
+    const data = event.notification.data;
+    let url = new URL(data?.url || '/', worker.location.origin);
+    if (url.origin !== worker.location.origin)
+        url = new URL('/', worker.location.origin);
+    event.waitUntil((async () => { const windows = await worker.clients.matchAll({ type: 'window', includeUncontrolled: true }); const app = windows[0]; if (app) {
+        await app.navigate(url.href);
+        await app.focus();
+    }
+    else
+        await worker.clients.openWindow(url.href); })());
 });

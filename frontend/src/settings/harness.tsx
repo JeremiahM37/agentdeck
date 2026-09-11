@@ -1,0 +1,125 @@
+import React from "react";
+import { createRoot } from "react-dom/client";
+import { Settings, type SettingsApi } from "./Settings";
+const calls: unknown[] = [];
+Object.assign(window, { calls });
+const target = {
+  id: 1,
+  name: "local",
+  kind: "local",
+  host: "",
+  port: 0,
+  user: "admin",
+  key_path: "",
+  workroot: "",
+  max_concurrent: 2,
+  sandbox: 0,
+  status: "online",
+  info_json: "{}",
+  context_json: "{}",
+  memory_dir: "",
+  command_prefix: "",
+  created_at: 1,
+};
+const project = {
+  id: 1,
+  name: "Deck",
+  target_id: 1,
+  target_name: "local",
+  repo_path: "/repo",
+  setup_cmd: "make setup",
+  default_base_branch: "main",
+  workroot_override: "",
+  policy_json: "{}",
+  verify_cmd: "go test ./...",
+  keep_worktrees: 0,
+  review_gate: 0,
+  env_json: "{}",
+  context_json: "{}",
+  strict_mcp: 0,
+  permissions_json: "{}",
+  gate_matcher: "",
+  default_agent: "claude",
+  capability_profile: "parity",
+  default_permission_mode: "acceptEdits",
+  skill_sources_json: "[]",
+  created_at: 1,
+};
+const api: SettingsApi = {
+  request: (async (p: string, o?: unknown) => {
+    calls.push([p, o]);
+    if (p === "/targets") return [target];
+    if (p === "/projects") return [project];
+    if (p === "/settings")
+      return {
+        discord_webhook: "",
+        ntfy_server: "https://ntfy.sh",
+        ntfy_topic: "deck",
+      };
+    if (p === "/projects/usage")
+      return [
+        {
+          project_id: 1,
+          tasks: 3,
+          open_tasks: 1,
+          sessions: 2,
+          last_active_at: 1,
+        },
+      ];
+    if (p === "/projects/1/mcp")
+      return {
+        mcp: { server: { command: "run" } },
+        revision: "r1",
+        strict_mcp: false,
+      };
+    if (p === "/projects/1/capability")
+      return {
+        profile: "parity",
+        allow: ["Bash"],
+        mcp_servers: ["server"],
+        memory_dir: "/memory",
+      };
+    if (p.startsWith("/skills?"))
+      return {
+        skills: [{ id: "skill-a", name: "Skill A", description: "Useful" }],
+      };
+    if (p.startsWith("/projects/1/skills?")) return { attachments: [] };
+    if (p === "/agents")
+      return [
+        { name: "claude", command: "claude", builtin: true },
+        {
+          name: "runner-secret",
+          command: "runner",
+          env: { API_KEY: { __agentdeck_retained: "token" } },
+        },
+      ];
+    if (p === "/launch-profiles")
+      return [
+        {
+          id: 1,
+          name: "Review",
+          agent: "claude",
+          command: "",
+          model: "sonnet",
+          env_json: "{}",
+        },
+      ];
+    if (p === "/stats")
+      return { total_cost_usd: 2, last_7d_usd: 1, tasks_done: 4 };
+    if (p === "/health")
+      return {
+        version: "v1",
+        build: { revision: "abcdef123456", modified: false },
+      };
+    if (p.startsWith("/projects/import/scan"))
+      return [{ name: "Found repo", path: "/src/found", registered: false }];
+    return {};
+  }) as SettingsApi["request"],
+};
+createRoot(document.getElementById("root")!).render(
+  <Settings
+    api={api}
+    onNotice={() => {}}
+    onEnablePush={() => calls.push(["push"])}
+  />,
+);

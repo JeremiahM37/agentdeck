@@ -5,6 +5,7 @@ package api_test
 import (
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -83,7 +84,7 @@ func TestWebAssetsAreEmbedded(t *testing.T) {
 		t.Fatal("index.html was not embedded")
 	}
 	for _, name := range []string{
-		"static/app.js", "static/style.css", "static/sw.js", "static/icon.svg",
+		"static/sw.js", "static/icon.svg",
 		"static/manifest.webmanifest", "static/fonts.css",
 		"static/fonts/inter-latin.woff2",
 	} {
@@ -93,19 +94,24 @@ func TestWebAssetsAreEmbedded(t *testing.T) {
 	}
 }
 
-// The service worker must skip non-GET requests: the cache API rejects them
-// outright, so swallowing one would break every POST the page makes.
-func TestServiceWorkerSkipsNonGET(t *testing.T) {
+// Verify the actual built shell references assets present in the embedded binary.
+// Worker network/cache semantics run in e2e/test_react_worker.py in a browser.
+func TestReactShellAssetsAreEmbedded(t *testing.T) {
+	matches := regexp.MustCompile(`(?:src|href)="(/react/assets/[^"\s]+)"`).FindAllStringSubmatch(string(web.IndexHTML), -1)
+	if len(matches) < 2 {
+		t.Fatal("React shell must reference bundled JavaScript and CSS")
+	}
+	for _, match := range matches {
+		if _, err := web.Assets.ReadFile("static" + match[1]); err != nil {
+			t.Errorf("built shell asset %s missing: %v", match[1], err)
+		}
+	}
 	sw, err := web.Assets.ReadFile("static/sw.js")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(sw), `e.request.method !== "GET"`) {
-		t.Fatal("sw.js must return early for non-GET requests")
-	}
-	// and it must never cache the API, which is live state
-	if !strings.Contains(string(sw), "/api/") {
-		t.Error("sw.js must exclude the API from caching")
+	if !strings.Contains(string(sw), "agentdeck-react-") {
+		t.Fatal("embedded worker is not the content-versioned React build")
 	}
 }
 

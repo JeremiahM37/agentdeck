@@ -1,0 +1,20 @@
+dialog.conversation {
+  margin: 0;
+  border: 0;
+  padding: 0;
+  color: var(--ink);
+  max-height: none;
+  width: 100%;
+  max-width: 100%;
+}
+dialog.conversation::backdrop {
+  background: #02040ad9;
+}
+@media (min-width: 900px) {
+  dialog.conversation {
+    width: 900px;
+  }
+}
+.conversation [hidden] {
+  display: none !important;
+}
