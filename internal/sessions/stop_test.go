@@ -4,6 +4,7 @@ import (
 	"context"
 	"github.com/JeremiahM37/agentdeck/internal/shellq"
 	"github.com/JeremiahM37/agentdeck/internal/store"
+	"github.com/JeremiahM37/agentdeck/internal/testutil"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -23,7 +24,7 @@ func TestKillDoesNotCloseRecordWhenTmuxRefusesStop(t *testing.T) {
 			}
 			t.Setenv("TMUX_TMPDIR", dir)
 			t.Setenv("TMUX", "")
-			t.Cleanup(func() { _ = exec.Command(real, "kill-server").Run(); _ = os.RemoveAll(dir) })
+			t.Cleanup(func() { testutil.CleanupTmux(t, dir); _ = os.RemoveAll(dir) })
 			m, s := pollRig(t)
 			if out, err := exec.Command(real, "-f", "/dev/null", "new-session", "-d", "-s", s.TmuxSession, "sleep 600").CombinedOutput(); err != nil {
 				t.Fatalf("tmux: %s %v", out, err)
@@ -129,7 +130,7 @@ func stopRig(t *testing.T) (*Manager, *store.Session, string, string) {
 	}
 	t.Setenv("TMUX_TMPDIR", dir)
 	t.Setenv("TMUX", "")
-	t.Cleanup(func() { _ = exec.Command(real, "kill-server").Run(); _ = os.RemoveAll(dir) })
+	t.Cleanup(func() { testutil.CleanupTmux(t, dir); _ = os.RemoveAll(dir) })
 	m, row := pollRig(t)
 	if out, err := exec.Command(real, "-f", "/dev/null", "new-session", "-d", "-s", row.TmuxSession, "sleep 600").CombinedOutput(); err != nil {
 		t.Fatalf("tmux: %s %v", out, err)

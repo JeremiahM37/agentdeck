@@ -17,6 +17,10 @@ func (m *Manager) Archive(ctx context.Context, id int64, stop bool) (*store.Sess
 	if m.setupActive(id) {
 		return nil, fmt.Errorf("workspace setup is still running; inspect its progress before archiving")
 	}
+	// Archiving with stop=true has the same race boundary as Kill: recovery must
+	// not launch a replacement between the absence check and the archive claim.
+	m.lifecycleMu.Lock()
+	defer m.lifecycleMu.Unlock()
 	s, ex, err := m.resolve(id)
 	if err != nil {
 		return nil, err
@@ -101,7 +105,6 @@ func (m *Manager) Archive(ctx context.Context, id int64, stop bool) (*store.Sess
 		}
 	}
 
-	m.lifecycleMu.Lock()
 	current, err := m.DB.Session(id)
 	if err == nil && (current.TargetID != s.TargetID || current.TmuxSession != s.TmuxSession) {
 		err = fmt.Errorf("session moved during archival; refresh before retrying")
@@ -114,7 +117,6 @@ func (m *Manager) Archive(ctx context.Context, id int64, stop bool) (*store.Sess
 		}
 		err = m.DB.Update("sessions", id, map[string]any{"archived_at": now, "archive_text": snapshot, "ended_at": ended, "status": StatusDead, "updated_at": now})
 	}
-	m.lifecycleMu.Unlock()
 	if err != nil {
 		return nil, err
 	}

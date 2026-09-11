@@ -4,6 +4,7 @@ import (
 	"context"
 	"github.com/JeremiahM37/agentdeck/internal/executor"
 	"github.com/JeremiahM37/agentdeck/internal/store"
+	"github.com/JeremiahM37/agentdeck/internal/testutil"
 	"github.com/JeremiahM37/agentdeck/internal/worktree"
 	"os"
 	"os/exec"
@@ -18,7 +19,7 @@ func TestRecoveryNeverAdoptsAReusedTerminalName(t *testing.T) {
 	}
 	t.Setenv("TMUX_TMPDIR", socket)
 	t.Setenv("TMUX", "")
-	t.Cleanup(func() { exec.Command("tmux", "kill-server").Run(); os.RemoveAll(socket) })
+	t.Cleanup(func() { testutil.CleanupTmux(t, socket); os.RemoveAll(socket) })
 	for _, mode := range []string{"owned", "foreign", "unmarked", "missing", "unavailable"} {
 		t.Run(mode, func(t *testing.T) {
 			m, row := pollRig(t)
