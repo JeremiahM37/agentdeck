@@ -182,7 +182,12 @@ func (l Launcher) Command(s LaunchSpec) (string, error) {
 	// "Reading additional input from stdin" and the attempt merely looks hung.
 	inner := fmt.Sprintf("cd %s && %s%s < /dev/null > %s/events.jsonl 2> %s/stderr.log; echo $? > %s/exit_code",
 		s.Worktree, prefix, strings.Join(parts, " "), rt, rt, rt)
-	return "tmux new-session -d -s " + s.TmuxSession + " " + shellQuote(inner), nil
+	// Do not rely on tmux's default-shell for headless attempts. The controller
+	// may run under a namespace UID whose passwd entry has nologin (as the
+	// isolated runner does), in which case tmux creates and immediately loses
+	// the pane before the command can write events.jsonl/exit_code.
+	return "tmux new-session -d -s " + shellQuote(s.TmuxSession) +
+		" -- bash -c " + shellQuote(inner), nil
 }
 
 // genericTaskCommand launches a configured CLI as a bounded background task.
@@ -247,7 +252,8 @@ func genericTaskCommand(s LaunchSpec, prefix string, d TaskDefinition) (string, 
 		inner = fmt.Sprintf("cd %s && %s < /dev/null > %s/events.jsonl 2> %s/stderr.log; echo $? > %s/exit_code",
 			shellQuote(s.Worktree), invocation, quotedRT, quotedRT, quotedRT)
 	}
-	return "tmux new-session -d -s " + shellQuote(s.TmuxSession) + " " + shellQuote(inner), nil
+	return "tmux new-session -d -s " + shellQuote(s.TmuxSession) +
+		" -- bash -c " + shellQuote(inner), nil
 }
 
 func permissionArgsConfigured(args []string) bool {
@@ -364,7 +370,8 @@ func (l Launcher) claudeCommand(s LaunchSpec, prefix string) string {
 	}
 	inner := fmt.Sprintf("cd %s && %s%s > %s/events.jsonl 2> %s/stderr.log; echo $? > %s/exit_code",
 		s.Worktree, prefix, strings.Join(parts, " "), rt, rt, rt)
-	return "tmux new-session -d -s " + s.TmuxSession + " " + shellQuote(inner)
+	return "tmux new-session -d -s " + shellQuote(s.TmuxSession) +
+		" -- bash -c " + shellQuote(inner)
 }
 
 func (l Launcher) bin(configured, def string) string {
