@@ -67,20 +67,44 @@ async def _read_pty(fd: int, process) -> None:
 
 async def _write_pty(fd: int, process) -> None:
     loop = asyncio.get_running_loop()
+    while True:
+        try:
+            data = await process.stdin.read(32768)
+        except asyncssh.TerminalSizeChanged as exc:
+            # AsyncSSH delivers each window-change request through the stdin
+            # stream. Keep forwarding input after applying the new size.
+            _set_winsize(fd, exc.width or 80, exc.height or 24)
+            continue
+        except (OSError, asyncio.CancelledError):
+            return
+        if not data:
+            return
+        try:
+            await loop.run_in_executor(None, os.write, fd, data)
+        except (OSError, asyncio.CancelledError):
+            return
+
+
+async def _resize_pty(fd: int, process) -> None:
+    previous = None
     try:
         while True:
-            data = await process.stdin.read(32768)
-            if not data:
-                return
-            await loop.run_in_executor(None, os.write, fd, data)
-    except (OSError, asyncio.CancelledError):
+            width, height, _, _ = process.term_size
+            width = width or 80
+            height = height or 24
+            size = (width, height)
+            if size != previous:
+                _set_winsize(fd, width, height)
+                previous = size
+            await asyncio.sleep(0.1)
+    except (Exception, asyncio.CancelledError):
         return
 
 
 async def _run_pty(process, command: str) -> None:
     master, child = pty.openpty()
     width, height, _, _ = process.term_size
-    _set_winsize(master, width, height)
+    _set_winsize(master, width or 80, height or 24)
 
     pid = os.fork()
     if pid == 0:
@@ -105,14 +129,16 @@ async def _run_pty(process, command: str) -> None:
     os.close(child)
     reader = asyncio.create_task(_read_pty(master, process))
     writer = asyncio.create_task(_write_pty(master, process))
+    resizer = asyncio.create_task(_resize_pty(master, process))
     try:
         status = await _waitpid(pid)
         process.exit(status)
     finally:
         reader.cancel()
         writer.cancel()
+        resizer.cancel()
         os.close(master)
-        await asyncio.gather(reader, writer, return_exceptions=True)
+        await asyncio.gather(reader, writer, resizer, return_exceptions=True)
 
 
 async def _copy_stream(reader, writer) -> None:
