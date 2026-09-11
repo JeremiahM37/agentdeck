@@ -33,47 +33,17 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y bubblewrap tmux ttyd
-          # setup-go places the module cache below /home/runner, whose
-          # ancestor permissions keep the nobody-mapped bwrap child from
-          # resolving the read-only bind source. This cache belongs to the
-          # disposable runner, so make only its path and contents readable.
-          gomodcache=$(go env GOMODCACHE)
-          cache_path=$gomodcache
-          while [[ "$cache_path" == /home/runner || "$cache_path" == /home/runner/* ]]; do
-            sudo chmod o+rx "$cache_path"
-            [[ "$cache_path" == /home/runner ]] && break
-            cache_path=${cache_path%/*}
-          done
-          sudo chmod -R a+rX "$gomodcache"
-          # The reviewed runner mounts the setup-go toolchain at this path.
-          # Root bwrap cannot create a missing mountpoint below its read-only
-          # /usr bind, so create the disposable runner directory up front.
-          sudo mkdir -p /usr/local/go
-          # GitHub-hosted runners deny an unprivileged bwrap process the
-          # RTM_NEWADDR operation needed to bring up loopback in its private
-          # network namespace. The runner remains disposable; invoke only
-          # bwrap through passwordless sudo so its own namespace setup can
-          # configure loopback. All test processes still drop to nobody via
-          # the reviewed runner's --uid/--gid mapping.
-          mkdir -p "$RUNNER_TEMP/adk-test-bin"
-          cat > "$RUNNER_TEMP/adk-test-bin/bwrap" <<'EOF'
-          #!/bin/sh
-          # run-isolated-tests.sh creates its staging directory with mode 700.
-          # Root bwrap drops to nobody while resolving bind sources, so expose
-          # only that disposable staging directory for the duration of setup.
-          for arg in "$@"; do
-            case "$arg" in
-              /tmp/adk-isolated-stage.*/*)
-                stage_root=${arg#/tmp/}
-                stage_root=${stage_root%%/*}
-                chmod 0755 "/tmp/$stage_root"
-                ;;
-            esac
-          done
-          exec sudo -n /usr/bin/bwrap "$@"
-          EOF
-          chmod 0755 "$RUNNER_TEMP/adk-test-bin/bwrap"
-          echo "$RUNNER_TEMP/adk-test-bin" >> "$GITHUB_PATH"
+          # Ubuntu's hosted image enables AppArmor's restriction on
+          # unprivileged user namespaces. That blocks bwrap's private network
+          # namespace setup (RTM_NEWADDR) before the reviewed runner can
+          # start. This VM is disposable; restore the normal unprivileged
+          # user-namespace behavior and retain bwrap's own bounded UID/GID
+          # mapping and network isolation.
+          apparmor_userns=/proc/sys/kernel/apparmor_restrict_unprivileged_userns
+          if [[ -e "$apparmor_userns" ]]; then
+            sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+            test "$(cat "$apparmor_userns")" = 0
+          fi
           uid=$(id -u)
           user=$(id -un)
           sudo loginctl enable-linger "$user"
