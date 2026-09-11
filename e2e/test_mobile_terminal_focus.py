@@ -6,6 +6,16 @@ from playwright.sync_api import expect
 from test_terminal_workspace import real_terminal,open_terminal
 from test_terminal_tabs import attach,frame,ready
 
+def assert_compact_controls_clear_viewport(one):
+    viewport = one.locator('#agent-terminal .xterm-viewport').bounding_box()
+    tools = one.locator('#terminal-tools-summary').bounding_box()
+    status = one.locator('#compact-status').bounding_box()
+    assert viewport and tools and status
+    for control in (tools, status):
+        assert control['x'] + control['width'] <= viewport['x'] or control['x'] >= viewport['x'] + viewport['width'] or \
+            control['y'] + control['height'] <= viewport['y'] or control['y'] >= viewport['y'] + viewport['height'], \
+            (viewport, control)
+
 
 def test_mobile_focus_gains_space_preserves_connection_and_allows_navigation(page,real_terminal):
     t=real_terminal
@@ -27,6 +37,8 @@ def test_mobile_focus_gains_space_preserves_connection_and_allows_navigation(pag
         expanded=one.locator('#agent-terminal').bounding_box()['height']
         assert focused-expanded >= 100,(focused,expanded)
         phone.get_by_role('button',name='Focus terminal').tap()
+        expect(one.locator('body')).to_have_class(re.compile('.*compact-chrome.*'))
+        assert_compact_controls_clear_viewport(one)
         # Files, desktop launch and global search remain available while focused.
         # In compact mode the direct toolbar button is folded into Tools.
         one.locator('#terminal-tools-summary').tap();one.locator('#compact-files').tap()
@@ -48,6 +60,8 @@ def test_mobile_focus_gains_space_preserves_connection_and_allows_navigation(pag
             else:expect(one.locator('#terminal-keybar')).not_to_be_visible()
             expect(one.locator('#agent-terminal')).to_be_visible()
             assert one.locator('#agent-terminal').bounding_box()['height']>200
+            if size['width']<1024 and size['height'] in (640, 550, 900):
+                assert_compact_controls_clear_viewport(one)
             assert phone.evaluate('document.documentElement.scrollWidth<=innerWidth')
         # Store the preference, restore on reload, then return to focus mode.
         phone.get_by_role('button',name='Show navigation').tap();phone.reload();ready(frame(phone,t['id']))

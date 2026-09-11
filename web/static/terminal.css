@@ -472,13 +472,13 @@ body.compact-chrome #terminal-tools { margin-left:auto; }
 body.compact-chrome #compact-desktop { display:block; width:100%; margin:0; border:0; text-align:left; min-height:44px; }
 body.compact-chrome #compact-workspace { display:block; font-size:11px; color:var(--muted); overflow-wrap:anywhere; padding:8px; border-bottom:1px solid var(--line); }
 body.compact-chrome #compact-upload,body.compact-chrome #compact-files { display:block; }
-body.mobile-terminal #terminal-keybar { display:flex; gap:2px; flex:none; overflow-x:auto; padding:2px 4px calc(2px + env(safe-area-inset-bottom)); border-top:1px solid var(--line); background:var(--surface); }
+body.mobile-terminal #terminal-keybar { display:flex; gap:2px; flex:none; overflow-x:auto; padding:2px calc(70px + env(safe-area-inset-right, 0px)) calc(2px + env(safe-area-inset-bottom, 0px)) 4px; border-top:1px solid var(--line); background:var(--surface); }
 #terminal-keybar button { flex:1 0 40px; min-width:40px; min-height:44px; padding:6px; background:transparent; border:0; }
 @media(max-width:1023px) {
  body.compact-chrome > nav { display:contents; }
- body.compact-chrome > nav > #terminal-tools { display:block; position:fixed; right:6px; bottom:calc(50px + env(safe-area-inset-bottom)); z-index:20; }
+ body.compact-chrome > nav > #terminal-tools { display:block; position:fixed; right:6px; bottom:calc(2px + env(safe-area-inset-bottom)); z-index:20; }
  body.compact-chrome > nav > #terminal-tools > summary { min-height:44px; background:var(--surface); }
- body.compact-chrome > nav > #terminal-tools[open] > .action-menu-panel { position:fixed; top:auto; right:6px; bottom:calc(98px + env(safe-area-inset-bottom)); max-height:calc(100dvh - 120px); }
- body.compact-chrome #compact-status { display:block; position:fixed; right:58px; bottom:calc(69px + env(safe-area-inset-bottom)); z-index:20; }
+ body.compact-chrome > nav > #terminal-tools[open] > .action-menu-panel { position:fixed; top:auto; right:6px; bottom:calc(50px + env(safe-area-inset-bottom)); max-height:calc(100dvh - 120px); }
+ body.compact-chrome #compact-status { display:block; position:fixed; right:58px; bottom:calc(20px + env(safe-area-inset-bottom)); z-index:20; }
  body.compact-chrome > nav > #upload,body.compact-chrome > nav > #files { display:none; }
 }
