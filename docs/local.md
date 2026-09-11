@@ -1,9 +1,11 @@
 # Standalone local AgentDeck
 
 Use the standalone local runtime when the computer where you run the agent is
-also the computer where you want the terminal workspace. It does not need an
-AgentDeck server, an SSH alias, a hosted URL, or Grimoire. Your existing agent
-CLI and its provider/model environment remain the source of truth.
+also the computer where you want the terminal workspace. It does not require a
+separately hosted AgentDeck server, an SSH alias, a hosted URL, or Grimoire.
+AgentDeck starts a private local helper on demand; no manual server setup is
+needed. Your existing agent CLI and its provider/model environment remain the
+source of truth.
 
 ## Install on Linux or macOS
 
@@ -32,6 +34,8 @@ The installer deliberately accepts a checkout or an already-built binary. This
 repository has no release asset workflow, so it does not guess at download
 URLs or substitute an unrelated platform build.
 
+Source builds require Go 1.25.x in addition to the runtime prerequisites.
+
 ## Start an agent locally
 
 The installed command has the same local command surface as the hosted client:
@@ -43,6 +47,26 @@ agentdeck local api --help
 
 If the installer selected `agentdeck-local` to preserve an existing remote
 launcher, substitute that name in the commands above.
+
+With no `AGENTDECK_API`, ordinary AgentDeck commands use the local runtime by
+default. `agentdeck local` explicitly selects local mode even when that
+variable points at a remote control plane. Conversely, keep `AGENTDECK_API`
+set when an ordinary command should use the hosted client; an unreachable
+explicit remote does not silently fall back to local state.
+
+The helper starts privately when the first local command needs it. Check or
+stop it with:
+
+```sh
+agentdeck local status
+agentdeck local stop
+```
+
+Stopping the helper does not discard the local database or durable tmux
+sessions; later local commands can start it again and resume them. A stop is
+refused while a task is still active, so inspect or finish that task first.
+Local state defaults to `~/.local/state/agentdeck/local`, or to
+`$XDG_STATE_HOME/agentdeck/local` when `XDG_STATE_HOME` is set.
 
 `agentdeck local` opens the local dashboard/console, where you choose the
 configured coding-agent command and its project. The local command keeps the
@@ -82,7 +106,8 @@ Both paths preserve the agent CLI's own provider and model settings. Choose
 the remote client when one board should manage agents on several machines;
 choose local when the terminal workspace should stay on this computer.
 
-Linux local terminal mode is the tested path. macOS terminal mode is supported
-by the same command and prerequisites, while browser, file, and URI integrations
-remain unverified there; use the hosted client for those integrations if they
-are required.
+Linux local terminal mode is the tested path. macOS local terminal mode is
+experimental and has not been runtime-tested. Browser and file integrations
+currently rely on Linux-specific assumptions, so this guide makes no macOS
+support or test claim for them; use the hosted client for those integrations
+when required.
