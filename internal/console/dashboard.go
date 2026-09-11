@@ -65,6 +65,26 @@ func fuzzy(query, value string) bool {
 	return true
 }
 
+// fuzzyFields keeps a query word inside one searchable field. Matching against
+// the concatenated row metadata lets a query succeed by bridging the end of
+// one field and the start of another, which produces false positives in the
+// session list. Different words may still match different fields.
+func fuzzyFields(query string, fields ...string) bool {
+	for _, word := range strings.Fields(strings.ToLower(query)) {
+		matched := false
+		for _, field := range fields {
+			if fuzzy(word, field) {
+				matched = true
+				break
+			}
+		}
+		if !matched {
+			return false
+		}
+	}
+	return true
+}
+
 type rowsMsg struct {
 	section    string
 	generation int
@@ -259,7 +279,7 @@ func (m *dashboard) filter() {
 		if status != "" && s != status {
 			continue
 		}
-		if !fuzzy(q, name(r)+" "+str(r["project_name"])+" "+str(r["target_name"])+" "+str(r["agent"])+" "+str(r["launch_profile"])+" "+str(r["workdir"])+" "+str(r["group_path"])+" "+workspaceBranch(r)+" "+id(r)) {
+		if !fuzzyFields(q, name(r), str(r["project_name"]), str(r["target_name"]), str(r["agent"]), str(r["launch_profile"]), str(r["workdir"]), str(r["group_path"]), workspaceBranch(r), id(r)) {
 			continue
 		}
 		m.visible = append(m.visible, r)
