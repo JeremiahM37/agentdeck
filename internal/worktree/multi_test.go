@@ -193,6 +193,93 @@ func TestMultiWorkspaceIgnoresReusedProcessReceipt(t *testing.T) {
 	}
 }
 
+func TestMultiWorkspaceLegacyReceiptGuardsLiveProcessGroups(t *testing.T) {
+	for _, bin := range []string{"git", "python3"} {
+		if _, err := exec.LookPath(bin); err != nil {
+			t.Skip(bin + " unavailable")
+		}
+	}
+	root := t.TempDir()
+	repo := filepath.Join(root, "repo")
+	if err := os.Mkdir(repo, 0700); err != nil {
+		t.Fatal(err)
+	}
+	for _, args := range [][]string{
+		{"init", "-q"},
+		{"-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", "commit", "--allow-empty", "-qm", "base"},
+	} {
+		if out, err := exec.Command("git", append([]string{"-C", repo}, args...)...).CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %s", args, out)
+		}
+	}
+	plan, err := PlanMultiWorkspace([]RepositorySource{{Name: "repo", Repo: repo}}, 92, InteractiveOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := RunInteractive(context.Background(), executor.NewLocal(), "create", plan); err != nil {
+		t.Fatal(err)
+	}
+	receiptPath := filepath.Join(plan.Path, ".agentdeck-process.json")
+	writeReceipt := func(pgid int) {
+		t.Helper()
+		raw, _ := json.Marshal(map[string]any{"pgid": pgid})
+		if err := os.WriteFile(receiptPath, raw, 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	status := func() bool {
+		t.Helper()
+		current := *plan
+		if err := RunInteractive(context.Background(), executor.NewLocal(), "status", &current); err != nil {
+			t.Fatal(err)
+		}
+		return current.OperationActive
+	}
+	stopGroup := func(process *os.Process) {
+		t.Helper()
+		_ = syscall.Kill(-process.Pid, syscall.SIGKILL)
+		_ = process.Release()
+	}
+
+	// Legacy receipts remain conservative while their process group is live.
+	live := exec.Command("sleep", "600")
+	live.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	if err := live.Start(); err != nil {
+		t.Fatal(err)
+	}
+	writeReceipt(live.Process.Pid)
+	if !status() {
+		stopGroup(live.Process)
+		t.Fatal("legacy receipt stopped guarding a live process group")
+	}
+	stopGroup(live.Process)
+	_ = live.Wait()
+
+	// If the worker leader exits while a descendant still writes, the legacy
+	// PGID scan must continue to block cleanup.
+	orphan := exec.Command("python3", "-c", "import subprocess,time; subprocess.Popen(['sleep','600']); time.sleep(.2)")
+	orphan.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	if err := orphan.Start(); err != nil {
+		t.Fatal(err)
+	}
+	pgid := orphan.Process.Pid
+	if err := orphan.Wait(); err != nil {
+		t.Fatal(err)
+	}
+	if err := syscall.Kill(-pgid, 0); err != nil {
+		t.Fatalf("orphan descendant did not remain in process group: %v", err)
+	}
+	writeReceipt(pgid)
+	if !status() {
+		stopGroup(orphan.Process)
+		t.Fatal("leader-gone process group was not guarded")
+	}
+	stopGroup(orphan.Process)
+	if err := RunInteractive(context.Background(), executor.NewLocal(), "remove", plan); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestMultiWorkspacePlansSeparateOwnedRepositoriesAndBases(t *testing.T) {
 	sources := []RepositorySource{{Name: "../API", Repo: "/repos/backend", Base: "main"}, {Name: "API", Repo: "/repos/frontend", Base: "develop"}, {Name: "資料", Repo: "/repos/library"}}
 	p, err := PlanMultiWorkspace(sources, 8, InteractiveOptions{Branch: "feature/shared"})

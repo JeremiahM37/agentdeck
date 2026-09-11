@@ -103,19 +103,20 @@ def busy():
         pgid = record['pgid']
         if type(pgid) is not int or pgid <= 1:
             raise ValueError('Workspace process receipt is invalid; inspect it before cleanup')
-        # Receipts written by older workers contain only a PGID. Treat those
-        # as stale: every mutating operation also takes .agentdeck-lock, which
-        # remains the authoritative guard for a live worker. This prevents an
-        # old bare-PGID receipt from blocking forever after a PID is reused.
         expected_start = record.get('starttime')
         expected_boot = record.get('boot_id')
-        if not isinstance(expected_start, str) or not expected_start:
+        current_boot = boot_id()
+        # A boot-id mismatch proves this record cannot describe a live worker.
+        # A start-time mismatch is equally conclusive while the recorded
+        # leader still exists. Missing metadata or a missing leader stays on
+        # the conservative PGID path below: an orphaned descendant may still
+        # be writing even after its leader exits.
+        if expected_boot and current_boot and expected_boot != current_boot:
             return
-        if expected_boot and boot_id() and expected_boot != boot_id():
-            return
-        actual_start = process_starttime(pgid)
-        if actual_start is None or actual_start != expected_start:
-            return
+        if isinstance(expected_start, str) and expected_start:
+            actual_start = process_starttime(pgid)
+            if actual_start is not None and actual_start != expected_start:
+                return
         try:
             os.killpg(pgid, 0)
         except ProcessLookupError:
