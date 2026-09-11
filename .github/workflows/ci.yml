@@ -33,11 +33,25 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y bubblewrap tmux ttyd
-          runtime=/run/user/$(id -u)
-          test -d "$runtime" && test -S "$runtime/bus" || {
-            echo "an owned systemd user bus is required for the reviewed test runner" >&2
+          uid=$(id -u)
+          user=$(id -un)
+          sudo loginctl enable-linger "$user"
+          sudo systemctl start "user-runtime-dir@${uid}.service"
+          sudo systemctl start "user@${uid}.service"
+          runtime=/run/user/${uid}
+          test "$(stat -c %u "$runtime")" = "$uid"
+          test -S "$runtime/bus" || {
+            echo "could not provision an owned systemd user bus for the reviewed test runner" >&2
             exit 1
           }
+      - name: Prove isolated runner namespace
+        env:
+          ADK_ISOLATION_REVIEWED: "1"
+          ADK_TEST_MODE: smoke
+        run: |
+          runtime=/run/user/$(id -u)
+          XDG_RUNTIME_DIR="$runtime" DBUS_SESSION_BUS_ADDRESS="unix:path=$runtime/bus" \
+            tools/run-isolated-tests.sh .
       # Real integration tests use temporary repositories and scripted agents.
       # They must run in the reviewed bwrap namespace: RequireIsolated checks
       # the kernel UID/GID mappings and rejects a marker set on the host.
@@ -45,7 +59,10 @@ jobs:
         env:
           ADK_ISOLATION_REVIEWED: "1"
           ADK_TEST_MODE: go
-        run: XDG_RUNTIME_DIR=/run/user/$(id -u) tools/run-isolated-tests.sh .
+        run: |
+          runtime=/run/user/$(id -u)
+          XDG_RUNTIME_DIR="$runtime" DBUS_SESSION_BUS_ADDRESS="unix:path=$runtime/bus" \
+            tools/run-isolated-tests.sh .
       - name: Windows client syntax and argument handling
         shell: pwsh
         run: ./tests/check-powershell-client.ps1
