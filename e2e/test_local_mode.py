@@ -4,6 +4,7 @@ import json
 import os
 import pty
 import select
+import shlex
 import subprocess
 import threading
 import time
@@ -133,12 +134,15 @@ def test_source_and_binary_local_install_create_persist_and_reattach(local_binar
     fake_agent.write_text("#!/bin/sh\nprintf 'LOCAL_AGENT_READY\\n'\nexec /bin/bash --noprofile --norc\n")
     fake_agent.chmod(0o755)
     fake_task = tmp_path / "fake-task"
+    task_ready = tmp_path / "local-task-ready"
+    task_release = tmp_path / "local-task-release"
     fake_task.write_text(
         "#!/bin/sh\n"
         "cat >/dev/null\n"
         "mkdir -p .agentdeck\n"
+        f"printf 'LOCAL_TASK_READY\\n' > {shlex.quote(str(task_ready))}\n"
+        f"while [ ! -f {shlex.quote(str(task_release))} ]; do sleep 0.05; done\n"
         "printf 'LOCAL_TASK_SENTINEL\\n' > .agentdeck/local-task-sentinel\n"
-        "sleep 2\n"
     )
     fake_task.chmod(0o755)
     env = _local_env(root, fake_agent)
@@ -166,6 +170,9 @@ def test_source_and_binary_local_install_create_persist_and_reattach(local_binar
     def cleanup():
         # Register cleanup before starting the local helper, so assertion
         # failures cannot leave test sessions or an engine alive.
+        # Release the handshake before cancellation so a running task can
+        # write its final marker and exit cleanly during teardown.
+        task_release.touch()
         if task_id:
             view = _run(binary, env, "api", "GET", f"/tasks/{task_id}", check=False)
             if view.returncode == 0:
@@ -319,11 +326,17 @@ def test_source_and_binary_local_install_create_persist_and_reattach(local_binar
     while time.time() < deadline:
         task_view = _json_command(binary, env, "api", "GET", f"/tasks/{task['id']}")
         running_attempt = task_view.get("attempt") or {}
-        if task_view["status"] == "running" and running_attempt.get("tmux_session"):
-            private_task_seen = subprocess.run(
-                ["tmux", "-S", str(private_tmux), "has-session", "-t", running_attempt["tmux_session"]],
-                capture_output=True, check=False,
-            ).returncode == 0
+        if not private_task_seen and task_view["status"] == "running" and running_attempt.get("tmux_session"):
+            if task_ready.is_file():
+                # The task holds its private tmux pane open until this release
+                # file is created. Verify the namespace during that handshake,
+                # before allowing the task to finish between API polls.
+                private_task_seen = subprocess.run(
+                    ["tmux", "-S", str(private_tmux), "has-session", "-t", running_attempt["tmux_session"]],
+                    capture_output=True, check=False,
+                ).returncode == 0
+                if private_task_seen:
+                    task_release.touch()
         if task_view["status"] in {"done", "review", "failed"}:
             break
         time.sleep(0.2)
