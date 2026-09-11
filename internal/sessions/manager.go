@@ -338,6 +338,7 @@ func (m *Manager) Launch(ctx context.Context, o LaunchOpts) (*store.Session, err
 			options := *o.Worktree
 			if target.Kind == "local" {
 				options.Namespace = m.WorktreeNamespace
+				options.Workroot = target.Workroot
 			}
 			plan = worktree.PlanInteractive(strings.TrimSpace(root.Stdout), sess.ID, options)
 			if o.ProjectID != nil {
@@ -358,6 +359,7 @@ func (m *Manager) Launch(ctx context.Context, o LaunchOpts) (*store.Session, err
 			options := *o.Worktree
 			if target.Kind == "local" {
 				options.Namespace = m.WorktreeNamespace
+				options.Workroot = target.Workroot
 			}
 			plan, err = worktree.PlanMultiWorkspace(workspaceSources, sess.ID, options)
 			if err == nil {

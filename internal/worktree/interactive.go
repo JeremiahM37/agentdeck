@@ -35,6 +35,7 @@ type InteractiveOptions struct {
 	Base              string                `json:"base"`
 	Branch            string                `json:"branch"`
 	Namespace         string                `json:"-"`
+	Workroot          string                `json:"-"`
 	ExtraRepositories []RepositorySelection `json:"extra_repositories,omitempty"`
 }
 
@@ -58,7 +59,11 @@ func PlanInteractive(repo string, id int64, o InteractiveOptions) *Interactive {
 	if base == "" {
 		base = "HEAD"
 	}
-	root := NamespacedWorkroot(DefaultWorkroot(repo), o.Namespace)
+	root := o.Workroot
+	if root == "" {
+		root = DefaultWorkroot(repo)
+	}
+	root = NamespacedWorkroot(root, o.Namespace)
 	return &Interactive{Repo: repo, Path: fmt.Sprintf("%s/session%d-%s", root, id, key[:8]), Branch: branch, Base: base, Token: key, State: "creating"}
 }
 
