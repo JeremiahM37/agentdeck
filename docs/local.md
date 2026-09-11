@@ -34,6 +34,21 @@ The installer deliberately accepts a checkout or an already-built binary. This
 repository has no release asset workflow, so it does not guess at download
 URLs or substitute an unrelated platform build.
 
+## Hosted service recovery
+
+The hosted systemd unit uses `KillMode=process`. AgentDeck's graceful shutdown
+closes its terminal proxies and stops scheduling, then leaves local agent tmux
+sessions alive across a binary replacement or manual service restart. The next
+process adopts surviving sessions from SQLite and recovery metadata.
+
+This applies only to processes launched on the control-plane host. SSH, PCT,
+and sandbox targets keep their tmux processes in the target's own service or
+user scope. Before the first restart, checkpoint each target's boot identity
+and native conversation identity; adoption must require exact target/session
+matches. A deployment replaces the binary atomically, validates this unit
+setting, runs `systemctl daemon-reload`, and stops for operator review. It must
+not issue `systemctl restart` automatically.
+
 Source builds require Go 1.25.x in addition to the runtime prerequisites.
 
 ## Start an agent locally
