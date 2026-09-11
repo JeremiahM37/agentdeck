@@ -129,6 +129,10 @@ jobs:
           npm test --prefix frontend
           npm run build --prefix frontend
           python3 frontend/scripts/stage.py
+          # The reviewed runner bind-mounts these caches writable below the
+          # otherwise read-only dependency tree; create the mountpoints after
+          # npm ci so bwrap does not need to mutate that tree.
+          mkdir -p frontend/node_modules/.vite frontend/node_modules/.vite-temp
       - name: Browser end-to-end
         env:
           ADK_ISOLATION_REVIEWED: "1"
