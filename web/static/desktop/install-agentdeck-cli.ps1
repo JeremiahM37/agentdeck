@@ -51,7 +51,8 @@ if ($args[0] -in @('console','tui','attach')) { & ssh -tt $server $command }
 else { & ssh $server $command }
 exit $LASTEXITCODE
 '@
-$launcher.Replace('__SERVER__', $Server).Replace('__API__', $Api) | Set-Content (Join-Path $dir 'agentdeck.ps1')
+$apiLiteral = $Api.Replace("'", "''")
+$launcher.Replace('__SERVER__', $Server).Replace('__API__', $apiLiteral) | Set-Content (Join-Path $dir 'agentdeck.ps1')
 '@powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%~dp0agentdeck.ps1" %*' | Set-Content (Join-Path $dir 'agentdeck.cmd')
 $userPath = [Environment]::GetEnvironmentVariable('Path','User')
 if (($userPath -split ';') -notcontains $dir) { [Environment]::SetEnvironmentVariable('Path', "$userPath;$dir", 'User') }

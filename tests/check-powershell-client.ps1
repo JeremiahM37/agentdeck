@@ -16,6 +16,17 @@ foreach ($value in @('simple', 'space and $dollar', "apostrophe's", '{"text":"sa
 }
 'PASS: PowerShell installer/launcher parse and POSIX argument round trips'
 
+# Exercise the generated remote-console path with a fake ssh command. The
+# launcher must pin the hosted API even when the local default is enabled.
+$cliSource = Join-Path $PSScriptRoot '../web/static/desktop/install-agentdeck-cli.ps1'
+$cliText = Get-Content -Raw $cliSource
+$cliLauncher = ($cliText -split "(?m)^\`$launcher = @'\r?\n",2)[1] -split "(?m)^'@",2 | Select-Object -First 1
+$cliLauncher = $cliLauncher.Replace('__SERVER__','test-server').Replace('__API__',"http://127.0.0.1:9110")
+$sshCalls = @()
+function ssh { param([Parameter(ValueFromRemainingArguments=$true)][object[]]$Parts) $script:sshCalls += ,$Parts; 0 }
+& ([scriptblock]::Create($cliLauncher))
+if (($sshCalls[0] -join '|') -ne '-tt|test-server|AGENTDECK_API=''http://127.0.0.1:9110'' /usr/local/bin/agentdeck ''console''') { throw 'Remote console did not pin hosted API' }
+
 # Exercise the desktop URI handler without launching a Windows console here.
 $desktopSource = Join-Path $PSScriptRoot '../web/static/desktop/setup-agentdeck.ps1'
 [System.Management.Automation.Language.Parser]::ParseFile($desktopSource,[ref]$tokens,[ref]$errors) | Out-Null
