@@ -92,13 +92,32 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - name: Install Playwright
+      - name: Install isolated Python environment
         run: |
-          python -m pip install --upgrade pip
-          pip install pytest playwright pyte==0.8.2 asyncssh
-          python -m playwright install --with-deps chromium
+          python -m venv --copies "$RUNNER_TEMP/adk-venv"
+          "$RUNNER_TEMP/adk-venv/bin/python" -m pip install --upgrade pip
+          "$RUNNER_TEMP/adk-venv/bin/pip" install pytest playwright pyte==0.8.2 asyncssh
+          echo "ADK_PYTHON_BASE=$(python -c 'import sys; print(sys.base_prefix)')" >> "$GITHUB_ENV"
+          PLAYWRIGHT_BROWSERS_PATH="$RUNNER_TEMP/adk-playwright" \
+            "$RUNNER_TEMP/adk-venv/bin/python" -m playwright install --with-deps chromium
       - name: Install terminal tools
-        run: sudo apt-get update && sudo apt-get install -y tmux ttyd
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y bubblewrap tmux ttyd
+          apparmor_userns=/proc/sys/kernel/apparmor_restrict_unprivileged_userns
+          if [[ -e "$apparmor_userns" ]]; then
+            sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+            test "$(cat "$apparmor_userns")" = 0
+          fi
+          sudo mkdir -p /usr/local/go
+          uid=$(id -u)
+          user=$(id -un)
+          sudo loginctl enable-linger "$user"
+          sudo systemctl start "user-runtime-dir@${uid}.service"
+          sudo systemctl start "user@${uid}.service"
+          runtime=/run/user/${uid}
+          test "$(stat -c %u "$runtime")" = "$uid"
+          test -S "$runtime/bus"
       - uses: actions/setup-node@v4
         with:
           node-version: "24"
@@ -110,9 +129,13 @@ jobs:
           npm test --prefix frontend
           npm run build --prefix frontend
           python3 frontend/scripts/stage.py
-      - name: Build the server
-        run: go build -o ./agentdeck ./cmd/agentdeck
       - name: Browser end-to-end
         env:
-          AGENTDECK_BIN: ${{ github.workspace }}/agentdeck
-        run: pytest -q e2e
+          ADK_ISOLATION_REVIEWED: "1"
+          ADK_TEST_MODE: e2e
+          ADK_PYTHON_VENV: ${{ runner.temp }}/adk-venv
+          ADK_PLAYWRIGHT_CACHE: ${{ runner.temp }}/adk-playwright
+        run: |
+          runtime=/run/user/$(id -u)
+          XDG_RUNTIME_DIR="$runtime" DBUS_SESSION_BUS_ADDRESS="unix:path=$runtime/bus" \
+            tools/run-isolated-tests.sh .

@@ -97,8 +97,9 @@ host_tmux_socket=${host_tmux_socket%%,*}
 
 gomodcache=$(go env GOMODCACHE)
 goroot=$(go env GOROOT)
-venv=/home/admin/projects/agentdeck/.venv
-playwright=/home/admin/.cache/ms-playwright
+venv=${ADK_PYTHON_VENV:-/home/admin/projects/agentdeck/.venv}
+python_base=${ADK_PYTHON_BASE:-}
+playwright=${ADK_PLAYWRIGHT_CACHE:-/home/admin/.cache/ms-playwright}
 [[ -d "$venv" ]] || venv=
 [[ -d "$playwright" ]] || playwright=
 
@@ -131,6 +132,24 @@ fi
   --dir /opt --dir /opt/test-bin
   --chdir /src
 )
+
+# A CI-created venv may point at a hosted-toolcache Python installation whose
+# absolute path is recorded in pyvenv.cfg. Mount that base installation at the
+# same path so the venv keeps its interpreter and standard library intact.
+if [[ -n "$python_base" ]]; then
+  python_base=$(readlink -f "$python_base")
+  [[ -d "$python_base" ]] || { echo "configured Python base is absent: $python_base" >&2; exit 2; }
+  base_path=${python_base#/}
+  base_parent=
+  IFS=/ read -r -a base_parts <<<"$base_path"
+  for base_part in "${base_parts[@]}"; do
+    [[ -z "$base_part" ]] && continue
+    base_parent+="/$base_part"
+    [[ "$base_parent" == "$python_base" ]] && break
+    bwrap_args+=(--dir "$base_parent")
+  done
+  bwrap_args+=(--ro-bind "$python_base" "$python_base")
+fi
 
 bwrap_args+=(--ro-bind "$goroot" /usr/local/go)
 bwrap_args+=(--ro-bind "$gomodcache" /go/pkg/mod)
