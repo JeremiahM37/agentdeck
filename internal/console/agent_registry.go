@@ -200,9 +200,9 @@ func (m *dashboard) agentDefinitionForm(source row) tea.Cmd {
 			m.notice = err.Error()
 			return nil
 		}
-		var env map[string]string
-		if err := json.Unmarshal([]byte(str(body["env"])), &env); err != nil || env == nil {
-			m.notice = "Environment must be a JSON object of string values."
+		var env map[string]any
+		if err := json.Unmarshal([]byte(str(body["env"])), &env); err != nil || env == nil || !validAgentEnv(env) {
+			m.notice = "Environment must be a JSON object of string values (or retained secret markers)."
 			return nil
 		}
 		preset := str(body["preset"])
@@ -246,7 +246,10 @@ func (m *dashboard) agentDefinitionForm(source row) tea.Cmd {
 		if source != nil {
 			for key, value := range sourceEnvMap(source) {
 				if env[key] == "__KEEP__" {
-					env[key] = str(value)
+					// Agent GET redacts secret values as a typed retention marker.
+					// Preserve that object through PUT; converting it with str()
+					// would store the marker text as the credential.
+					env[key] = value
 				}
 			}
 		}
@@ -308,6 +311,22 @@ func validEnvName(value string) bool {
 			continue
 		}
 		return false
+	}
+	return true
+}
+
+func validAgentEnv(env map[string]any) bool {
+	for _, value := range env {
+		if _, ok := value.(string); ok {
+			continue
+		}
+		marker, ok := value.(map[string]any)
+		if !ok || len(marker) != 1 {
+			return false
+		}
+		if token, ok := marker["__agentdeck_retained"].(string); !ok || token == "" {
+			return false
+		}
 	}
 	return true
 }
