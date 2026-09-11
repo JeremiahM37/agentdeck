@@ -61,6 +61,7 @@ func New(cfg *config.Config, log *slog.Logger) (*App, error) {
 	sessMgr := sessions.New(db, reg, b, sessions.Launcher{
 		ClaudeBin: cfg.ClaudeBin, CodexBin: cfg.CodexBin, GeminiBin: cfg.GeminiBin,
 	}, mem, log)
+	sessMgr.WorktreeNamespace = cfg.WorktreeNamespace
 	// the agent set is the operator's, read fresh so a change takes effect
 	// without a restart
 	sessMgr.Specs = func() []sessions.Spec { return sessions.ParseSpecs(db.Setting("agents")) }

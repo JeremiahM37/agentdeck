@@ -6,6 +6,7 @@ package localruntime
 import (
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -19,6 +20,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -68,6 +70,10 @@ func stateDir(create bool) (string, error) {
 		base = filepath.Join(home, ".local", "state")
 	}
 	dir := filepath.Join(base, "agentdeck", "local")
+	var err error
+	if dir, err = filepath.Abs(dir); err != nil {
+		return "", err
+	}
 	if create {
 		if err := os.MkdirAll(dir, 0o700); err != nil {
 			return "", err
@@ -329,6 +335,12 @@ func Engine(ctx context.Context, base *config.Config, dir, token string, lockFD 
 	}
 	port := listener.Addr().(*net.TCPAddr).Port
 	cfg := *base
+	absDir, err := filepath.Abs(dir)
+	if err != nil {
+		return fmt.Errorf("resolve local state directory: %w", err)
+	}
+	nsDigest := sha256.Sum256([]byte(absDir))
+	cfg.WorktreeNamespace = "local-" + hex.EncodeToString(nsDigest[:6])
 	cfg.DBPath = filepath.Join(dir, "agentdeck.db")
 	cfg.Host = "127.0.0.1"
 	cfg.Port = port
@@ -356,6 +368,19 @@ func Engine(ctx context.Context, base *config.Config, dir, token string, lockFD 
 	}
 	ep := Endpoint{URL: cfg.BaseURL, Token: token, Instance: token[:16], PID: os.Getpid(), StartedAt: time.Now().UTC().Format(time.RFC3339Nano), Build: version.Current(), TmuxDir: filepath.Join(dir, "tmux")}
 	var server *http.Server
+	shutdownDone := make(chan struct{})
+	var shutdownOnce sync.Once
+	requestShutdown := func() {
+		shutdownOnce.Do(func() {
+			go func() {
+				defer close(shutdownDone)
+				appInstance.Server.DrainStreams()
+				shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+				defer cancel()
+				_ = server.Shutdown(shutdownCtx)
+			}()
+		})
+	}
 	server = &http.Server{Handler: localHandler(appInstance.Handler(), token, ep.Instance, func() error {
 		active, err := appInstance.DB.TasksWhere("status IN ('queued','running','review')")
 		if err != nil {
@@ -364,7 +389,7 @@ func Engine(ctx context.Context, base *config.Config, dir, token string, lockFD 
 		if len(active) > 0 {
 			return fmt.Errorf("local runtime has %d active task(s); finish or cancel them before stopping", len(active))
 		}
-		go func() { _ = server.Shutdown(context.Background()) }()
+		requestShutdown()
 		return nil
 	})}
 	if err := writeEndpoint(dir, ep); err != nil {
@@ -373,11 +398,12 @@ func Engine(ctx context.Context, base *config.Config, dir, token string, lockFD 
 	}
 	go func() {
 		<-ctx.Done()
-		_ = server.Shutdown(context.Background())
+		requestShutdown()
 	}()
 	if err := server.Serve(listener); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		return err
 	}
+	<-shutdownDone
 	return nil
 }
 

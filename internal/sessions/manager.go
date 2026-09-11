@@ -32,6 +32,9 @@ type Manager struct {
 	Specs  func() []Spec
 	Memory memory.Provider
 	Log    *slog.Logger
+	// WorktreeNamespace scopes automatically-created local allocations. Hosted
+	// managers leave it empty to retain historical paths and branch names.
+	WorktreeNamespace string
 
 	// HandoffTimeout bounds how long we wait for an agent to write its wrap
 	// before giving up and saying so.
@@ -332,7 +335,12 @@ func (m *Manager) Launch(ctx context.Context, o LaunchOpts) (*store.Session, err
 				m.end(sess.ID, StatusDead)
 				return nil, fmt.Errorf("worktree source must be an existing Git working directory")
 			}
-			plan = worktree.PlanInteractive(strings.TrimSpace(root.Stdout), sess.ID, *o.Worktree)
+			options := *o.Worktree
+			if target.Kind == "local" {
+				options.Namespace = m.WorktreeNamespace
+				options.Workroot = target.Workroot
+			}
+			plan = worktree.PlanInteractive(strings.TrimSpace(root.Stdout), sess.ID, options)
 			if o.ProjectID != nil {
 				if project == nil {
 					project, err = m.DB.Project(*o.ProjectID)
@@ -348,7 +356,12 @@ func (m *Manager) Launch(ctx context.Context, o LaunchOpts) (*store.Session, err
 			}
 		}
 		if len(workspaceSources) > 0 {
-			plan, err = worktree.PlanMultiWorkspace(workspaceSources, sess.ID, *o.Worktree)
+			options := *o.Worktree
+			if target.Kind == "local" {
+				options.Namespace = m.WorktreeNamespace
+				options.Workroot = target.Workroot
+			}
+			plan, err = worktree.PlanMultiWorkspace(workspaceSources, sess.ID, options)
 			if err == nil {
 				err = worktree.RunInteractive(ctx, ex, "check-create", plan)
 			}

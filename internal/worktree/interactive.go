@@ -34,6 +34,8 @@ type Interactive struct {
 type InteractiveOptions struct {
 	Base              string                `json:"base"`
 	Branch            string                `json:"branch"`
+	Namespace         string                `json:"-"`
+	Workroot          string                `json:"-"`
 	ExtraRepositories []RepositorySelection `json:"extra_repositories,omitempty"`
 }
 
@@ -51,12 +53,18 @@ func PlanInteractive(repo string, id int64, o InteractiveOptions) *Interactive {
 	branch := strings.TrimSpace(o.Branch)
 	if branch == "" {
 		branch = fmt.Sprintf("adk/session%d-%s", id, key[:8])
+		branch = NamespacedBranch(branch, o.Namespace)
 	}
 	base := strings.TrimSpace(o.Base)
 	if base == "" {
 		base = "HEAD"
 	}
-	return &Interactive{Repo: repo, Path: fmt.Sprintf("%s/session%d-%s", DefaultWorkroot(repo), id, key[:8]), Branch: branch, Base: base, Token: key, State: "creating"}
+	root := o.Workroot
+	if root == "" {
+		root = DefaultWorkroot(repo)
+	}
+	root = NamespacedWorkroot(root, o.Namespace)
+	return &Interactive{Repo: repo, Path: fmt.Sprintf("%s/session%d-%s", root, id, key[:8]), Branch: branch, Base: base, Token: key, State: "creating"}
 }
 
 //go:embed interactive.py

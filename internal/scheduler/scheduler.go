@@ -297,12 +297,10 @@ func (s *Scheduler) launch(ctx context.Context, att *store.Attempt, c *runCtx) e
 	wt := att.WorktreePath
 	branch := att.Branch
 	if branch == "" {
-		branch = worktree.BranchName(c.Task.ID, att.N)
+		_, branch = s.taskWorktree(c, att)
 	}
 	if wt == "" {
-		workroot := firstNonEmpty(c.Project.WorkrootOverride, c.Target.Workroot,
-			worktree.DefaultWorkroot(c.Project.RepoPath))
-		wt = worktree.Path(workroot, c.Task.ID, att.N)
+		wt, _ = s.taskWorktree(c, att)
 		base := firstNonEmpty(c.Task.BaseBranch, c.Project.DefaultBaseBranch, "main")
 		if err := worktree.Ensure(ctx, ex, c.Project.RepoPath, base, branch, wt); err != nil {
 			return err
