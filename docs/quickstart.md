@@ -1,5 +1,18 @@
 # Quickstart
 
+For a terminal-only setup on the same machine as the agent, use the
+[standalone local runtime](local.md). It requires no server URL or SSH setup:
+
+```bash
+git clone https://github.com/JeremiahM37/agentdeck.git
+cd agentdeck
+bash tools/install-local.sh
+agentdeck-local local claude
+```
+
+The rest of this page describes the hosted control-plane setup, where one
+AgentDeck server manages local or SSH targets.
+
 ## 1. Run the control plane
 
 ```bash

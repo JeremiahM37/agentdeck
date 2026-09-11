@@ -55,6 +55,11 @@ For Windows, download `/desktop/install-agentdeck-cli.ps1` and run it with
 management runs on the server. `agentdeck upload` stages local files over SCP.
 The native Windows launcher requires OpenSSH, with your existing host/key setup.
 
+For a terminal workspace that runs entirely on the current computer, use the
+[standalone local installer](local.md) instead. It installs `agentdeck-local`
+and does not need a control-plane URL or SSH server; the remote installer above
+continues to install the `agentdeck` client.
+
 This client works in your existing terminal. The
 separate desktop URI installers enable opening an attachment from the web UI.
 
