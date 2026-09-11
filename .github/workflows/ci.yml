@@ -33,6 +33,18 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y bubblewrap tmux ttyd
+          # setup-go places the module cache below /home/runner, whose
+          # ancestor permissions keep the nobody-mapped bwrap child from
+          # resolving the read-only bind source. This cache belongs to the
+          # disposable runner, so make only its path and contents readable.
+          gomodcache=$(go env GOMODCACHE)
+          cache_path=$gomodcache
+          while [[ "$cache_path" == /home/runner || "$cache_path" == /home/runner/* ]]; do
+            sudo chmod o+rx "$cache_path"
+            [[ "$cache_path" == /home/runner ]] && break
+            cache_path=${cache_path%/*}
+          done
+          sudo chmod -R a+rX "$gomodcache"
           # GitHub-hosted runners deny an unprivileged bwrap process the
           # RTM_NEWADDR operation needed to bring up loopback in its private
           # network namespace. The runner remains disposable; invoke only
