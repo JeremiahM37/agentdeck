@@ -92,6 +92,34 @@ function act(fn) {
       .then(() => fn(...args))
       .catch((e) => notice(e.message, true));
 }
+function copyWithExecCommand(text, restoreFocus) {
+  const previous = document.activeElement;
+  const textarea = document.createElement("textarea");
+  textarea.value = text;
+  textarea.setAttribute("readonly", "");
+  textarea.style.position = "fixed";
+  textarea.style.opacity = "0";
+  document.body.append(textarea);
+  textarea.select();
+  let copied = false;
+  try {
+    copied = document.execCommand("copy");
+  } finally {
+    textarea.remove();
+    if (restoreFocus) restoreFocus();
+    else if (previous instanceof HTMLElement) previous.focus({ preventScroll: true });
+  }
+  if (!copied) throw Error("Clipboard access is unavailable. Use your browser's Copy command.");
+}
+async function copyClipboard(text, restoreFocus) {
+  if (navigator.clipboard?.writeText) {
+    try {
+      await navigator.clipboard.writeText(text);
+      return;
+    } catch {}
+  }
+  copyWithExecCommand(text, restoreFocus);
+}
 function quote(path) {
   return "'" + path.replaceAll("'", "'\\''") + "'";
 }
@@ -179,7 +207,7 @@ class Pane {
       }
       if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.code === "KeyC") {
         e.preventDefault();
-        act(() => navigator.clipboard.writeText(this.term.getSelection()))();
+        act(() => copyClipboard(this.term.getSelection(), () => this.term.focus()))();
         return false;
       }
       return true;
