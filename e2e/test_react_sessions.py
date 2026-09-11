@@ -14,6 +14,6 @@ def test_react_sessions_fixture(browser):
    page.locator('.scard .action-menu>summary').click();page.get_by_text('⇥ Handoff').click();page.locator('#ho-mode').select_option('note');page.locator('#ho-go').click();page.wait_for_function("calls.some(x=>String(x[0]).endsWith('/handoff'))")
    page.locator('#sess-discover').click();page.get_by_text('outside').wait_for();page.get_by_role('button',name='Adopt').click();page.wait_for_function("calls.some(x=>x[0]==='/sessions/adopt')")
    page.get_by_text('+ New session').click();page.get_by_label('Name').fill('Fresh');page.get_by_text('▶ Start session').click();page.wait_for_function("calls.filter(x=>x[0]==='/sessions').length>0")
-   page.locator('.scard .action-menu>summary').click();page.get_by_role('button',name='Saved conversations',exact=True).click();page.locator('.nh-select').select_option('abc');page.get_by_text('Saved answer').wait_for();page.get_by_text('Close').click()
+   page.locator('.scard .action-menu>summary').click();page.get_by_role('button',name='Saved conversations',exact=True).click();page.locator('.nh-select').select_option('abc');page.get_by_text('Saved answer').wait_for();page.get_by_role('button',name='Close',exact=True).click()
    page.locator('#sess-saved-search').click();page.get_by_placeholder('Find something discussed…').fill('needle');page.get_by_text('Search',exact=True).click();page.locator('.ns-result').click();page.get_by_text('Search answer').wait_for()
  finally:p.terminate();p.wait()

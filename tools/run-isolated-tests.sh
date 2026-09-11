@@ -28,7 +28,7 @@ if [[ $mode == e2e || $mode == all ]] && [[ -z $ttyd ]]; then
 fi
 node_bin=$(command -v node || true)
 npm_bin=$(command -v npm || true)
-if [[ $mode == frontend || $mode == all ]]; then
+if [[ $mode == frontend || $mode == all || $mode == e2e ]]; then
   [[ -n "$node_bin" && -n "$npm_bin" ]] || {
     echo "node and npm are required for isolated frontend mode" >&2
     exit 2
@@ -54,7 +54,7 @@ cleanup_stage() { find "$stage" -depth -delete 2>/dev/null || true; }
 trap cleanup_stage EXIT
 mkdir -p "$stage/src"
 frontend_deps=
-if [[ $mode == frontend || $mode == all ]]; then
+if [[ $mode == frontend || $mode == all || $mode == e2e ]]; then
   # Keep dependencies outside the writable checkout copy. A checkout-local
   # install is preferred; the canonical checkout is an explicitly read-only
   # fallback for local verification. Both package manifests must match so a
@@ -88,7 +88,7 @@ fi
 tar --exclude=.git --exclude=frontend/node_modules --exclude=frontend/dist -C "$source_dir" -cf - . | tar -C "$stage/src" -xf -
 chmod -R a+rwX "$stage/src"
 mkdir -p "$stage/bin" "$stage/home" "$stage/go" "$stage/cache" "$stage/state"
-mkdir -p "$stage/vite-temp"
+mkdir -p "$stage/vite-cache" "$stage/vite-temp"
 
 tmux_root=/tmp/adk-test-tmux
 host_tmux_socket=${TMUX-}
@@ -139,6 +139,9 @@ if [[ -n "$node_root" && "$node_root" != /usr ]]; then
 fi
 if [[ -n "$frontend_deps" ]]; then
   bwrap_args+=(--ro-bind "$frontend_deps" /src/frontend/node_modules)
+  # Vite's dev server optimises dependencies into node_modules/.vite. Keep
+  # that cache writable without making the dependency tree writable.
+  bwrap_args+=(--bind "$stage/vite-cache" /src/frontend/node_modules/.vite)
   # Vite bundles its TypeScript config through a short-lived file below
   # node_modules/.vite-temp. Keep that scratch directory private and writable
   # while the dependency tree itself remains read-only.
