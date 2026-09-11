@@ -45,6 +45,10 @@ jobs:
             cache_path=${cache_path%/*}
           done
           sudo chmod -R a+rX "$gomodcache"
+          # The reviewed runner mounts the setup-go toolchain at this path.
+          # Root bwrap cannot create a missing mountpoint below its read-only
+          # /usr bind, so create the disposable runner directory up front.
+          sudo mkdir -p /usr/local/go
           # GitHub-hosted runners deny an unprivileged bwrap process the
           # RTM_NEWADDR operation needed to bring up loopback in its private
           # network namespace. The runner remains disposable; invoke only
