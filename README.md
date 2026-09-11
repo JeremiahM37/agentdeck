@@ -15,16 +15,18 @@ and hands you a reviewable diff.
 ![binary](https://img.shields.io/badge/deploy-single%20binary-8b5cf6)
 ![PWA](https://img.shields.io/badge/PWA-mobile--first-19c37d)
 
-![AgentDeck board](docs/screenshots/board.png)
+![AgentDeck board](docs/screenshots/board-current.png)
 
 </div>
 
 AgentDeck is a self-hosted kanban board that dispatches AI coding agents onto
 **your** machines — anything you can SSH into, from a spare laptop or a VPS to a
-Raspberry Pi or a Proxmox cluster. Every task runs sandboxed in its own git
+Raspberry Pi or a Proxmox cluster. Every task runs in its own git
 worktree, streams a live timeline to a mobile-first PWA, and gates risky tool
 calls behind approvals that hit your phone. Bring your own agent and your own
-model. No SaaS, no shipping your code to someone else's cloud.
+model. The control plane is self-hosted; your chosen agent and model provider
+determine where prompts and code are processed. A git worktree isolates changes,
+not operating-system access; use target and permission policies accordingly.
 
 ---
 
@@ -43,7 +45,7 @@ and Codex sessions you started yourself, without disturbing them.
 **Runs on your hardware.** A target is any box with SSH — or the machine
 AgentDeck itself runs on. Proxmox users get native extras (`pct` targets and
 ephemeral `sandbox` containers cloned per task, destroyed after), but nothing
-requires Proxmox. Your code and credentials never leave your network.
+requires Proxmox. You choose where agents execute and which providers they use.
 
 **Built for your phone.** The whole control loop — dispatch, live timeline, mobile
 diff review, approve/deny — is designed thumb-first. Approvals arrive as web-push,
@@ -130,100 +132,54 @@ reachability, `git`, `tmux`, `python3`, and your agent's CLI.
 
 ## A quick tour
 
-These are real browser captures from a fresh temporary installation, populated
-with generic projects and scripted agents. The walkthrough uses a separate
-Grimoire vault for project memory; it never touches production data.
+These captures use the current React UI with disposable sample projects. The
+memory walkthrough connects real AgentDeck and Grimoire servers; the terminal
+workspace uses real tmux and ttyd. No production notes or credentials appear.
 
-### Tasks, timelines, and review
+### Browser workspace
 
-| Live agent timeline | Per-file diff review |
-|---|---|
-| ![Tool calls and results in a task timeline](docs/screenshots/timeline.png) | ![Reviewable changes grouped by file](docs/screenshots/diff.png) |
-| Follow tool calls, results, and verification as they arrive. | Inspect the patch before completing a task. |
+![Current interactive sessions grouped by project](docs/screenshots/sessions-current.png)
 
-![Desktop Deck with several live task timelines](docs/screenshots/deck.png)
+Switch between tasks and long-lived sessions, read conversations, send files,
+review patches, and respond to approvals. Tasks have their own worktrees;
+sessions can share an existing repository or use managed workspaces.
 
-**Deck** keeps several task timelines visible side by side.
+### A real terminal, not just a transcript
 
-### Interactive sessions and continuity
+![Live browser terminal with a companion shell](docs/screenshots/terminal-workspace-current.png)
 
-![Interactive agents grouped by project](docs/screenshots/sessions.png)
+Attach to the running process with keyboard input, terminal search, retained
+scrollback, file browsing, upload/download, diff review, and a split shell.
+Open multiple terminal tabs without stopping the agents when you switch away.
 
-Attach to a session, send input, or hand the work to a fresh agent.
+![Native AgentDeck terminal dashboard](docs/screenshots/terminal-console-current.png)
 
-| Start with project context | Hand off between agents |
-|---|---|
-| ![New Codex session with project memory loaded](docs/screenshots/session-start.png) | ![Handoff to Claude with the predecessor kept alive](docs/screenshots/handoff.png) |
-| See whether Grimoire memory loaded before starting. | Choose the successor and whether to retire the old session. |
+Use `agentdeck console` with an explicit `AGENTDECK_API` for the hosted
+dashboard, or `agentdeck local` for a private runtime on your own computer.
+The terminal dashboard manages sessions, tasks, projects, targets, agents,
+skills, and routines through the same API. Native tmux attachment preserves the
+agent's real terminal rather than reconstructing it from logs.
 
-### Saved routines
+### Project memory before the first prompt
 
-![Manual and scheduled routines across several projects](docs/screenshots/routines.png)
+![New session preview with project-scoped Grimoire memory](docs/screenshots/project-memory-current.png)
 
-Save a recurring job once, choose its projects and agent, then run it now or on a
-schedule. Pause, resume, and edit the same routine without creating duplicates.
+Inspect the project brief before launch. New projects get their own Grimoire
+memory location automatically when the integration is enabled; renaming a
+project does not lose its memory.
 
-<details>
-<summary>Routine editor: projects, prompt, schedule, agent, model, and permissions</summary>
-
-![Editing a weekly multi-project dependency review](docs/screenshots/routine-edit.png)
-
-</details>
-
-### Approvals and configuration
-
-![An agent waiting for approval to run a command](docs/screenshots/approvals.png)
-
-Review the actual tool request and approve or deny it from desktop or phone.
-
-| Targets and running build | Project capabilities |
-|---|---|
-| ![Target probes and serving binary identity](docs/screenshots/targets.png) | ![Project agent capability and permission settings](docs/screenshots/project-settings.png) |
-| Check installed agents and identify the deployed version. | Configure the context and tools available to each project. |
-
-<details>
-<summary>Spend by project</summary>
-
-![Spend totals generated by the demo task attempts](docs/screenshots/spend.png)
-
-</details>
-
-### On your phone
-
-<p align="center">
-<img src="docs/screenshots/mobile-board.png" width="230" alt="Mobile task board">
-<img src="docs/screenshots/mobile.png" width="230" alt="Mobile interactive sessions">
-<img src="docs/screenshots/mobile-approval.png" width="230" alt="Approve an agent tool request on mobile">
-</p>
-
-<details>
-<summary>Mobile routines</summary>
-
-<img src="docs/screenshots/mobile-routines.png" width="300" alt="Saved routines on mobile">
-
-</details>
-
-<details>
-<summary>Reproduce the gallery and fresh-install walkthrough</summary>
-
-With Go, Playwright, and Chromium installed:
+Reproduce these screenshots and the real provisioning/scope checks:
 
 ```bash
-.venv/bin/python tools/screenshots.py --grimoire-bin /path/to/grimoire
+go build -o /tmp/agentdeck-showcase ./cmd/agentdeck
+.venv/bin/python tools/capture_memory_showcase.py \
+  --grimoire-root /path/to/grimoire \
+  --agentdeck-bin /tmp/agentdeck-showcase
 ```
 
-Omit `--grimoire-bin` to run without the memory companion. Both services use
-temporary storage and loopback ports, and stop when the script exits. No paid
-agent calls or notification sinks are used. The script checks target probes,
-routine creation/editing/pause/resume/execution, column clearing, completed
-handoffs, session setup, mobile approval, project settings, and database
-persistence across a restart. It also fails on uncaught browser errors.
-
-The generated [capture report](docs/screenshots/capture-report.json) lists the
-checks and images. Mock execution tests the control plane; real agent CLI and
-SSH integrations are covered separately by the test suite.
-
-</details>
+Build Grimoire's server and frontend first. The capture tool needs Python
+Playwright/Chromium, git, tmux, and ttyd. Everything runs on loopback with
+temporary databases, a separate vault, and a private tmux socket.
 
 ## Features
 
@@ -273,74 +229,7 @@ SSH integrations are covered separately by the test suite.
 - **Ops** — worktree janitor, cost stats, task templates, one-click ttyd terminal
   attach, and an **MCP server** so any MCP client can file and steer tasks.
 
-## Using local / alternative models
-
-Set a project's `env` to route its agent at any Anthropic-compatible API:
-
-```bash
-curl -X POST .../api/projects -d '{
-  "name":"myrepo","target_id":1,"repo_path":"/srv/myrepo",
-  "env":{"ANTHROPIC_BASE_URL":"http://ollama-host:11434",
-         "ANTHROPIC_AUTH_TOKEN":"ollama"}}'
-# then dispatch with "model":"qwen3.5:35b-a3b" (or any served model)
-```
-
-> Driving *agentic* coding (tool calls, edits) needs a capable model — small local
-> models often reply conversationally instead of acting. The transport works with
-> any model; results depend on the model.
-
-## Tests
-
-```bash
-go test ./...     # 334 tests, a temp database each
-pytest -q e2e     # 36 Playwright browser flows against a real built binary
-```
-
-Most of those run against a mock executor — no git, tmux or agent binary — so
-they are fast and hermetic. A handful deliberately do not: `e2e_real_test.go`
-dispatches into a real git worktree, starts a real tmux session, runs a real
-process and reads back its real diff and exit code, and `restart_test.go` runs
-two App lifetimes over one database file. Those are the tests that catch what
-mocks accept: argv that a real shell truncates, a launch race that only exists
-once a process starts, a base branch that `git init` did not create. They skip
-themselves if `git` or `tmux` is missing.
-
-
-## Layout
-
-```
-cmd/agentdeck/       the binary
-internal/api/        REST + hook endpoints, SSE streams, embedded PWA
-internal/scheduler/  promotes queued attempts, tails running ones, finalises
-internal/executor/   local | ssh | pct | sandbox | mock target executors
-internal/agents/     per-agent launch commands and stream parsers
-internal/hooks/      PreToolUse approval hook + agent kit (stdlib Python, embedded)
-internal/store/      SQLite schema and typed row accessors
-web/                 mobile-first PWA (vanilla ES modules, no build step)
-e2e/                 Playwright browser tests
-DESIGN.md            full design doc — architecture, feature catalog, roadmap
-```
-
-Pair it with a memory store — `AGENTDECK_GRIMOIRE_URL` gives sessions a project
-briefing to start from and a place for handoffs to live. agentdeck works fine
-without one; the two compose, they do not depend on each other.
-
-With a configured Grimoire provider, automatic context is project-scoped by
-default for task dispatch, interactive launches, and messages sent through
-AgentDeck. `AGENTDECK_GRIMOIRE_CONTEXT_MODE=manual` disables automatic lookups;
-`all` explicitly broadens them. Per-project path mappings and byte budgets are
-configured with `AGENTDECK_GRIMOIRE_CONTEXT_PROJECTS`.
-See [selective memory](docs/AUTOMATIC_MEMORY.md) for scope, cost, and terminal limitations.
-
-Config via env: `AGENTDECK_PORT` (9110), `AGENTDECK_DB`, `AGENTDECK_BASE_URL`
-(URL targets use to reach this server for approval callbacks), `AGENTDECK_AUTH_TOKEN`
-(optional bearer), `AGENTDECK_VAPID_PUBLIC`/`_PRIVATE` (web push), `AGENTDECK_MOCK`.
-
----
-
-<div align="center">
-<sub>MIT licensed · self-hosted · your code never leaves your network.</sub>
-</div>
+## Terminal workflows
 
 ### Rich terminal workspace
 
@@ -368,9 +257,9 @@ See [Terminal workspace](docs/terminal-workspace.md).
 
 Run `agentdeck console` on your server to manage sessions, tasks, routines,
 projects, targets, approvals and settings. Install the client on your computer
-to run `agentdeck` directly from your terminal. Choose **Sessions**, enter the
-session ID, then type **attach** at the **Action:** prompt to enter its live
-terminal. Use **shell** for a separate command shell alongside the agent.
+to run `agentdeck` directly from your terminal. In the live dashboard, use
+arrow keys to select a session and Enter to attach; `m` opens actions and `?`
+shows shortcuts. Use `agentdeck console --plain` for the line-oriented menu.
 Press **Ctrl+B**, then **D** to detach and return to the menu without stopping
 the session. Skip the menus with `agentdeck attach session ID`.
 
@@ -404,3 +293,105 @@ attached session. Use `agentdeck serve` to run the server explicitly, or
 See [terminal client](docs/terminal-client.md) for installation and shortcuts,
 and the [bounded terminal experience comparison](docs/terminal-experience-review.md)
 for the current evidence ledger.
+
+
+## AgentDeck + Grimoire: work and memory stay separate
+
+**AgentDeck owns execution:** projects, targets, tasks, approvals, worktrees,
+terminal sessions, and recovery. **[Grimoire](https://github.com/JeremiahM37/grimoire)
+owns durable knowledge:** Markdown notes, accepted facts, source provenance,
+correction history, retrieval, and optional credential brokering. Neither
+requires the other.
+
+```bash
+AGENTDECK_GRIMOIRE_URL=http://127.0.0.1:9111
+AGENTDECK_GRIMOIRE_CONTEXT_MODE=project
+```
+
+Supply these in your service environment; configure the provider credential
+there if your Grimoire instance requires one. Use HTTPS for a remote instance.
+
+1. **Create, import, or promote a project.** AgentDeck records a unique memory
+   topic and creates its note in Grimoire. The association survives renaming.
+2. **Launch or dispatch.** Only that project's memory is consulted by default;
+   unassigned scratch sessions do not get automatic project memory.
+3. **Keep working.** Messages sent through Deck get relevant, deduplicated
+   context. Retrieval uses no language or embedding model and is bounded to
+   2,400 bytes by default. A short destination hint tells the agent where to
+   store durable facts; raw conversations are not automatically saved.
+4. **Correct and continue.** Grimoire retains provenance and protects recognized
+   human corrections. Requested handoffs write to the same project topic, so
+   knowledge can outlive the agent session.
+
+Choose `manual`/`off` for no automatic lookup, `project` for assigned-project
+scope, or explicitly opt into `all`. Per-project path and budget overrides are
+available. Setup failures appear in `memory_status` and the brief preview; retry
+`POST /api/projects/{id}/memory` without overwriting existing notes.
+
+Direct typing into an attached terminal bypasses Deck's send API. Grimoire's
+optional native prompt hook covers that path when installed with the same
+scope. It is not silently installed, and Deck never passes its administrative
+credential into the agent. See [automatic memory](docs/AUTOMATIC_MEMORY.md)
+for configuration, legacy-project mappings, and limitations.
+
+## Using local / alternative models
+
+Set a project's `env` to route its agent at any Anthropic-compatible API:
+
+```bash
+curl -X POST .../api/projects -d '{
+  "name":"myrepo","target_id":1,"repo_path":"/srv/myrepo",
+  "env":{"ANTHROPIC_BASE_URL":"http://ollama-host:11434",
+         "ANTHROPIC_AUTH_TOKEN":"ollama"}}'
+# then dispatch with "model":"qwen3.5:35b-a3b" (or any served model)
+```
+
+> Driving *agentic* coding (tool calls, edits) needs a capable model — small local
+> models often reply conversationally instead of acting. The transport works with
+> any model; results depend on the model.
+
+## Tests
+
+```bash
+ADK_ISOLATION_REVIEWED=1 ADK_TEST_MODE=go tools/run-isolated-tests.sh .
+ADK_ISOLATION_REVIEWED=1 ADK_TEST_MODE=e2e tools/run-isolated-tests.sh .
+```
+
+Read the isolation runner before setting its acknowledgement variable. It uses
+bubblewrap with private process/network namespaces and tmux state so tests
+cannot attach to or alter your real agents. Most tests use a mock executor —
+no git, tmux or agent binary — so
+they are fast and hermetic. A handful deliberately do not: `e2e_real_test.go`
+dispatches into a real git worktree, starts a real tmux session, runs a real
+process and reads back its real diff and exit code, and `restart_test.go` runs
+two App lifetimes over one database file. Those are the tests that catch what
+mocks accept: argv that a real shell truncates, a launch race that only exists
+once a process starts, a base branch that `git init` did not create. They skip
+themselves if `git` or `tmux` is missing.
+
+
+## Layout
+
+```
+cmd/agentdeck/       the binary
+internal/api/        REST + hook endpoints, SSE streams, embedded PWA
+internal/scheduler/  promotes queued attempts, tails running ones, finalises
+internal/executor/   local | ssh | pct | sandbox | mock target executors
+internal/agents/     per-agent launch commands and stream parsers
+internal/hooks/      PreToolUse approval hook + agent kit (stdlib Python, embedded)
+internal/store/      SQLite schema and typed row accessors
+frontend/            React + TypeScript browser and terminal workspaces
+web/                 generated assets embedded in the Go binary
+e2e/                 Playwright browser tests
+DESIGN.md            full design doc — architecture, feature catalog, roadmap
+```
+
+Config via env: `AGENTDECK_PORT` (9110), `AGENTDECK_DB`, `AGENTDECK_BASE_URL`
+(URL targets use to reach this server for approval callbacks), `AGENTDECK_AUTH_TOKEN`
+(optional bearer), `AGENTDECK_VAPID_PUBLIC`/`_PRIVATE` (web push), `AGENTDECK_MOCK`.
+
+---
+
+<div align="center">
+<sub>MIT licensed · self-hosted control plane · your choice of agents and models.</sub>
+</div>

@@ -28,7 +28,8 @@ configured, the optional provider can supply project knowledge automatically
 without delegating that decision to the agent.
 
 The default `AGENTDECK_GRIMOIRE_CONTEXT_MODE=project` narrows retrieval to
-the assigned project's conventional paths: `memory/<slug>.md`,
+the assigned project's managed note. For older projects without a managed
+topic it uses conventional paths: `memory/<slug>.md`,
 `memory/<slug>/`, and `Agent Memory/project_<underscore_slug>.md`.
 It does not search unrelated notes that merely mention the project.
 
@@ -68,9 +69,10 @@ override the global mode. Explicit MCP calls remain available separately.
   Revised text has a new fingerprint. Failed sends are not marked delivered.
   Restarting AgentDeck resets this cache.
 - Retrieval has a 1.5-second context deadline. Failure/older Grimoire versions
-  add no automatic context; there is no unscoped legacy fallback.
-- No forced reflection turn or automatic memory writes are introduced. Existing
-  explicit handoff storage is unchanged.
+  return no recalled content; launches report unavailability briefly. There is
+  no unscoped legacy fallback.
+- No forced reflection turn or automatic transcript recording is introduced.
+  Provisioning creates an empty note; requested handoffs use its stable topic.
 
 Direct keyboard input in an attached terminal does not pass through AgentDeck's
 send API, and AgentDeck cannot observe a host's context compaction. For per-prompt
