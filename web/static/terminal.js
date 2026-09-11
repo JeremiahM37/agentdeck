@@ -143,7 +143,6 @@ window.__adkTerminalState = () => ({
   hasSelection: !!active?.term?.hasSelection(),
   mouseTrackingMode: active?.term?.modes?.mouseTrackingMode || 'none',
 });
-window.__adkTerminalSelectAll = () => active?.term?.selectAll();
 class Pane {
   constructor(el, url) {
     this.el = el;

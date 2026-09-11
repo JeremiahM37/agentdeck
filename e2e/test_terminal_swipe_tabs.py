@@ -22,6 +22,11 @@ def _touch_path(page, points):
     cdp.send("Input.dispatchTouchEvent", {"type": "touchEnd", "touchPoints": []})
 
 
+def _session_frame(page, session_id):
+    suffix = f"/terminal/session/{session_id}"
+    return next(f for f in page.frames if f.url.split("?", 1)[0].endswith(suffix))
+
+
 @pytest.mark.parametrize("width", [390])
 def test_mobile_swipe_switches_live_terminal_tabs_without_stealing_scroll_or_selection(
     page, real_terminal, width, tmp_path
@@ -31,7 +36,7 @@ def test_mobile_swipe_switches_live_terminal_tabs_without_stealing_scroll_or_sel
     second_root.mkdir()
     subprocess.run(["tmux", "new-session", "-d", "-s", "terminal-two",
                     "-c", str(second_root), "bash --norc"], env=t["env"], check=True)
-    t["api"]("/sessions/adopt", {
+    second = t["api"]("/sessions/adopt", {
         "target_id": t["target_id"], "tmux_session": "terminal-two",
         "workdir": str(second_root), "name": "Second terminal", "agent": "claude",
     })
@@ -67,6 +72,11 @@ def test_mobile_swipe_switches_live_terminal_tabs_without_stealing_scroll_or_sel
         "aria-selected", "true", timeout=3000
     )
     page.screenshot(path="/tmp/agentdeck-mobile-tabs-after-right.png", full_page=False)
+    real_frame = _session_frame(page, t["id"])
+    real_input = real_frame.locator('textarea[aria-label="Terminal input"]')
+    real_input.focus()
+    page.keyboard.type("printf 'TAB_REAL_MARKER\\n'", delay=1); page.keyboard.press("Enter")
+    expect(real_frame.locator(".xterm-screen")).to_contain_text("TAB_REAL_MARKER", timeout=10000)
     _touch_swipe(page, box["x"] + box["width"] * .65, box["y"] + box["height"] * .5,
                  box["x"] + box["width"] * .25, box["y"] + box["height"] * .5)
     expect(page.locator(".terminal-tab", has_text="Second terminal")).to_have_attribute(
@@ -74,10 +84,19 @@ def test_mobile_swipe_switches_live_terminal_tabs_without_stealing_scroll_or_sel
     )
     page.screenshot(path="/tmp/agentdeck-mobile-tabs-after-left.png", full_page=False)
 
-    frame = [f for f in page.frames if "/terminal/session/" in f.url][-1]
+    frame = _session_frame(page, second["id"])
     state = frame.evaluate("window.__adkTerminalState?.()")
     assert state and state["mouseTrackingMode"] == "none"
-    assert frame.evaluate("window.__adkTerminalSelectAll?.()") is None
+    second_input = frame.locator('textarea[aria-label="Terminal input"]')
+    second_input.focus()
+    page.keyboard.type("printf 'SELECTABLE_MARKER\\n'", delay=1); page.keyboard.press("Enter")
+    expect(frame.locator(".xterm-screen")).to_contain_text("SELECTABLE_MARKER", timeout=10000)
+    screen = frame.locator(".xterm-screen").bounding_box()
+    assert screen
+    page.mouse.move(screen["x"] + 8, screen["y"] + 12)
+    page.mouse.down()
+    page.mouse.move(screen["x"] + min(240, screen["width"] - 8), screen["y"] + 12, steps=8)
+    page.mouse.up()
     assert frame.evaluate("window.__adkTerminalState?.().hasSelection")
     active_before = page.locator('.terminal-tab[aria-selected="true"]').inner_text()
     # A horizontal text selection is owned by xterm and must not navigate.
@@ -85,13 +104,28 @@ def test_mobile_swipe_switches_live_terminal_tabs_without_stealing_scroll_or_sel
                  box["x"] + box["width"] * .65, box["y"] + box["height"] * .5)
     expect(page.locator('.terminal-tab[aria-selected="true"]')).to_have_text(active_before)
 
-    frame.evaluate("window.getSelection()?.removeAllRanges()")
+    frame.locator(".xterm-screen").click(position={"x": screen["width"] * .8, "y": screen["height"] * .8})
+    assert not frame.evaluate("window.__adkTerminalState?.().hasSelection")
     # Vertical reading gestures that briefly backtrack into a diagonal path
     # also stay in the terminal; endpoint-only checks would misclassify this.
     _touch_path(page, [(box["x"] + box["width"] * .25, box["y"] + box["height"] * .7),
                        (box["x"] + box["width"] * .28, box["y"] + box["height"] * .35),
                        (box["x"] + box["width"] * .65, box["y"] + box["height"] * .5)])
     expect(page.locator('.terminal-tab[aria-selected="true"]')).to_have_text(active_before)
+
+    # A terminal application that negotiates mouse tracking owns horizontal
+    # gestures, so the tab strip must yield to it as well.
+    second_input.focus()
+    page.keyboard.type("printf '\\033[?1000h'", delay=1); page.keyboard.press("Enter")
+    for _ in range(50):
+        if frame.evaluate("window.__adkTerminalState?.().mouseTrackingMode") != "none": break
+        page.wait_for_timeout(100)
+    assert frame.evaluate("window.__adkTerminalState?.().mouseTrackingMode") != "none"
+    _touch_swipe(page, box["x"] + box["width"] * .25, box["y"] + box["height"] * .5,
+                 box["x"] + box["width"] * .65, box["y"] + box["height"] * .5)
+    expect(page.locator('.terminal-tab[aria-selected="true"]')).to_have_text(active_before)
+    second_input.focus()
+    page.keyboard.type("printf '\\033[?1000l'", delay=1); page.keyboard.press("Enter")
 
     # The compact toolbar keeps secondary actions reachable through its menu,
     # and a browser keyboard resize does not clip the active terminal.

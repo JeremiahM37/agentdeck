@@ -475,6 +475,10 @@ body.compact-chrome #compact-upload,body.compact-chrome #compact-files { display
 body.mobile-terminal #terminal-keybar { display:flex; gap:2px; flex:none; overflow-x:auto; padding:2px 4px calc(2px + env(safe-area-inset-bottom)); border-top:1px solid var(--line); background:var(--surface); }
 #terminal-keybar button { flex:1 0 40px; min-width:40px; min-height:44px; padding:6px; background:transparent; border:0; }
 @media(max-width:1023px) {
- body.compact-chrome > nav { min-height:44px; padding-block:0; }
+ body.compact-chrome > nav { display:contents; }
+ body.compact-chrome > nav > #terminal-tools { display:block; position:fixed; right:6px; bottom:calc(50px + env(safe-area-inset-bottom)); z-index:20; }
+ body.compact-chrome > nav > #terminal-tools > summary { min-height:44px; background:var(--surface); }
+ body.compact-chrome > nav > #terminal-tools[open] > .action-menu-panel { position:fixed; top:auto; right:6px; bottom:calc(98px + env(safe-area-inset-bottom)); max-height:calc(100dvh - 120px); }
+ body.compact-chrome #compact-status { display:block; position:fixed; right:58px; bottom:calc(69px + env(safe-area-inset-bottom)); z-index:20; }
  body.compact-chrome > nav > #upload,body.compact-chrome > nav > #files { display:none; }
 }
