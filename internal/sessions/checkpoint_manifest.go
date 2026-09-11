@@ -18,7 +18,6 @@ import (
 	"regexp"
 	"sort"
 	"strings"
-	"syscall"
 	"time"
 
 	_ "modernc.org/sqlite"
@@ -45,29 +44,21 @@ type DBIdentity struct {
 	Inode  uint64 `json:"inode"`
 }
 
-// TargetConfig is the target configuration used to establish an executor.
-// Mutable probe status and timestamps are intentionally omitted.
+// TargetConfig is the target connection identity used to establish an
+// executor. Display and scheduling fields are intentionally omitted: renaming
+// a target or changing its concurrency must not discard a valid checkpoint.
 type TargetConfig struct {
-	ID            int64  `json:"id"`
-	Name          string `json:"name"`
 	Kind          string `json:"kind"`
 	Host          string `json:"host"`
 	Port          int    `json:"port"`
 	User          string `json:"user"`
 	KeyPath       string `json:"key_path"`
-	Workroot      string `json:"workroot"`
-	MaxConcurrent int    `json:"max_concurrent"`
-	Sandbox       int    `json:"sandbox"`
-	ContextJSON   string `json:"context_json"`
-	MemoryDir     string `json:"memory_dir"`
 	CommandPrefix string `json:"command_prefix"`
 }
 
 func targetConfig(t *store.Target) TargetConfig {
-	return TargetConfig{ID: t.ID, Name: t.Name, Kind: t.Kind, Host: t.Host,
-		Port: t.Port, User: t.User, KeyPath: t.KeyPath, Workroot: t.Workroot,
-		MaxConcurrent: t.MaxConcurrent, Sandbox: t.Sandbox, ContextJSON: t.ContextJSON,
-		MemoryDir: t.MemoryDir, CommandPrefix: t.CommandPrefix}
+	return TargetConfig{Kind: t.Kind, Host: t.Host, Port: t.Port, User: t.User,
+		KeyPath: t.KeyPath, CommandPrefix: t.CommandPrefix}
 }
 
 // TargetFingerprint is stable across health probes and target row timestamps.
@@ -148,11 +139,11 @@ func dbIdentity(path string) (DBIdentity, error) {
 	if err != nil {
 		return DBIdentity{}, err
 	}
-	st, ok := info.Sys().(*syscall.Stat_t)
-	if !ok {
-		return DBIdentity{}, errors.New("database identity is unsupported on this platform")
+	device, inode, err := platformFileIdentity(info)
+	if err != nil {
+		return DBIdentity{}, err
 	}
-	return DBIdentity{Path: abs, Device: uint64(st.Dev), Inode: uint64(st.Ino)}, nil
+	return DBIdentity{Path: abs, Device: device, Inode: inode}, nil
 }
 
 func openReadonly(ctx context.Context, path string) (*sql.DB, error) {
