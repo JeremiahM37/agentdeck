@@ -21,6 +21,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"unicode"
 
 	"github.com/JeremiahM37/agentdeck/internal/executor"
 	"github.com/JeremiahM37/agentdeck/internal/shellq"
@@ -150,7 +151,11 @@ func DeriveStatus(pane, prevHash string) string {
 	if strings.TrimSpace(pane) == "" {
 		return StatusStarting
 	}
-	tail := lastLines(pane, 12)
+	// tmux capture-pane includes blank viewport rows below the cursor. Remove
+	// only that padding before taking the status tail, so busy markers just
+	// above it still win over the bare-prompt compatibility check below.
+	visible := strings.TrimRightFunc(pane, unicode.IsSpace)
+	tail := lastLines(visible, 12)
 	for _, m := range busyMarkers {
 		if strings.Contains(tail, m) {
 			return StatusRunning
@@ -168,7 +173,7 @@ func DeriveStatus(pane, prevHash string) string {
 	// leave blank viewport rows beneath it. Inspect the last visible line rather
 	// than only the fixed tail, while keeping busy/change signals above this
 	// compatibility case.
-	if last := lastNonEmptyLine(pane); last == ">" {
+	if last := lastNonEmptyLine(visible); last == ">" {
 		return StatusWaiting
 	}
 	return StatusIdle

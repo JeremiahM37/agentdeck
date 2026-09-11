@@ -184,6 +184,13 @@ func TestDeriveStatus(t *testing.T) {
 	if got := DeriveStatus(aiderPrompt, Hash(aiderPrompt)); got != StatusWaiting {
 		t.Errorf("bare Aider prompt: %s", got)
 	}
+	busyAiderPrompt := "Aider\nEsc to interrupt\n>\n" + strings.Repeat("\n", 30)
+	if got := DeriveStatus(busyAiderPrompt, Hash(busyAiderPrompt)); got != StatusRunning {
+		t.Errorf("busy Aider prompt with viewport padding: %s", got)
+	}
+	if got := DeriveStatus(aiderPrompt, "stale-hash"); got != StatusRunning {
+		t.Errorf("changed Aider pane: %s", got)
+	}
 	// unchanged and unrecognisable: say idle rather than guess
 	quiet := "some output with no prompt shape at all"
 	if got := DeriveStatus(quiet, Hash(quiet)); got != StatusIdle {
