@@ -369,8 +369,16 @@ def test_project_skills_real_server_plain_console_pty_lifecycle(real_skill_serve
         wait(b"Available:"); send("a\n"); wait(b"Skill ID:"); send(skill_id + "\n")
         link = repo / ".claude" / "skills" / "review"
         deadline = time.monotonic() + 15
-        while time.monotonic() < deadline and not link.is_symlink(): time.sleep(.1)
-        assert link.is_symlink(); assert subprocess.check_output(["git", "-C", str(repo), "status", "--short"], text=True) == ""
+        # Materialization creates the link and updates Git's local exclude
+        # file as two operations. Wait for both durable observations before
+        # asserting cleanliness; seeing `?? .claude/` in between is expected
+        # while the second operation is still in flight.
+        while time.monotonic() < deadline:
+            if link.is_symlink() and subprocess.check_output(["git", "-C", str(repo), "status", "--short"], text=True) == "":
+                break
+            time.sleep(.1)
+        assert link.is_symlink()
+        assert subprocess.check_output(["git", "-C", str(repo), "status", "--short"], text=True) == ""
         send("d\n"); wait(b"Attachment ID:"); send("1\n")
         deadline = time.monotonic() + 15
         while time.monotonic() < deadline and link.exists(): time.sleep(.1)

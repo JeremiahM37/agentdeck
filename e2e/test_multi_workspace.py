@@ -114,13 +114,18 @@ def test_terminal_creates_grouped_workspace(real_terminal):
     try:
         d.wait('Real terminal');d.send('/Real terminal\r');d.send('n');d.wait('New session')
         d.send('Terminal grouped creation')
-        # The adopted terminal is intentionally unassigned; choose the first
-        # registered project before enabling the multi-repository workflow.
-        # Target and directory are supplied by the selected project.
-        d.send('\t\t\x1b[C'+'\t'*4+'\x1b[C')
+        # The adopted terminal is intentionally unassigned. Search for the
+        # primary project by name instead of depending on API/list ordering;
+        # target and directory are supplied by the selected project.
+        d.send('\t\t');d.wait('Project')
+        d.send('Isolated project');d.wait('1 matches');d.send('\r')
+        d.wait('Agent (without a profile)')
+        d.send('\t'*3+'\x1b[C\t\x1b[C\x13')
         # Additional repository workflow immediately follows isolation.
-        d.send('\t\x1b[C\x13');d.wait('Workspace repositories:')
-        d.wait('Add Second repository');d.send('\x13');d.wait('Base (blank uses committed HEAD)')
+        # The action defaults to the first available addition. Ctrl-s submits
+        # that action directly; tab/right would wrap to “Back” when this
+        # one-field form is focused.
+        d.send('\x13');d.wait('Repository: Second repository')
         d.send('HEAD\x13');d.wait('Second repository @ HEAD');d.wait('Create session')
         d.send('\x13');d.wait('Workspace setup started',timeout=20)
         row=next(r for r in t['api']('/sessions') if r['name']=='Terminal grouped creation')
