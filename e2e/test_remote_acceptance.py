@@ -10,6 +10,8 @@ import json
 from pathlib import Path
 import shlex
 import subprocess
+import sys
+import time
 import uuid
 
 import pytest
@@ -19,29 +21,64 @@ from conftest import PHONE, DESKTOP
 from test_terminal_workspace import real_terminal
 
 
-SSH_KEY = "/home/admin/.ssh/id_ed25519"
+ROOT = Path(__file__).resolve().parents[1]
+SSH_FIXTURE_SERVER = Path(__file__).with_name("ssh_fixture_server.py")
 
 
-def _ssh_args(known_hosts: Path):
+def _ssh_args(key_path: Path, known_hosts: Path, port: int, user: str):
     return [
-        "ssh", "-F", "/dev/null", "-i", SSH_KEY,
+        "ssh", "-F", "/dev/null", "-i", str(key_path),
+        "-p", str(port), "-o", "ConnectTimeout=10",
         "-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=accept-new",
         "-o", f"UserKnownHostsFile={known_hosts}",
-        "root@127.0.0.1",
+        f"{user}@127.0.0.1",
     ]
 
 
-def _ssh(known_hosts: Path, command: str):
-    return subprocess.run(_ssh_args(known_hosts) + [command], check=True,
-                          capture_output=True, text=True, timeout=20)
+def _ssh(fixture: dict, command: str):
+    try:
+        return subprocess.run(_ssh_args(fixture["key_path"], fixture["known_hosts"],
+                                        fixture["port"], fixture["user"]) + [command],
+                              check=True, capture_output=True, text=True, timeout=20)
+    except subprocess.CalledProcessError as exc:
+        raise RuntimeError(f"fixture SSH command failed: {exc.stderr.strip()}") from exc
+
+
+def _start_ssh_fixture(tmp_path: Path) -> dict:
+    """Start a real, fixture-owned SSH server inside the test namespace."""
+    key_path = tmp_path / "id_ed25519"
+    ready_path = tmp_path / "ssh-ready.json"
+    subprocess.run(["ssh-keygen", "-q", "-t", "ed25519", "-N", "",
+                    "-f", str(key_path)], check=True, capture_output=True, text=True)
+    proc = subprocess.Popen(
+        [sys.executable, str(SSH_FIXTURE_SERVER), "--key-path", str(key_path),
+         "--ready-path", str(ready_path)],
+        cwd=ROOT, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+        stderr=subprocess.PIPE, text=True,
+    )
+    try:
+        for _ in range(100):
+            if proc.poll() is not None:
+                detail = proc.stderr.read() if proc.stderr else ""
+                raise RuntimeError(f"SSH fixture exited with {proc.returncode}: {detail}")
+            if ready_path.exists():
+                ready = json.loads(ready_path.read_text())
+                return {"proc": proc, "key_path": key_path,
+                        "port": int(ready["port"]), "user": ready["user"]}
+            time.sleep(0.05)
+        raise RuntimeError("SSH fixture did not publish its listener")
+    except BaseException:
+        proc.terminate()
+        proc.wait(timeout=5)
+        raise
 
 
 def _open_remote_terminal(page, t):
     page.goto(f"{t['url']}/terminal/session/{t['id']}")
     expect(page.locator("#connection")).to_have_text("Connected", timeout=20000)
-    # The isolated SSH fixture deliberately logs in as root, whose bash prompt
-    # ends in '#'; the normal local fixture uses '$'.
-    expect(page.locator("#agent-terminal .xterm-screen")).to_contain_text("#", timeout=10000)
+    # The SSH fixture deliberately logs in as its unprivileged fixture user,
+    # whose bash prompt ends in '$'; the normal local fixture uses '$' too.
+    expect(page.locator("#agent-terminal .xterm-screen")).to_contain_text("$", timeout=10000)
     page.locator("#agent-terminal").click()
 
 
@@ -56,32 +93,45 @@ def remote_terminal(real_terminal, tmp_path):
     root.mkdir()
     home.mkdir(mode=0o700)
     tmux_dir.mkdir(mode=0o700)
+    fixture = _start_ssh_fixture(tmp_path)
+    fixture["known_hosts"] = known_hosts
     # All repository setup goes through SSH, as it would for another host.
-    _ssh(known_hosts, "mkdir -p %s %s %s && git init -q -b main %s" % tuple(
+    _ssh(fixture, "mkdir -p %s %s %s && git init -q -b main %s" % tuple(
         shlex.quote(str(p)) for p in (root, home, tmux_dir, root)))
     name = "remote-accept-%s" % uuid.uuid4().hex[:10]
-    env = "env HOME=%s TMUX=%s TMUX_TMPDIR=%s" % (shlex.quote(str(home)), shlex.quote(""), shlex.quote(str(tmux_dir)))
-    _ssh(known_hosts, "%s tmux -f /dev/null new-session -d -s %s -c %s bash --norc" % (
+    env = "env HOME=%s SHELL=/bin/bash TMUX=%s TMUX_TMPDIR=%s" % (
+        shlex.quote(str(home)), shlex.quote(""), shlex.quote(str(tmux_dir)))
+    _ssh(fixture, "%s tmux -f /dev/null new-session -d -s %s -c %s bash --norc" % (
         env, shlex.quote(name), shlex.quote(str(root))))
     prefix = "%s sh -c" % env
     target = t["api"]("/targets", {
-        "name": "loopback-ssh-acceptance",
-        "kind": "ssh", "host": "127.0.0.1", "port": 22, "user": "root",
-        "key_path": SSH_KEY, "command_prefix": prefix,
+        "name": "loopback-ssh-acceptance", "kind": "ssh", "host": "127.0.0.1",
+        "port": fixture["port"], "user": fixture["user"],
+        "key_path": str(fixture["key_path"]), "command_prefix": prefix,
     })
     session = t["api"]("/sessions/adopt", {
         "target_id": target["id"], "tmux_session": name,
         "workdir": str(root), "name": "Remote acceptance", "agent": "claude",
     })
     result = dict(t, remote_root=root, remote_home=home, remote_tmux=tmux_dir,
-                  known_hosts=known_hosts, remote_target=target,
-                  remote_session=session, id=session["id"])
+                  remote_target=target,
+                  remote_session=session, id=session["id"], **fixture)
     try:
         yield result
     finally:
         # The exact fixture-owned session is the only process this cleanup can kill.
-        _ssh(known_hosts, "%s tmux -f /dev/null kill-session -t =%s || true" %
-             (env, shlex.quote(name)))
+        try:
+            _ssh(fixture, "%s tmux -f /dev/null kill-session -t =%s || true" %
+                 (env, shlex.quote(name)))
+        finally:
+            proc = fixture["proc"]
+            if proc.poll() is None:
+                proc.terminate()
+            try:
+                proc.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                proc.wait()
 
 
 def _pdf_bytes():
