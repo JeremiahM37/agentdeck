@@ -275,9 +275,12 @@ func TestABoardSurvivesARestart(t *testing.T) {
 func TestASessionRowSurvivesARestart(t *testing.T) {
 	d := newDeployment(t)
 	project := d.seedProject()
-	targets, _ := d.app.DB.Targets()
+	projectRow, err := d.app.DB.Project(project)
+	if err != nil {
+		t.Fatal(err)
+	}
 	code, body := d.do("POST", "/api/sessions", map[string]any{
-		"target_id": targets[0].ID, "project_id": project,
+		"target_id": projectRow.TargetID, "project_id": project,
 		"agent": "claude", "cwd": "/home/admin/projects/thing"})
 	if code != 200 && code != 201 {
 		t.Fatalf("launching a session: %d %s", code, body)

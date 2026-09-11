@@ -66,6 +66,30 @@ func TestSessionLaunchesAndReportsItsOwnState(t *testing.T) {
 	}
 }
 
+func TestSessionProjectTargetMismatchIsRejected(t *testing.T) {
+	h := newHarness(t)
+	projectID := h.seededProjectID()
+	project, err := h.App.DB.Project(projectID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	other, err := h.App.DB.InsertTarget(&store.Target{Name: "other project target", Kind: "local"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if code := h.status("POST", "/api/sessions", obj{
+		"project_id": projectID, "target_id": other.ID, "agent": "claude",
+	}); code != 409 {
+		t.Fatalf("project/target mismatch: got %d, want 409", code)
+	}
+	// An explicit copy of the project's target remains valid, and the manager
+	// receives the same authoritative target as the project-only form.
+	sess := h.session(obj{"project_id": projectID, "target_id": project.TargetID, "agent": "claude"})
+	if int64(sess.num("target_id")) != project.TargetID {
+		t.Fatalf("matching target was not retained: %v", sess)
+	}
+}
+
 func TestSessionInteractiveLaunchIsNotAHeadlessTask(t *testing.T) {
 	h := newHarness(t)
 	h.session(obj{"project_id": h.seededProjectID(), "agent": "claude"})

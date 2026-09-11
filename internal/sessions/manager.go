@@ -137,17 +137,16 @@ func (m *Manager) Launch(ctx context.Context, o LaunchOpts) (*store.Session, err
 	}
 	workdir := o.Workdir
 	var project *store.Project
-	if workdir == "" && o.ProjectID != nil {
+	if o.ProjectID != nil {
 		project, err = m.DB.Project(*o.ProjectID)
 		if err != nil {
 			return nil, err
 		}
-		workdir = project.RepoPath
-	}
-	if project == nil && o.ProjectID != nil {
-		project, err = m.DB.Project(*o.ProjectID)
-		if err != nil {
-			return nil, err
+		if project.TargetID != target.ID {
+			return nil, fmt.Errorf("project %d belongs to target %d, not target %d", project.ID, project.TargetID, target.ID)
+		}
+		if workdir == "" {
+			workdir = project.RepoPath
 		}
 	}
 	if o.Worktree != nil && (o.Scratch || o.Resume || o.ResumeID != "" || o.ReservedID != 0) {

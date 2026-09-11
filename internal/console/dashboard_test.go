@@ -218,8 +218,8 @@ func TestDashboardProjectPickerFiltersAndPreservesSelection(t *testing.T) {
 	if m.form.fields[projectIndex].Value != "99" {
 		t.Fatalf("selected project = %q, want 99", m.form.fields[projectIndex].Value)
 	}
-	if m.form.index != projectIndex+1 {
-		t.Fatalf("enter advanced to field %d, want %d", m.form.index, projectIndex+1)
+	if m.form.index != projectIndex+2 {
+		t.Fatalf("enter advanced to field %d, want %d", m.form.index, projectIndex+2)
 	}
 	m.updateForm(tea.KeyMsg{Type: tea.KeyShiftTab})
 	if m.form.index != projectIndex || m.form.fields[projectIndex].Value != "99" {
@@ -276,8 +276,76 @@ func TestDashboardProjectFilterCommitsOnTab(t *testing.T) {
 		m.updateForm(key(string(r)))
 	}
 	m.updateForm(tea.KeyMsg{Type: tea.KeyTab})
-	if m.form.fields[projectIndex].Value != "2" || m.form.index != projectIndex+1 {
+	if m.form.fields[projectIndex].Value != "2" || m.form.index != projectIndex+2 {
 		t.Fatalf("tab did not commit filtered project: value=%q index=%d", m.form.fields[projectIndex].Value, m.form.index)
+	}
+}
+
+func TestDashboardProjectSelectionDerivesTargetAndSkipsOverrides(t *testing.T) {
+	m := sampleDashboard()
+	delete(m.rows[0], "project_id")
+	m.rows[0]["target_id"] = float64(1)
+	m.projects = []row{
+		{"id": float64(1), "name": "Project A", "target_id": float64(1)},
+		{"id": float64(2), "name": "Project B", "target_id": float64(2)},
+	}
+	m.targets = []row{{"id": float64(1), "name": "Target A"}, {"id": float64(2), "name": "Target B"}}
+	m.newForm()
+	projectIndex, targetIndex, workdirIndex := -1, -1, -1
+	for i, f := range m.form.fields {
+		switch f.Key {
+		case "project_id":
+			projectIndex = i
+		case "target_id":
+			targetIndex = i
+		case "workdir":
+			workdirIndex = i
+		}
+	}
+	m.form.fields[0].Value = "derive target"
+	m.form.fields[targetIndex].Value = "2"
+	m.form.fields[workdirIndex].Value = "/scratch/draft"
+	m.form.index = projectIndex
+	m.focusField()
+	for _, r := range []rune("Project B") {
+		m.updateForm(key(string(r)))
+	}
+	m.updateForm(tea.KeyMsg{Type: tea.KeyEnter})
+	if m.form.fields[projectIndex].Value != "2" {
+		t.Fatalf("selected project = %q, want 2", m.form.fields[projectIndex].Value)
+	}
+	if fieldVisible(m.form.fields, targetIndex) || fieldVisible(m.form.fields, workdirIndex) {
+		t.Fatal("target and directory remained editable with a project selected")
+	}
+	if m.form.fields[targetIndex].Value != "" || m.form.fields[workdirIndex].Value != "" {
+		t.Fatalf("stale project overrides remain: target=%q workdir=%q", m.form.fields[targetIndex].Value, m.form.fields[workdirIndex].Value)
+	}
+	if m.form.index != targetIndex+1 { // project -> agent, skipping target
+		t.Fatalf("focus landed on field %d, want agent field %d", m.form.index, targetIndex+1)
+	}
+	m.updateForm(tea.KeyMsg{Type: tea.KeyShiftTab})
+	if m.form.index != projectIndex {
+		t.Fatalf("shift-tab did not return to previous visible project field: %d", m.form.index)
+	}
+	m.form.fields[projectIndex].Value = ""
+	m.syncProjectTarget()
+	if m.form.fields[targetIndex].Value != "2" || m.form.fields[workdirIndex].Value != "/scratch/draft" {
+		t.Fatalf("clearing project did not restore manual scratch draft: target=%q workdir=%q", m.form.fields[targetIndex].Value, m.form.fields[workdirIndex].Value)
+	}
+	m.form.index = projectIndex
+	m.focusField()
+	m.updateForm(tea.KeyMsg{Type: tea.KeyEnter})
+	if m.form.index != targetIndex || !fieldVisible(m.form.fields, targetIndex) {
+		t.Fatalf("scratch session did not expose target field: index=%d visible=%v", m.form.index, fieldVisible(m.form.fields, targetIndex))
+	}
+	m.updateForm(tea.KeyMsg{Type: tea.KeyLeft})
+
+	body, err := formBody(m.form.fields)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if body["project_id"] != nil || body["target_id"] == nil {
+		t.Fatalf("scratch body did not retain target choice: %#v", body)
 	}
 }
 

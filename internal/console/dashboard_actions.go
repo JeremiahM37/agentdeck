@@ -17,6 +17,7 @@ type field struct {
 	Multiline, Required bool
 	Compact             bool
 	Searchable          bool
+	HideWhenProject     bool
 	OptionFilter        string
 	OptionCursor        int
 }
@@ -28,6 +29,10 @@ type dashboardForm struct {
 	submit    func(map[string]any) tea.Cmd
 	cancel    func() tea.Cmd
 	workspace *workspaceDraft
+	// projectHiddenValues keeps a user's scratch target/directory draft while a
+	// project is selected. Hidden values never enter formBody; restoring them
+	// when the project is cleared makes switching back predictable.
+	projectHiddenValues map[string]string
 }
 type dashboardAction struct {
 	Label, Method, Path, Operation, Warning string
@@ -226,7 +231,8 @@ func (m *dashboard) openForm(title string, fields []field, submit func(map[strin
 	e.CharLimit = 100000
 	e.SetWidth(max(10, m.width-10))
 	e.SetHeight(5)
-	m.form = &dashboardForm{title: title, fields: fields, editor: e, submit: submit}
+	m.form = &dashboardForm{title: title, fields: fields, editor: e, submit: submit,
+		projectHiddenValues: map[string]string{}}
 	m.notice = ""
 	return m.focusField()
 }
@@ -246,6 +252,61 @@ func (m *dashboard) focusField() tea.Cmd {
 		return nil
 	}
 	return f.editor.Focus()
+}
+
+func fieldVisible(fields []field, index int) bool {
+	if index < 0 || index >= len(fields) {
+		return false
+	}
+	if !fields[index].HideWhenProject {
+		return true
+	}
+	for _, f := range fields {
+		if f.Key == "project_id" {
+			return strings.TrimSpace(f.Value) == ""
+		}
+	}
+	return true
+}
+
+func nextVisibleField(fields []field, index, delta int) int {
+	if len(fields) == 0 {
+		return 0
+	}
+	for n := 0; n < len(fields); n++ {
+		index = (index + delta + len(fields)) % len(fields)
+		if fieldVisible(fields, index) {
+			return index
+		}
+	}
+	return index
+}
+
+func (m *dashboard) syncProjectTarget() {
+	projectSelected := false
+	for _, f := range m.form.fields {
+		if f.Key == "project_id" {
+			projectSelected = strings.TrimSpace(f.Value) != ""
+			break
+		}
+	}
+	for i := range m.form.fields {
+		if !m.form.fields[i].HideWhenProject {
+			continue
+		}
+		if projectSelected {
+			if m.form.fields[i].Value != "" {
+				m.form.projectHiddenValues[m.form.fields[i].Key] = m.form.fields[i].Value
+			}
+			m.form.fields[i].Value = ""
+			continue
+		}
+		if m.form.fields[i].Value == "" {
+			if value := m.form.projectHiddenValues[m.form.fields[i].Key]; value != "" {
+				m.form.fields[i].Value = value
+			}
+		}
+	}
 }
 func (m *dashboard) saveField() {
 	f := m.form
@@ -301,6 +362,9 @@ func (m *dashboard) updateForm(msg tea.KeyMsg) tea.Cmd {
 			m.notice = "No matching projects. Clear the filter with Ctrl-u or Backspace."
 			return nil
 		}
+		if current.Key == "project_id" || current.Key == "project_ids" {
+			m.syncProjectTarget()
+		}
 		m.saveField()
 		body, e := formBody(f.fields)
 		if e != nil {
@@ -313,12 +377,15 @@ func (m *dashboard) updateForm(msg tea.KeyMsg) tea.Cmd {
 			m.notice = "No matching projects. Clear the filter with Ctrl-u or Backspace."
 			return nil
 		}
+		if msg.String() == "tab" && (current.Key == "project_id" || current.Key == "project_ids") {
+			m.syncProjectTarget()
+		}
 		m.saveField()
 		delta := 1
 		if msg.String() == "shift+tab" {
 			delta = -1
 		}
-		f.index = (f.index + delta + len(f.fields)) % len(f.fields)
+		f.index = nextVisibleField(f.fields, f.index, delta)
 		return m.focusField()
 	case "enter":
 		if current.Searchable {
@@ -326,12 +393,13 @@ func (m *dashboard) updateForm(msg tea.KeyMsg) tea.Cmd {
 				m.notice = "No matching projects. Clear the filter with Ctrl-u or Backspace."
 				return nil
 			}
-			f.index = (f.index + 1) % len(f.fields)
+			m.syncProjectTarget()
+			f.index = nextVisibleField(f.fields, f.index, 1)
 			return m.focusField()
 		}
 		if !f.fields[f.index].Multiline {
 			m.saveField()
-			f.index = (f.index + 1) % len(f.fields)
+			f.index = nextVisibleField(f.fields, f.index, 1)
 			return m.focusField()
 		}
 	}
@@ -356,6 +424,9 @@ func (m *dashboard) updateForm(msg tea.KeyMsg) tea.Cmd {
 			}
 			current.OptionCursor = (current.OptionCursor + delta + len(options)) % len(options)
 			current.Value = options[current.OptionCursor].Value
+			if current.Key == "project_id" || current.Key == "project_ids" {
+				m.syncProjectTarget()
+			}
 		}
 		return nil
 	}
@@ -365,7 +436,10 @@ func (m *dashboard) updateForm(msg tea.KeyMsg) tea.Cmd {
 }
 func formBody(fields []field) (map[string]any, error) {
 	out := map[string]any{}
-	for _, f := range fields {
+	for i, f := range fields {
+		if !fieldVisible(fields, i) {
+			continue
+		}
 		v := f.Value
 		if !f.Multiline {
 			v = strings.TrimSpace(v)
@@ -404,6 +478,9 @@ func (m *dashboard) formView() string {
 	lines := []string{accent.Bold(true).Render(clip(" "+f.title, m.width-4)), muted.Render(clip(" Tab next · Shift-Tab back · arrows choose · Ctrl-s submit · Esc cancel", m.width-4)), ""}
 	start := max(0, f.index-max(1, m.height-17))
 	for i := start; i < len(f.fields) && len(lines) < max(5, m.height-12); i++ {
+		if !fieldVisible(f.fields, i) {
+			continue
+		}
 		v := f.fields[i]
 		value := v.Value
 		for _, c := range v.Options {
@@ -454,6 +531,9 @@ func (m *dashboard) formView() string {
 		lines = append(lines, clip(" ← "+strings.Join(opts, " · ")+" →", m.width-4))
 	} else {
 		lines = append(lines, f.editor.View())
+	}
+	if current.Key == "project_id" && strings.TrimSpace(current.Value) != "" {
+		lines = append(lines, muted.Render(" Target: derived from selected project"))
 	}
 	return strings.Join(lines, "\n")
 }
@@ -520,6 +600,9 @@ func (m *dashboard) newForm() tea.Cmd {
 	r := m.current()
 	project := str(r["project_id"])
 	target := str(r["target_id"])
+	if project != "" {
+		target = ""
+	}
 	if kind == "approvals" {
 		m.notice = "Approvals are created by agents when they need a decision."
 		return nil
@@ -546,7 +629,11 @@ func (m *dashboard) newForm() tea.Cmd {
 	switch kind {
 	case "sessions":
 		agent.Label = "Agent (without a profile)"
-		fields = []field{{Key: "name", Label: "Session name", Required: true}, optionField("profile_id", "Launch profile", "", m.profileChoices("Agent and project defaults"), false), optionField("project_id", "Project", project, projects, false), optionField("target_id", "Target", target, targets, false), agent, {Key: "model", Label: "Model (blank uses default)"}, {Key: "workdir", Label: "Directory (blank uses project or scratch)"}, {Key: "prime", Label: "Initial prompt", Multiline: true}, boolField("isolated", "Isolate files in a new Git worktree", false), boolField("multi_repo", "Choose additional repositories after this form", false), {Key: "worktree_base", Label: "Worktree base (blank = committed HEAD)"}, {Key: "worktree_branch", Label: "New branch (blank = unique name)"}, boolField("resume", "Resume latest conversation", false), boolField("brief", "Include project brief", true), boolField("yolo", "Skip agent permission prompts", false), {Key: "group_path", Label: "Group path (optional, e.g. Work/Client)"}}
+		targetField := optionField("target_id", "Target", target, targets, false)
+		targetField.HideWhenProject = true
+		workdirField := field{Key: "workdir", Label: "Directory (blank uses project or scratch)"}
+		workdirField.HideWhenProject = true
+		fields = []field{{Key: "name", Label: "Session name", Required: true}, optionField("profile_id", "Launch profile", "", m.profileChoices("Agent and project defaults"), false), optionField("project_id", "Project", project, projects, false), targetField, agent, {Key: "model", Label: "Model (blank uses default)"}, workdirField, {Key: "prime", Label: "Initial prompt", Multiline: true}, boolField("isolated", "Isolate files in a new Git worktree", false), boolField("multi_repo", "Choose additional repositories after this form", false), {Key: "worktree_base", Label: "Worktree base (blank = committed HEAD)"}, {Key: "worktree_branch", Label: "New branch (blank = unique name)"}, boolField("resume", "Resume latest conversation", false), boolField("brief", "Include project brief", true), boolField("yolo", "Skip agent permission prompts", false), {Key: "group_path", Label: "Group path (optional, e.g. Work/Client)"}}
 	case "tasks":
 		fields = []field{{Key: "title", Label: "Task title", Required: true}, optionField("project_id", "Project", project, options(m.projects, ""), true), {Key: "prompt", Label: "Task prompt", Multiline: true, Required: true}, agent, {Key: "model", Label: "Model"}, {Key: "base_branch", Label: "Base branch (blank uses project default)"}, boolField("dispatch", "Dispatch now in an isolated worktree", true)}
 	case "routines":

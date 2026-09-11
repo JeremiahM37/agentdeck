@@ -129,11 +129,16 @@ func (s *Server) createSession(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	// a project implies its target, so the caller only has to name one of them
-	if in.TargetID == 0 && in.ProjectID != nil {
+	// A project owns its target. Callers may omit target_id, but an explicit
+	// different target is ambiguous and must not launch the project elsewhere.
+	if in.ProjectID != nil {
 		proj, err := s.DB.Project(*in.ProjectID)
 		if err != nil {
 			httpError(w, 400, "no such project")
+			return
+		}
+		if in.TargetID != 0 && in.TargetID != proj.TargetID {
+			httpError(w, 409, "target_id does not match project target")
 			return
 		}
 		in.TargetID = proj.TargetID
