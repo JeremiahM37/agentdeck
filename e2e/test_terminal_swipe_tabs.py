@@ -104,6 +104,15 @@ def test_mobile_swipe_switches_live_terminal_tabs_without_stealing_scroll_or_sel
                  box["x"] + box["width"] * .65, box["y"] + box["height"] * .5)
     expect(page.locator('.terminal-tab[aria-selected="true"]')).to_have_text(active_before)
 
+    # The tab strip is the explicit fallback while a full-screen terminal
+    # application owns mouse reporting; the body gesture above still yielded.
+    strip = page.locator('.terminal-tablist').bounding_box()
+    assert strip
+    _touch_swipe(page, strip["x"] + strip["width"] * .2, strip["y"] + strip["height"] * .5,
+                 strip["x"] + strip["width"] * .8, strip["y"] + strip["height"] * .5)
+    expect(page.locator('.terminal-tab[aria-selected="true"]', has_text="Real terminal")).to_be_visible()
+    page.locator('.terminal-tab', has_text="Second terminal").click()
+
     frame.locator(".xterm-screen").click(position={"x": screen["width"] * .8, "y": screen["height"] * .8})
     assert not frame.evaluate("window.__adkTerminalState?.().hasSelection")
     # Vertical reading gestures that briefly backtrack into a diagonal path

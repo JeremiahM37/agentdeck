@@ -28,7 +28,9 @@ def test_mobile_focus_gains_space_preserves_connection_and_allows_navigation(pag
         assert focused-expanded >= 100,(focused,expanded)
         phone.get_by_role('button',name='Focus terminal').tap()
         # Files, desktop launch and global search remain available while focused.
-        one.locator('#files').tap();one.get_by_role('button',name='hello.txt',exact=True).tap()
+        # In compact mode the direct toolbar button is folded into Tools.
+        one.locator('#terminal-tools-summary').tap();one.locator('#compact-files').tap()
+        one.get_by_role('button',name='hello.txt',exact=True).tap()
         expect(one.locator('#preview-body')).to_contain_text('A useful artifact')
         one.locator('#preview-dialog [data-close]').click();one.locator('#files-dialog [data-close]').click()
         one.locator('#terminal-tools-summary').tap();expect(one.locator('#compact-desktop')).to_be_visible()

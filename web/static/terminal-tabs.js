@@ -33,6 +33,7 @@ export class TerminalTabs {
       <button class="b ok">Open sessions</button></div>`;
     root.querySelector('.terminal-empty button').onclick = browse;
     this.list = root.querySelector('.terminal-tablist');
+    this.bindTabStripSwipe();
     this.panels = root.querySelector('.terminal-panels');
     this.popout = root.querySelector('.terminal-popout');
     this.actions = root.querySelector('.terminal-actions');
@@ -162,6 +163,45 @@ export class TerminalTabs {
       if (moved) event.preventDefault();
     }, {passive: false});
     tab.swipeBound = true;
+  }
+  bindTabStripSwipe() {
+    // Terminal applications may claim the iframe's pointer stream for mouse
+    // reporting. Keep the same flick available from the tab strip, whose
+    // controls belong to AgentDeck and are always safe to own.
+    const strip = this.list;
+    let start = null;
+    strip.addEventListener('touchstart', (event) => {
+      if (!this.mobile.matches || this.root.hidden || !this.active || event.touches.length !== 1) {
+        start = null; return;
+      }
+      const target = event.target;
+      if (target?.closest?.('.terminal-tab-close,.terminal-actions,.terminal-search,.terminal-focus,a,input,select,textarea,[contenteditable="true"]')) {
+        start = null; return;
+      }
+      const touch = event.touches[0];
+      start = {x: touch.clientX, y: touch.clientY, at: performance.now(), maxVertical: 0};
+    }, {passive: true});
+    strip.addEventListener('touchmove', (event) => {
+      if (!start || event.touches.length !== 1) { start = null; return; }
+      const touch = event.touches[0];
+      start.maxVertical = Math.max(start.maxVertical, Math.abs(touch.clientY - start.y));
+    }, {passive: true});
+    strip.addEventListener('touchcancel', () => { start = null; }, {passive: true});
+    strip.addEventListener('touchend', (event) => {
+      if (!start || !this.mobile.matches || this.root.hidden || !this.active || event.changedTouches.length !== 1) {
+        start = null; return;
+      }
+      const touch = event.changedTouches[0];
+      const dx = touch.clientX - start.x, dy = touch.clientY - start.y;
+      const elapsed = performance.now() - start.at;
+      const threshold = Math.max(72, Math.min(140, strip.clientWidth * .22 || innerWidth * .22));
+      const flick = elapsed <= 550 && start.maxVertical < Math.max(48, threshold * .55) &&
+        Math.abs(dx) >= threshold && Math.abs(dx) >= Math.abs(dy) * 1.6;
+      start = null;
+      if (!flick) return;
+      const moved = this.selectRelative(dx < 0 ? 1 : -1);
+      if (moved) event.preventDefault();
+    }, {passive: false});
   }
   selectRelative(delta) {
     const keys = [...this.tabs.keys()], index = keys.indexOf(this.active);
