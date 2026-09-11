@@ -82,7 +82,9 @@ func (s *Server) terminalInfo(w http.ResponseWriter, r *http.Request) {
 		"workdir": dir, "terminal_url": att.BasePath(), "shell_url": shellURL, "attach_argv": argv,
 		"files_available": path.IsAbs(dir) && target.Kind != "sandbox",
 		"desktop_uri":     "agentdeck://attach/" + kind + "/" + id,
-		"desktop_command": "ssh -t agentdeck /usr/local/bin/agentdeck attach " + kind + " " + id})
+		// The remote peer is a hosted control plane. Mark the command so a
+		// newer CLI's no-API local default cannot start a second local database.
+		"desktop_command": "ssh -t agentdeck /usr/local/bin/agentdeck --hosted-attach attach " + kind + " " + id})
 }
 
 func (s *Server) terminalHistory(w http.ResponseWriter, r *http.Request) {
