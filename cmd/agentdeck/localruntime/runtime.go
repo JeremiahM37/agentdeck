@@ -42,6 +42,7 @@ type Endpoint struct {
 	PID       int          `json:"pid"`
 	StartedAt string       `json:"started_at"`
 	Build     version.Info `json:"build"`
+	TmuxDir   string       `json:"tmux_dir"`
 }
 
 type Status struct {
@@ -128,6 +129,13 @@ func Ensure(ctx context.Context, binary string, base *config.Config) (Endpoint, 
 		}
 	}
 	logPath := filepath.Join(dir, "engine.log")
+	tmuxDir := filepath.Join(dir, "tmux")
+	if err := os.MkdirAll(tmuxDir, 0o700); err != nil {
+		return Endpoint{}, err
+	}
+	if err := os.Chmod(tmuxDir, 0o700); err != nil {
+		return Endpoint{}, err
+	}
 	logFile, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
 	if err != nil {
 		return Endpoint{}, err
@@ -140,7 +148,7 @@ func Ensure(ctx context.Context, binary string, base *config.Config) (Endpoint, 
 	defer tokenWriter.Close()
 	cmd := exec.Command(binary, "--local-engine", "--local-state-dir", dir,
 		"--local-token-fd", strconv.Itoa(4), "--local-lock-fd", strconv.Itoa(3))
-	cmd.Env = localEnv()
+	cmd.Env = localEnv(tmuxDir)
 	cmd.ExtraFiles = []*os.File{lock, tokenReader}
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 	cmd.Stdout, cmd.Stderr = logFile, logFile
@@ -171,11 +179,12 @@ func Ensure(ctx context.Context, binary string, base *config.Config) (Endpoint, 
 	return Endpoint{}, errors.New("local runtime did not publish a healthy endpoint")
 }
 
-func localEnv() []string {
+func localEnv(tmuxDir string) []string {
 	blocked := map[string]bool{
 		"AGENTDECK_API": true, "AGENTDECK_ATTACH_HOST": true, "AGENTDECK_DB": true,
 		"AGENTDECK_HOST": true, "AGENTDECK_PORT": true, "AGENTDECK_BASE_URL": true,
 		"AGENTDECK_AUTH_TOKEN": true, "AGENTDECK_LOCAL_ENGINE": true,
+		"TMUX": true, "TMUX_TMPDIR": true,
 	}
 	out := make([]string, 0, len(os.Environ()))
 	for _, item := range os.Environ() {
@@ -184,7 +193,7 @@ func localEnv() []string {
 			out = append(out, item)
 		}
 	}
-	return out
+	return append(out, "TMUX_TMPDIR="+tmuxDir, "TMUX=")
 }
 
 func newToken() (string, error) {
@@ -210,6 +219,9 @@ func readEndpoint(dir string) (Endpoint, error) {
 	u, err := neturl(ep.URL)
 	if err != nil || u != "127.0.0.1" {
 		return ep, errors.New("local endpoint is not loopback")
+	}
+	if ep.TmuxDir == "" {
+		ep.TmuxDir = filepath.Join(dir, "tmux")
 	}
 	return ep, nil
 }
@@ -304,6 +316,9 @@ func Engine(ctx context.Context, base *config.Config, dir, token string, lockFD 
 		if host, port, splitErr := net.SplitHostPort(strings.TrimPrefix(ep.URL, "http://")); splitErr == nil && host == "127.0.0.1" {
 			listenAddr = net.JoinHostPort(host, port)
 		}
+		if ep.TmuxDir != "" {
+			_ = os.MkdirAll(ep.TmuxDir, 0o700)
+		}
 	}
 	listener, err := net.Listen("tcp", listenAddr)
 	if err != nil {
@@ -333,13 +348,13 @@ func Engine(ctx context.Context, base *config.Config, dir, token string, lockFD 
 			return err
 		}
 		if len(targets) == 0 {
-			if _, err := appInstance.DB.InsertTarget(&store.Target{Name: "local", Kind: "local", Status: "online", MaxConcurrent: 4}); err != nil {
+			if _, err := appInstance.DB.InsertTarget(&store.Target{Name: "local", Kind: "local", Workroot: filepath.Join(dir, "worktrees"), Status: "online", MaxConcurrent: 4}); err != nil {
 				_ = listener.Close()
 				return err
 			}
 		}
 	}
-	ep := Endpoint{URL: cfg.BaseURL, Token: token, Instance: token[:16], PID: os.Getpid(), StartedAt: time.Now().UTC().Format(time.RFC3339Nano), Build: version.Current()}
+	ep := Endpoint{URL: cfg.BaseURL, Token: token, Instance: token[:16], PID: os.Getpid(), StartedAt: time.Now().UTC().Format(time.RFC3339Nano), Build: version.Current(), TmuxDir: filepath.Join(dir, "tmux")}
 	var server *http.Server
 	server = &http.Server{Handler: localHandler(appInstance.Handler(), token, ep.Instance, func() error {
 		active, err := appInstance.DB.TasksWhere("status IN ('queued','running','review')")

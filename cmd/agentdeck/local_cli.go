@@ -71,6 +71,17 @@ func localClientCommand(cfg *config.Config, command string, args []string) error
 	if command == "mcp" {
 		return mcp.New(ep.URL, ep.Token).Serve(os.Stdin, os.Stdout)
 	}
+	oldTmuxDir, hadTmuxDir := os.LookupEnv("TMUX_TMPDIR")
+	if err := os.Setenv("TMUX_TMPDIR", ep.TmuxDir); err != nil {
+		return err
+	}
+	defer func() {
+		if hadTmuxDir {
+			_ = os.Setenv("TMUX_TMPDIR", oldTmuxDir)
+		} else {
+			_ = os.Unsetenv("TMUX_TMPDIR")
+		}
+	}()
 	if command == "attach" {
 		localCfg := *cfg
 		localCfg.AuthToken = ep.Token

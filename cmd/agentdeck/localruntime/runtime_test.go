@@ -61,3 +61,19 @@ func TestHealthyEndpointRejectsWrongAuthenticatedInstance(t *testing.T) {
 		t.Fatal("accepted identity from wrong instance")
 	}
 }
+
+func TestLocalEnvUsesPrivateTmuxNamespace(t *testing.T) {
+	t.Setenv("TMUX", "/tmp/outer,1,0")
+	t.Setenv("TMUX_TMPDIR", "/tmp/shared")
+	got := localEnv("/private/agentdeck/tmux")
+	values := map[string]string{}
+	for _, item := range got {
+		key, value, ok := strings.Cut(item, "=")
+		if ok {
+			values[key] = value
+		}
+	}
+	if values["TMUX_TMPDIR"] != "/private/agentdeck/tmux" || values["TMUX"] != "" {
+		t.Fatalf("local tmux environment not isolated: %v", values)
+	}
+}
