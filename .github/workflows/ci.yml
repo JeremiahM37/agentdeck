@@ -44,6 +44,9 @@ jobs:
             sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
             test "$(cat "$apparmor_userns")" = 0
           fi
+          # The runner mounts GOROOT below the read-only /usr bind; create
+          # its mountpoint before bwrap starts.
+          sudo mkdir -p /usr/local/go
           uid=$(id -u)
           user=$(id -un)
           sudo loginctl enable-linger "$user"
