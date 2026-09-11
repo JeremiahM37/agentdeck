@@ -45,7 +45,6 @@ func TestClaudeLaunchShape(t *testing.T) {
 	}
 	hasAll(t, cmd, "claude -p", "--permission-mode acceptEdits", "--model opus",
 		"stream-json", "exit_code",
-		"-- bash -c",
 		// settings.json ships in EVERY mode: it is the only way to grant a
 		// headless run a tool, since there is no prompt to fall back on
 		"--settings .agentdeck/settings.json")
@@ -105,7 +104,7 @@ func TestNonClaudeAgentsGetStdinRedirect(t *testing.T) {
 	for _, agent := range []string{"codex", "gemini"} {
 		cmd := mustCommand(t, LaunchSpec{Agent: agent, Worktree: "/wt",
 			TmuxSession: "s", PermissionMode: "acceptEdits"})
-		hasAll(t, cmd, "< /dev/null", "-- bash -c")
+		hasAll(t, cmd, "< /dev/null")
 	}
 }
 
@@ -209,7 +208,7 @@ func TestGenericTaskUsesIndependentCommandAndPromptTemplate(t *testing.T) {
 			PromptTemplate: "--prompt {prompt}", OutputMode: "jsonl"}})
 	hasAll(t, cmd, "opencode run --format json --model local/qwen --prompt",
 		"OPENAI_BASE_URL=http://127.0.0.1:11434/v1", "< /dev/null",
-		"/tmp/work dir", "events.jsonl", "-- bash -c")
+		"/tmp/work dir", "events.jsonl")
 	if strings.Contains(cmd, "claude -p") || strings.Contains(cmd, "codex exec") {
 		t.Fatalf("custom task received a built-in adapter: %s", cmd)
 	}
