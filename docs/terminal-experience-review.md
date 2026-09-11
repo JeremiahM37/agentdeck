@@ -55,7 +55,7 @@ in this document is not a substitute for that evidence.
 | Branch a conversation / isolated parallel work | Native Claude/Codex workspace conversation picker, paginated reader, and exact-ID fork implemented in TUI/web. API, real tmux/PTY and mobile browser tests cover boundaries, unchanged original history and explicit confirmation. Installed Codex fork persisted a distinct ID; installed Claude loaded saved history with its native fork flag (no new turn). Fresh interactive worktree creation/removal now exists in both interfaces, with durable allocation, ownership checks, retained branches, local/SSH Git proof and mobile/desktop/PTy tests. Native forks now optionally allocate an isolated worktree in both interfaces. Real Git/tmux API, browser and PTY tests cover committed-base isolation, preserved parent changes/history, directory-aware continuation and cleanup protection. Installed Codex and Claude CLIs were verified with distinct child IDs and worktree directories; Claude persistence used a synthetic response-only turn with no tool calls. Current native identity is detected from verified Linux process evidence; unsupported/legacy cases retain manual selection. |
 | Organize large fleets | Named group paths now persist across projects/targets and inherit on forks/handoffs. TUI and web have nested collapse/counts; terminal search reveals folded children and selection/collapse survive refresh. Web keeps per-tab display state. TUI grouping is remembered per section/server and folded named groups survive restarts, with real PTY restart coverage. Adopted sessions can restore their original record after stopping tracking, gated by a persistent tmux identity marker; real API, PTY and mobile/desktop tests cover retained metadata, concurrent requests and reused-name rejection. Unmarked live records capture identity when released; already-released records without identity still require explicit discovery. Archive now retains terminal snapshots and metadata, with explicit stop confirmation and unarchive without restart; exact native continuation is available separately. Named launch profiles and global conversation search are implemented; broader native identity and fleet-profile partitioning still need comparison. |
 | Agent setup | Custom commands, named agent settings, and project MCP controls exist. Target-local skill discovery plus project attach/detach now support Claude and Codex through the API, TUI and web; real local/loopback-SSH lifecycle checks cover fresh launches, resumes, forks, worktrees and cleanup. Native repository skills remain preexisting and preserved. Broader upstream comparison and reusable setup hooks remain. |
-| Workspace setup | Grouped interactive workspaces now support 1–8 repositories, per-repository bases, native forks, asynchronous creation, cancellation and interrupted-allocation recovery in TUI/web. Real Git/tmux/API/PTY and mobile/desktop tests cover ownership, dirty-file preservation and restart recovery. Adding repositories to an existing group, converting older single-repository allocations, and reusable setup hooks remain. This batch is staged; the full-suite release gate and deployment are still pending. |
+| Workspace setup | Grouped interactive workspaces now support 1–8 repositories, per-repository bases, native forks, asynchronous creation, cancellation and interrupted-allocation recovery in TUI/web. Real Git/tmux/API/PTY and mobile/desktop tests cover ownership, dirty-file preservation and restart recovery. Adding repositories to an existing group, converting older single-repository allocations, and reusable setup hooks remain. The mobile release candidate passed the full 6/6 web verification; this comparison ledger remains separate from deployment state. |
 | Sandbox choices | Existing Proxmox sandbox path is not equivalent to portable Docker/Podman sandboxing; portability gap remains. |
 | Web everyday management | Global command search now reaches sessions, tasks, projects, settings and common actions from desktop/mobile; real browser/tmux tests cover attachment, retained terminal identity, keyboard selection, draft/focus restoration, and refresh failures. Mobile terminals now default to focused navigation with a one-button return, retained frames, visible file/tool controls, and Esc/Tab/arrows/Ctrl-C keys in focused, expanded and standalone phone terminals. Real tmux tests cover height gained, application cursor keys, offline recovery, rotation, and restored preferences. Internal terminal tabs, structured chat, PDFs, routines/takeover and approvals exist. Global search now includes native conversation content with context paging and validated forks. Benchmark the same create/find/attach/review/send/recover workflows against AoE desktop and phone; improve discoverability and consistency before claiming superiority. |
 | Installation and keyboard UX | Linux and Windows SSH clients exist; installation portability, help consistency, terminal compatibility and first-run flows need further audit. |
@@ -389,3 +389,32 @@ setup command succeeded. Synthetic real Git/process/tmux/API/PTY/browser tests
 cover success, failure, cancellation, supervisor loss and drafts on failed saves.
 This is the creation lifecycle step; reusable launch/destroy hooks and reading
 repository-owned hook configuration remain comparative gaps.
+
+## Evidence correction — 2026-09-10
+
+The dated comparison ledger is the source of truth for the current bounded
+comparison: [comparison-2026-09-10.md](comparison-2026-09-10.md). It supersedes
+older wording in this review that described generic-agent proof or the full
+comparison as pending without the current cell breakdown.
+
+The AgentDeck `178bc00d406a893da8b7d4c76d5c5533021ea568` mobile candidate passed
+the full web release verification (`6/6`). Current browser evidence covers
+AgentDeck and AoE C1/C2/C5/C6 through actual UI-created sessions, with
+request-boundary evidence for multiline values and a clear statement that the
+deterministic fake agents did not make model/provider calls. C2 now includes
+an active palette capture before selection, exactly one matching result, and
+its session/project/target/repository context.
+
+C3 is accepted for AgentDeck and upstream Agent Deck's actual ttyd evidence at
+the paths recorded in the comparison ledger. The final AoE C3 worker receipt is
+retained as `UNVERIFIED` because it did not expose every strict criterion. C4 is
+complete for AgentDeck web, AoE web, and upstream Agent Deck's
+CLI send-plus-capture workflow. Upstream `session send` returned a confirmation
+warning; the captured terminal output still displayed the exact diff, so no
+integrated upstream diff viewer is claimed.
+
+The browser harness retained all failed and recovery attempts, including the
+AgentDeck xterm-focus and long tmux-socket-path attempts and AoE's first-session
+keyboard-focus and mobile-viewport attempts. These are disclosed in the ledger
+and are not converted into product failure counts. The comparison remains
+bounded and does not establish overall web superiority.

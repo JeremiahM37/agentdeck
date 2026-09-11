@@ -1,0 +1,183 @@
+{
+  "date": "2026-09-10",
+  "scope": "bounded local fake-agent comparison; no model/provider/paid-auth calls",
+  "rubric": "docs/parity/rubric.md",
+  "release_candidate": {
+    "app": "AgentDeck",
+    "revision": "178bc00d406a893da8b7d4c76d5c5533021ea568",
+    "full_verify": "PASS: 6/6 steps passed (backend=web)",
+    "mobile_focused_tests": "4 passed",
+    "mobile_evidence": {
+      "desktop_viewport": "1440x900 screenshot captured by focused tests",
+      "phone_viewport": "390x900 screenshot captured by focused tests",
+      "compact_terminal_viewport": {
+        "900px": {
+          "y": 63,
+          "height": 785
+        },
+        "550px": {
+          "y": 63,
+          "height": 435
+        }
+      },
+      "compact_tools": {
+        "900px": {
+          "y": 854,
+          "height": 44
+        },
+        "550px": {
+          "y": 504,
+          "height": 44
+        }
+      },
+      "compact_status": {
+        "900px": {
+          "y": 873,
+          "height": 7
+        },
+        "550px": {
+          "y": 523,
+          "height": 7
+        }
+      },
+      "assertion": "Tools/status do not intersect the xterm viewport at 390x900, 390x640, 390x550, or restored 390x900",
+      "gesture": "real CDP touch flick switches adjacent mounted tabs; xterm selection, vertical backtrack, and body mouse-mode gestures do not switch; tab-strip fallback switches while mouse mode is active"
+    }
+  },
+  "browser_cells": {
+    "AgentDeck_e84_feature_run": {
+      "C1": {
+        "status": "PASS",
+        "records": 4,
+        "agent": "fake-proof",
+        "marker": "FAKE_AGENT_READY",
+        "multiline": "line one\nline two\nline three",
+        "prompt_consumption": "UNVERIFIED: request boundary and startup record only"
+      },
+      "C2": {
+        "status": "PASS",
+        "query": "UI Gamma",
+        "active_matches": 1,
+        "context": "Sessions \u00b7 starting \u00b7 fake-proof \u00b7 V3 fixture project \u00b7 v3-local \u00b7 fixture-repo"
+      },
+      "C5": {
+        "status": "PASS",
+        "surfaces": [
+          "1440x900",
+          "390x900"
+        ],
+        "sentinels": [
+          "E84_DESKTOP_SENTINEL",
+          "E84_PHONE_SENTINEL"
+        ],
+        "phone_horizontal_overflow": false
+      },
+      "C6": {
+        "status": "PASS",
+        "draft_preserved": true,
+        "error": "Synthetic registry unavailable",
+        "agent": "fake-proof",
+        "repo": "fixture-repo",
+        "target": "v3-local",
+        "model_flag": "--model",
+        "provider_env": "RUNNER_PROVIDER",
+        "multiline_session_request": "line one\nline two\nline three"
+      }
+    },
+    "AoE_5687bbd_feature_run": {
+      "C1": {
+        "status": "PASS",
+        "records": 4,
+        "agent": "fake-proof",
+        "marker": "FAKE_AGENT_READY",
+        "multiline": "line one\nline two\nline three"
+      },
+      "C2": {
+        "status": "PASS",
+        "query": "UI Gamma",
+        "unique_result": true
+      },
+      "C5": {
+        "status": "PASS",
+        "surfaces": [
+          "1440x900",
+          "390x900"
+        ],
+        "sentinels": [
+          "AOE_DESKTOP_SENTINEL",
+          "AOE_PHONE_SENTINEL"
+        ],
+        "phone_horizontal_overflow": false
+      },
+      "C6": {
+        "status": "PASS",
+        "draft_preserved": true,
+        "error": "Synthetic registry unavailable",
+        "agent": "fake-proof",
+        "multiline": "c6 line one\nc6 line two\nc6 line three",
+        "repo": "fixture-repo"
+      }
+    }
+  },
+  "c3_terminal": {
+    "AgentDeck": {
+      "status": "PASS",
+      "pid": "669016",
+      "markers": [
+        "FIXTURE_AGENT_MARKER",
+        "C3_KNOWN_01",
+        "C3_KNOWN_70",
+        "C3_REATTACHED_UNIQUE_9f4c2a"
+      ],
+      "resize": "C3_SIZE:30:110",
+      "same_process_marker_after_reattach": true
+    },
+    "upstream_Agent_Deck": {
+      "status": "PASS",
+      "pane": "%0",
+      "pane_pid": "689540",
+      "identity_token": "520867",
+      "resize": "C3_RESUMED_SIZE:30:110",
+      "marker_after_reattach": "C3_REATTACHED_UNIQUE_cancel_9f4c2a",
+      "copy_mode_cancelled": true,
+      "receipt": "docs/parity/receipts/upstream-c3-final-cancel-resume-receipt.json"
+    },
+    "AoE": {
+      "status": "UNVERIFIED",
+      "worker_result": "final c3-evidence.json",
+      "four_session_dashboard": false,
+      "attach_marker": true,
+      "scroll_known_marker": true,
+      "resize_screen": true,
+      "detach_dashboard": true,
+      "reattach_same_pane": true,
+      "reattach_live_mode": true,
+      "fresh_sentinel": true,
+      "strict_reason": "The final real ttyd run did not expose a complete four-session/search/resize receipt; no model was invoked.",
+      "receipt": "docs/parity/receipts/aoe-c3-final-evidence.json"
+    }
+  },
+  "c4_workspace": {
+    "status": "PASS",
+    "products": [
+      "AgentDeck web",
+      "upstream Agent Deck attached terminal",
+      "AoE web"
+    ],
+    "observable_diff": "diff --git a/tracked.txt b/tracked.txt\\n-before\\n+after",
+    "identity_distinct": true,
+    "parent_unchanged": true,
+    "upstream_viewer_note": "The exact diff was captured in the attached terminal; upstream has no integrated diff pane in this run."
+  },
+  "tui_search": {
+    "pre_fix": {
+      "status": "FAIL",
+      "observation": "4/4 rows matched Alpha across fields"
+    },
+    "field_aware_fix": {
+      "status": "PASS",
+      "observation": "1/4 exact intended Alpha row"
+    }
+  },
+  "artifact_policy": "Raw screenshots, PTY captures, server logs, fixture directories, and temporary URLs remain ephemeral under /tmp. This JSON preserves the decisive observables so the historical result is not only a pointer to those files."
+}

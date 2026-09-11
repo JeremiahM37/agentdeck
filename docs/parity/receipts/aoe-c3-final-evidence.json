@@ -1,0 +1,26 @@
+{
+  "app": "Agent of Empires",
+  "revision": "5687bbd",
+  "fixture_root": "/tmp/agentdeck-parity-proof-v3/aoe-web/c3-aoe-final-5opyu7ie",
+  "method": "real ttyd 1.7.7 + Chromium/xterm.js Playwright",
+  "launch_command": "aoe add <repo> --title <title> --tool codex --cmd-override <fixture-agent> --trust-hooks --launch --yolo (x4)",
+  "attach_path": "AoE home TUI /Alpha C3 final search then Enter; direct tmux detach Ctrl+B d",
+  "source_binding_evidence": "README.md: Ctrl+b d detaches; src/tui/app.rs: preview Enter enters and Ctrl+Q leaves live mode; TUI first-run screen also states Tmux mode Ctrl+b then d",
+  "artifacts": "/tmp/agentdeck-parity-proof-v3/aoe-web/c3-aoe-final-proof2",
+  "checks": {
+    "four_session_dashboard": false,
+    "exact_search_selected": false,
+    "attach_marker": true,
+    "output_done": false,
+    "scroll_known_marker": true,
+    "resize_receipt": false,
+    "resize_screen": true,
+    "detach_dashboard": true,
+    "reattach_same_pane": true,
+    "reattach_live_mode": true,
+    "fresh_sentinel": true,
+    "before_after_shell_pid": false
+  },
+  "strict_c3_verdict": "UNVERIFIED",
+  "notes": "No shell input was sent while tmux pane_in_mode was nonzero; Escape was used only to cancel tmux copy mode after scroll. No real Codex/model was invoked."
+}

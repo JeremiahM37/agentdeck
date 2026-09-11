@@ -1,38 +1,133 @@
 # Comparative workflow evidence — 2026-09-10
 
-This is a bounded evidence record for the browser and TUI workflows. It does
-not establish an overall web superiority claim.
+This is a bounded evidence record for AgentDeck, Agent of Empires (AoE), and
+upstream Agent Deck. It records tested cells and known limits. It makes no
+overall web superiority claim.
 
-## Browser workflow
+## Versions and evidence roots
 
-Against the AgentDeck baseline `bdc4685`, web find, attach, input, reattach,
-and tracked-diff behavior was observed at both 1440x900 and 390x900. The
-evidence is under `/tmp/agentdeck-parity-proof-v2/current-web/`.
+- AgentDeck mobile release candidate: `178bc00d406a893da8b7d4c76d5c5533021ea568`
+  (artifact SHA256 `282f53a5f7157c851953c0b7bb90cb6bced2e546d0d22745928e741ad97643d6`).
+  Full release verification passed `6/6` web steps; the run manifest is
+  `/tmp/agentdeck-mobile-verify-178bc00.manifest.json`.
+- The C1/C2/C5/C6 browser evidence was executed against the preceding e84
+  feature run; the mobile follow-up and atomic fixture correction are recorded
+  separately in `docs/parity/evidence-2026-09-10.json`.
+- Historical AgentDeck comparison baseline: `bdc4685`.
+- Upstream Agent Deck: `61cc4d6`.
+- AoE: `5687bbd`.
+- Exact rubric and bounded matrix:
+  `/tmp/agentdeck-parity-proof-v2/rubric.md` and
+  `/tmp/agentdeck-parity-proof-v2/bounded-matrix.md`.
+- Checked-in compact rubric, inline evidence ledger, and rerun instructions:
+  [docs/parity/rubric.md](parity/rubric.md),
+  [docs/parity/evidence-2026-09-10.json](parity/evidence-2026-09-10.json),
+  and [docs/parity/RERUN.md](parity/RERUN.md).
+- The original before-fix TUI raw capture was overwritten. The surviving
+  observation and limitation are recorded in
+  `/tmp/agentdeck-parity-proof-v2/tui-pyte/prefix-observation.md`.
 
-The corresponding AoE find, attach, input, and reattach behavior was observed
-at both viewports under `/tmp/agentdeck-parity-proof-v2/aoe-web-rerun/`. The
-comparison references upstream AgentDeck `61cc4d6` and AoE `5687bbd`.
+## Current browser cells
 
-The full rubric remains unverified. C3 requires resize and scroll coverage,
-which was not tested; C4 requires child-isolation coverage, which was not
-tested. C1 API fixtures are not UI creation. The exact rubric and bounded
-matrix are `/tmp/agentdeck-parity-proof-v2/rubric.md` and
-`/tmp/agentdeck-parity-proof-v2/bounded-matrix.md`. Broader comparison claims
-remain unverified.
+AgentDeck and AoE each have current, isolated browser runs covering C1, C2,
+C5, and C6. These sessions were created through each product's web UI; API
+setup was limited to registering the fixture project/target needed by the
+wizard.
 
-## TUI Alpha search
+AgentDeck evidence is under
+`/tmp/agentdeck-parity-proof-v3/ui/backend-e84-r4/`. It shows:
 
-Before the baseline fix, the TUI Alpha search showed all four rows, including
-Alpha and three unrelated rows.
-The fixed `622f` build showed only Alpha, exactly 1 of 4 matches. These are
-match counts, not failure counts.
+- C1: four UI-created sessions using configured `fake-proof`, with the
+  readiness marker visible.
+- C2: four sessions and their project/target context are captured before
+  search; while the palette is open, exactly one `UI Gamma` result is visible
+  with `Sessions`, agent, project, target, and repository context. The result
+  is then opened.
+- C5: desktop and 390px mobile attach, sentinel input, dashboard return, and
+  reattach, with mobile horizontal-overflow check.
+- C6: a synthetic 503 leaves the agent setup form open. The observed form,
+  exact PUT body, error, and retained values are in
+  `phone-c6-observed-form.json`, `phone-c6-request.json`, and
+  `phone-c6-error-draft.txt`. The same run captures the multiline session
+  creation POST in `desktop-c6-session-create-request.json`.
 
-The original raw before-fix output was overwritten. The recorded observation
-and this limitation are documented at
-`/tmp/agentdeck-parity-proof-v2/tui-pyte/prefix-observation.md`. Post-fix
-evidence is at `/tmp/agentdeck-parity-proof-v2/tui-pyte/postfix-evidence.json`
-and `/tmp/agentdeck-parity-proof-v2/tui-pyte/postfix-search-screen.txt`; the
-focused suite log is `/tmp/agentdeck-parity-proof-v2/focused-tests.log`.
+The AgentDeck fake runner is deterministic and makes no model/provider call.
+Its log contains startup and sentinels only. The multiline value is therefore
+proven at the browser request boundary and in the retained form; automatic
+consumption by an agent is deliberately not claimed.
 
-Generic-agent CLI proof and full release verification are separate pending
-work and are not represented as completed by this ledger.
+AoE evidence is under
+`/tmp/agentdeck-parity-proof-v3/ui/backend-aoe-5687-run-03/`. It shows the
+same C1/C2/C5/C6 cells with a configured custom agent. Its C6 request captures
+the exact multiline custom instruction, repository, and custom-agent name at
+the UI boundary. The fake process only proves local wiring/readiness, not model
+or provider behavior.
+
+## C3 status
+
+AgentDeck's C3 cell is accepted PASS from the actual ttyd evidence:
+
+- `/tmp/agentdeck-parity-proof-v3/c3/real-ttyd/ours-final/03-copy-scroll.txt`
+- `/tmp/agentdeck-parity-proof-v3/c3/real-ttyd/ours-final/07-reattached-unique.txt`
+- `/tmp/agentdeck-parity-proof-v3/c3/real-ttyd/ours-final/04-resize.png`
+
+The recorded evidence includes fresh same-PID `669016`, the marker, tmux scrollback containing `C3_KNOWN_01`, readable `30x110` output with the status row, and reattachment.
+Equivalent upstream Agent Deck C3 is now accepted by the real ttyd receipt
+`upstream-c3-final-cancel-resume-receipt.json`; the final AoE C3 worker receipt is retained as `UNVERIFIED`: it observed attach,
+scroll, resize screen, detach, same-pane reattach, and a fresh sentinel, but did
+not expose every strict criterion.
+
+## C4 child isolation and diff review
+
+C4 is complete for the three compared products. Each run created a child
+workspace/branch, edited a tracked file, verified distinct identities, kept the
+parent unchanged, and checked the exact patch. The aggregate ledger is
+`/tmp/agentdeck-parity-proof-v3/c4-summary.json`.
+
+- AgentDeck e84 build: `/tmp/agentdeck-parity-proof-v3/current-web/c4-evidence.json`;
+  the web Review changes surface showed the exact patch at 1440x900 and
+  390x900.
+- AoE: `/tmp/agentdeck-parity-proof-v3/aoe-web/c4-evidence.json` and
+  `/tmp/agentdeck-parity-proof-v3/aoe-web/c4-web-evidence-restored.json`;
+  the desktop Diff pane and mobile right-panel picker showed the exact patch.
+- Upstream Agent Deck: `/tmp/agentdeck-parity-proof-v3/upstream-web/c4-evidence.json`.
+  The CLI sent `git diff --no-color main` to the session and captured the resulting output.
+  The user-facing path was `session send` followed by terminal capture, but
+  `session send` returned a confirmation warning (code 1) saying submission
+  was not confirmed; the captured terminal still contains the diff. This is
+  recorded as PASS via CLI send-plus-capture workflow, with no integrated viewer
+  claimed.
+
+All C4 harness attempts, including failed/recovery attempts, remain preserved
+under the referenced artifact roots. No failed attempt is silently replaced by
+a green result.
+
+## Retry and limitation ledger
+
+The current browser results are the final bounded runs, with earlier attempts
+retained for audit:
+
+- AgentDeck: earlier named-attach/xterm-focus failure is retained in
+  `/tmp/agentdeck-parity-proof-v3/ui/agentdeck-e84-backend-result-failed-named.json`
+  and `backend-run-named-failed.log`. Receipt runs that exposed a transient
+  launch failure and an overlong tmux socket path are retained in
+  `backend-agentdeck-final-receipts-run.log`,
+  `backend-agentdeck-final-receipts-retry-run.log`, and
+  `backend-agentdeck-final-receipts-retry2-run.log`. The short-path final
+  receipt is `backend-e84-r4`.
+- AoE: run 01 preserved the first-session keyboard focus mistake; run 02
+  preserved the mobile new-session icon being outside the viewport; run 03
+  passed after using the visible command-palette action and a short artifact
+  path. Logs are `aoe-ui-backend-run.log`,
+  `aoe-ui-backend-run-02.log`, and `aoe-ui-backend-run-03.log`.
+
+These retries are harness history, not product failure counts.
+
+## Overall status
+
+The AgentDeck `178bc00` candidate has completed its full web release
+verification. The current AgentDeck/AoE browser C1/C2/C5/C6 cells, all three
+C4 paths, and AgentDeck plus upstream Agent Deck C3 are evidenced. AoE C3 is
+retained as `UNVERIFIED` because its final worker did not expose every strict
+criterion. The full cross-product rubric therefore remains open, and broader
+claims about web superiority remain unverified.
