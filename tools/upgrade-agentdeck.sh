@@ -27,7 +27,10 @@ service_user=$(systemctl show "$unit" -p User --value)
 service_home=$(getent passwd "$service_user" | cut -d: -f6)
 service_group=$(systemctl show "$unit" -p Group --value)
 [[ -n "$service_group" ]] || service_group=$(id -gn "$service_user")
-if command -v runuser >/dev/null 2>&1; then
+if [[ "$service_user" == "$(id -un)" ]]; then
+  service_runner_mode=direct
+  service_runner_text=""
+elif command -v runuser >/dev/null 2>&1; then
   service_runner_mode=runuser
   service_runner_text="runuser -u $service_user --"
 elif [[ "$(id -u)" == 0 ]] && command -v su >/dev/null 2>&1; then
@@ -38,7 +41,9 @@ else
   exit 1
 fi
 run_service() {
-  if [[ "$service_runner_mode" == runuser ]]; then
+  if [[ "$service_runner_mode" == direct ]]; then
+    "$@"
+  elif [[ "$service_runner_mode" == runuser ]]; then
     runuser -u "$service_user" -- "$@"
   else
     local command
