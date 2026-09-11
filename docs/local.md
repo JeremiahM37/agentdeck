@@ -41,6 +41,9 @@ agentdeck local
 agentdeck local api --help
 ```
 
+If the installer selected `agentdeck-local` to preserve an existing remote
+launcher, substitute that name in the commands above.
+
 `agentdeck local` opens the local dashboard/console, where you choose the
 configured coding-agent command and its project. The local command keeps the
 interactive workspace in tmux. Configure the coding-agent command and its

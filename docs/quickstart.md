@@ -10,6 +10,9 @@ bash tools/install-local.sh
 agentdeck local
 ```
 
+If the installer reported `agentdeck-local` because a remote launcher already
+exists, substitute that command name.
+
 The rest of this page describes the hosted control-plane setup, where one
 AgentDeck server manages local or SSH targets.
 

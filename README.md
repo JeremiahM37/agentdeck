@@ -94,6 +94,9 @@ bash tools/install-local.sh
 agentdeck local
 ```
 
+Use `agentdeck-local` in that last command if the installer reported that the
+existing remote `agentdeck` launcher was kept.
+
 See [Standalone local AgentDeck](docs/local.md) for Linux, macOS, and WSL
 installation and the difference between local and remote operation.
 
