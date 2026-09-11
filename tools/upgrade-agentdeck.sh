@@ -100,7 +100,7 @@ if command -v tmux >/dev/null 2>&1; then
       [[ "$pane_pid" =~ ^[0-9]+$ && -r "/proc/$pane_pid/stat" ]] || continue
       pane_starttime=$(awk '{print $22}' "/proc/$pane_pid/stat")
       [[ -n "$pane_starttime" ]] && baseline_panes["$pane_pid"]="$pane_starttime"
-    done < <(tmux list-panes -t "=$tmux_name" -F '#{pane_pid}' 2>/dev/null || true)
+    done < <(env -u TMUX tmux list-panes -t "=$tmux_name" -F '#{pane_pid}' 2>/dev/null || true)
   done < <(python3 - "$db" <<'PY'
 import sqlite3, sys
 db = sqlite3.connect("file:" + sys.argv[1] + "?mode=ro", uri=True)
@@ -116,7 +116,7 @@ PY
   )
 fi
 
-AGENTDECK_DB="$db" "$binary" recovery-checkpoint export "$checkpoint"
+env -u TMUX AGENTDECK_DB="$db" "$binary" recovery-checkpoint export "$checkpoint"
 
 current_main_pid=$(systemctl show "$unit" -p MainPID --value)
 current_main_starttime=""
@@ -180,4 +180,4 @@ Environment=AGENTDECK_CHECKPOINT=$checkpoint
 EOF
 systemctl daemon-reload
 echo "prepared; checkpoint captured and binary installed; service was not restarted"
-echo "refresh checkpoint before the first manual restart if sessions changed: AGENTDECK_DB=$db $live recovery-checkpoint export $checkpoint"
+echo "refresh checkpoint before the first manual restart if sessions changed: env -u TMUX AGENTDECK_DB=$db $live recovery-checkpoint export $checkpoint"
