@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -129,6 +130,66 @@ func TestMultiWorkspaceTargetPreflightPreservesRepositories(t *testing.T) {
 	}
 	if out, _ := exec.Command("git", "-C", sources[0].Repo, "branch", "--list", "feature/grouped").Output(); len(out) != 0 {
 		t.Fatal("preflight created a branch in the first repository")
+	}
+}
+
+func TestMultiWorkspaceIgnoresReusedProcessReceipt(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git unavailable")
+	}
+	root := t.TempDir()
+	repo := filepath.Join(root, "repo")
+	if err := os.Mkdir(repo, 0700); err != nil {
+		t.Fatal(err)
+	}
+	git := func(args ...string) {
+		t.Helper()
+		if out, err := exec.Command("git", append([]string{"-C", repo}, args...)...).CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %s", args, out)
+		}
+	}
+	git("init", "-q")
+	git("-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", "commit", "--allow-empty", "-qm", "base")
+	plan, err := PlanMultiWorkspace([]RepositorySource{{Name: "repo", Repo: repo}}, 91, InteractiveOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := RunInteractive(context.Background(), executor.NewLocal(), "create", plan); err != nil {
+		t.Fatal(err)
+	}
+
+	// A live, unrelated process group stands in for a recycled PID/PGID. The
+	// deliberately wrong start tick must make its receipt non-authoritative;
+	// status must not report it as our checkout or signal it.
+	unrelated := exec.Command("sleep", "600")
+	unrelated.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	if err := unrelated.Start(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if unrelated.Process != nil {
+			_ = syscall.Kill(-unrelated.Process.Pid, syscall.SIGKILL)
+			_ = unrelated.Wait()
+		}
+	})
+	receiptPath := filepath.Join(plan.Path, ".agentdeck-process.json")
+	receipt := map[string]any{"pgid": unrelated.Process.Pid, "starttime": "0", "boot_id": "test-boot"}
+	raw, _ := json.Marshal(receipt)
+	if err := os.WriteFile(receiptPath, raw, 0600); err != nil {
+		t.Fatal(err)
+	}
+	status := *plan
+	if err := RunInteractive(context.Background(), executor.NewLocal(), "status", &status); err != nil {
+		t.Fatal(err)
+	}
+	if status.OperationActive {
+		t.Fatal("reused process receipt was reported as an active workspace operation")
+	}
+	if err := unrelated.Process.Signal(syscall.Signal(0)); err != nil {
+		t.Fatalf("unrelated process was signalled: %v", err)
+	}
+	if err := RunInteractive(context.Background(), executor.NewLocal(), "remove", plan); err != nil {
+		t.Fatal(err)
 	}
 }
 
