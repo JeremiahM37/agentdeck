@@ -31,10 +31,19 @@ def regular_file(name, flags):
 
 
 def acquire_lock():
-    try:
-        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-    except BlockingIOError:
-        raise ValueError('A workspace operation is still running; try again after it finishes')
+    # The status endpoint briefly takes the same exclusive lock to obtain a
+    # coherent receipt snapshot. Give that probe a bounded grace period; a
+    # real mutating worker still holds the lock past the deadline and is
+    # rejected rather than being overlapped.
+    deadline = min(operation_deadline, time.monotonic() + .25)
+    while True:
+        try:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            return
+        except BlockingIOError:
+            if time.monotonic() >= deadline:
+                raise ValueError('A workspace operation is still running; try again after it finishes')
+            time.sleep(.01)
 
 
 def read_record(name):
