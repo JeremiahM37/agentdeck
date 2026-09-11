@@ -16,6 +16,9 @@ type field struct {
 	Options             []choice
 	Multiline, Required bool
 	Compact             bool
+	Searchable          bool
+	OptionFilter        string
+	OptionCursor        int
 }
 type dashboardForm struct {
 	title     string
@@ -229,7 +232,7 @@ func (m *dashboard) openForm(title string, fields []field, submit func(map[strin
 }
 func (m *dashboard) focusField() tea.Cmd {
 	f := m.form
-	current := f.fields[f.index]
+	current := &f.fields[f.index]
 	f.editor.SetValue(current.Value)
 	if current.Multiline {
 		f.editor.SetHeight(max(3, min(7, m.height-16)))
@@ -238,6 +241,8 @@ func (m *dashboard) focusField() tea.Cmd {
 	}
 	if len(current.Options) > 0 {
 		f.editor.Blur()
+		current.OptionFilter = ""
+		current.OptionCursor = optionIndex(*current, current.Value, current.OptionFilter)
 		return nil
 	}
 	return f.editor.Focus()
@@ -256,6 +261,28 @@ func (m *dashboard) updateForm(msg tea.KeyMsg) tea.Cmd {
 		}
 		return nil
 	}
+	current := &f.fields[f.index]
+	if len(current.Options) > 0 && current.Searchable {
+		if msg.String() == "ctrl+u" {
+			current.OptionFilter = ""
+			current.OptionCursor = optionIndex(*current, current.Value, current.OptionFilter)
+			m.notice = "Project filter cleared."
+			return nil
+		}
+		if msg.String() == "backspace" {
+			if current.OptionFilter != "" {
+				r := []rune(current.OptionFilter)
+				current.OptionFilter = string(r[:len(r)-1])
+				current.OptionCursor = optionIndex(*current, current.Value, current.OptionFilter)
+			}
+			return nil
+		}
+		if len(msg.Runes) > 0 {
+			current.OptionFilter += string(msg.Runes)
+			current.OptionCursor = optionIndex(*current, current.Value, current.OptionFilter)
+			return nil
+		}
+	}
 	switch msg.String() {
 	case "esc":
 		if f.cancel != nil {
@@ -266,6 +293,14 @@ func (m *dashboard) updateForm(msg tea.KeyMsg) tea.Cmd {
 		m.notice = "Cancelled"
 		return nil
 	case "ctrl+s":
+		if len(current.Options) > 0 && current.Searchable && current.OptionFilter != "" && len(filteredChoices(*current)) == 0 {
+			m.notice = "No matching projects. Clear the filter with Ctrl-u or Backspace."
+			return nil
+		}
+		if current.Searchable && !commitOptionSelection(current) {
+			m.notice = "No matching projects. Clear the filter with Ctrl-u or Backspace."
+			return nil
+		}
 		m.saveField()
 		body, e := formBody(f.fields)
 		if e != nil {
@@ -274,6 +309,10 @@ func (m *dashboard) updateForm(msg tea.KeyMsg) tea.Cmd {
 		}
 		return f.submit(body)
 	case "tab", "shift+tab":
+		if msg.String() == "tab" && current.Searchable && !commitOptionSelection(current) {
+			m.notice = "No matching projects. Clear the filter with Ctrl-u or Backspace."
+			return nil
+		}
 		m.saveField()
 		delta := 1
 		if msg.String() == "shift+tab" {
@@ -282,30 +321,41 @@ func (m *dashboard) updateForm(msg tea.KeyMsg) tea.Cmd {
 		f.index = (f.index + delta + len(f.fields)) % len(f.fields)
 		return m.focusField()
 	case "enter":
+		if current.Searchable {
+			if !commitOptionSelection(current) {
+				m.notice = "No matching projects. Clear the filter with Ctrl-u or Backspace."
+				return nil
+			}
+			f.index = (f.index + 1) % len(f.fields)
+			return m.focusField()
+		}
 		if !f.fields[f.index].Multiline {
 			m.saveField()
 			f.index = (f.index + 1) % len(f.fields)
 			return m.focusField()
 		}
 	}
-	current := &f.fields[f.index]
 	if len(current.Options) > 0 {
 		delta := 0
 		switch msg.String() {
 		case "left", "up", "k":
+			if current.Searchable && msg.String() == "k" && current.OptionFilter != "" {
+				break
+			}
 			delta = -1
 		case "right", "down", "j", " ":
+			if current.Searchable && msg.String() == "j" && current.OptionFilter != "" {
+				break
+			}
 			delta = 1
 		}
 		if delta != 0 {
-			i := 0
-			for n, c := range current.Options {
-				if c.Value == current.Value {
-					i = n
-					break
-				}
+			options := filteredChoices(*current)
+			if len(options) == 0 {
+				return nil
 			}
-			current.Value = current.Options[(i+delta+len(current.Options))%len(current.Options)].Value
+			current.OptionCursor = (current.OptionCursor + delta + len(options)) % len(options)
+			current.Value = options[current.OptionCursor].Value
 		}
 		return nil
 	}
@@ -351,7 +401,7 @@ func formBody(fields []field) (map[string]any, error) {
 }
 func (m *dashboard) formView() string {
 	f := m.form
-	lines := []string{accent.Bold(true).Render(clip(" "+f.title, m.width-4)), muted.Render(" Tab next · ←/→ choose · Ctrl-s submit · Esc cancel"), ""}
+	lines := []string{accent.Bold(true).Render(clip(" "+f.title, m.width-4)), muted.Render(clip(" Tab next · Shift-Tab back · arrows choose · Ctrl-s submit · Esc cancel", m.width-4)), ""}
 	start := max(0, f.index-max(1, m.height-17))
 	for i := start; i < len(f.fields) && len(lines) < max(5, m.height-12); i++ {
 		v := f.fields[i]
@@ -374,13 +424,29 @@ func (m *dashboard) formView() string {
 	current := f.fields[f.index]
 	lines = append(lines, "", accent.Render(" "+current.Label))
 	if len(current.Options) > 0 {
+		options := filteredChoices(current)
+		if current.Searchable {
+			selected := "—"
+			for _, c := range current.Options {
+				if c.Value == current.Value {
+					selected = c.Label
+					break
+				}
+			}
+			lines = append(lines, muted.Render(clip(fmt.Sprintf(" Filter: %q · %d matches · Selected: %s", current.OptionFilter, len(options), selected), m.width-4)))
+			lines = append(lines, muted.Render(" Type to filter · Ctrl-u clears · Backspace erases"))
+			if len(options) == 0 {
+				lines = append(lines, muted.Render(" No matching projects · Ctrl-u clears · Backspace removes"))
+				return strings.Join(lines, "\n")
+			}
+		}
 		var opts []string
-		for _, c := range current.Options {
+		for n, c := range options {
 			if current.Compact && c.Value != current.Value {
 				continue
 			}
 			label := c.Label
-			if c.Value == current.Value {
+			if c.Value == current.Value || (current.Searchable && n == current.OptionCursor) {
 				label = "[" + label + "]"
 			}
 			opts = append(opts, label)
@@ -405,7 +471,46 @@ func optionField(key, label, value string, opts []choice, required bool) field {
 	if value == "" && required && len(opts) > 0 {
 		value = opts[0].Value
 	}
-	return field{Key: key, Label: label, Value: value, Options: opts, Required: required}
+	return field{Key: key, Label: label, Value: value, Options: opts, Required: required, Searchable: key == "project_id" || key == "project_ids"}
+}
+
+func filteredChoices(f field) []choice {
+	if !f.Searchable || strings.TrimSpace(f.OptionFilter) == "" {
+		return f.Options
+	}
+	query := strings.ToLower(strings.TrimSpace(f.OptionFilter))
+	filtered := make([]choice, 0, len(f.Options))
+	for _, c := range f.Options {
+		if strings.Contains(strings.ToLower(c.Label), query) {
+			filtered = append(filtered, c)
+		}
+	}
+	return filtered
+}
+
+func commitOptionSelection(f *field) bool {
+	options := filteredChoices(*f)
+	if len(options) == 0 {
+		return false
+	}
+	if f.OptionCursor < 0 || f.OptionCursor >= len(options) {
+		f.OptionCursor = 0
+	}
+	f.Value = options[f.OptionCursor].Value
+	f.OptionFilter = ""
+	f.OptionCursor = optionIndex(*f, f.Value, "")
+	return true
+}
+
+func optionIndex(f field, value, filter string) int {
+	f.OptionFilter = filter
+	options := filteredChoices(f)
+	for i, c := range options {
+		if c.Value == value {
+			return i
+		}
+	}
+	return 0
 }
 func boolField(key, label string, def bool) field {
 	return optionField(key, label, strconv.FormatBool(def), []choice{{"No", "false"}, {"Yes", "true"}}, false)

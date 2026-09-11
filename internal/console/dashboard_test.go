@@ -167,6 +167,120 @@ func TestDashboardFormsUseNamesPreserveDraftsAndSubmitRealHTTP(t *testing.T) {
 		t.Fatal("successful form stayed open")
 	}
 }
+
+func TestDashboardProjectPickerFiltersAndPreservesSelection(t *testing.T) {
+	m := sampleDashboard()
+	m.projects = make([]row, 100)
+	for i := range m.projects {
+		m.projects[i] = row{"id": float64(i + 1), "name": fmt.Sprintf("Project %02d", i+1)}
+	}
+	m.section = 0 // sessions
+	m.newForm()
+	projectIndex := -1
+	for i, f := range m.form.fields {
+		if f.Key == "project_id" {
+			projectIndex = i
+			if !f.Searchable {
+				t.Fatal("project field is not searchable")
+			}
+		}
+	}
+	if projectIndex < 0 {
+		t.Fatal("project field missing")
+	}
+	m.form.index = projectIndex
+	m.focusField()
+
+	for _, r := range []rune("Project 0") {
+		m.updateForm(key(string(r)))
+	}
+	if got := len(filteredChoices(m.form.fields[projectIndex])); got != 9 {
+		t.Fatalf("filtered project count = %d, want 9", got)
+	}
+	m.updateForm(tea.KeyMsg{Type: tea.KeyDown})
+	if m.form.fields[projectIndex].Value != "2" {
+		t.Fatalf("filtered down selected %q, want 2", m.form.fields[projectIndex].Value)
+	}
+	m.updateForm(tea.KeyMsg{Type: tea.KeyCtrlU})
+
+	for _, r := range []rune("Project 99") {
+		m.updateForm(key(string(r)))
+	}
+	if got := len(filteredChoices(m.form.fields[projectIndex])); got != 1 {
+		t.Fatalf("filtered project count = %d, want 1", got)
+	}
+	if !strings.Contains(m.formView(), "1 matches") || !strings.Contains(m.formView(), "Project 99") {
+		t.Fatalf("picker view omitted filter state: %s", m.formView())
+	}
+	if cmd := m.updateForm(tea.KeyMsg{Type: tea.KeyEnter}); cmd != nil {
+		t.Fatal("entering a project field should only move focus")
+	}
+	if m.form.fields[projectIndex].Value != "99" {
+		t.Fatalf("selected project = %q, want 99", m.form.fields[projectIndex].Value)
+	}
+	if m.form.index != projectIndex+1 {
+		t.Fatalf("enter advanced to field %d, want %d", m.form.index, projectIndex+1)
+	}
+	m.updateForm(tea.KeyMsg{Type: tea.KeyShiftTab})
+	if m.form.index != projectIndex || m.form.fields[projectIndex].Value != "99" {
+		t.Fatalf("shift-tab lost project selection: index=%d value=%q", m.form.index, m.form.fields[projectIndex].Value)
+	}
+
+	// A miss must not submit or replace the still-valid project value.
+	for _, r := range []rune("does-not-exist") {
+		m.updateForm(key(string(r)))
+	}
+	if len(filteredChoices(m.form.fields[projectIndex])) != 0 {
+		t.Fatal("expected no matching projects")
+	}
+	m.updateForm(tea.KeyMsg{Type: tea.KeyEnter})
+	if m.form.index != projectIndex || m.form.fields[projectIndex].Value != "99" {
+		t.Fatalf("no-result enter changed form state: index=%d value=%q", m.form.index, m.form.fields[projectIndex].Value)
+	}
+	m.updateForm(tea.KeyMsg{Type: tea.KeyTab})
+	if m.form.index != projectIndex || m.form.fields[projectIndex].Value != "99" {
+		t.Fatalf("no-result tab changed form state: index=%d value=%q", m.form.index, m.form.fields[projectIndex].Value)
+	}
+	m.updateForm(tea.KeyMsg{Type: tea.KeyCtrlS})
+	if m.form.index != projectIndex || m.form.fields[projectIndex].Value != "99" {
+		t.Fatalf("no-result submit changed form state: index=%d value=%q", m.form.index, m.form.fields[projectIndex].Value)
+	}
+	m.updateForm(tea.KeyMsg{Type: tea.KeyCtrlU})
+	if m.form.fields[projectIndex].OptionFilter != "" || m.form.fields[projectIndex].Value != "99" {
+		t.Fatalf("ctrl-u did not clear filter safely: filter=%q value=%q", m.form.fields[projectIndex].OptionFilter, m.form.fields[projectIndex].Value)
+	}
+	body, err := formBody([]field{m.form.fields[projectIndex]})
+	if err != nil || body["project_id"] != int64(99) {
+		t.Fatalf("form body project = %#v, err=%v", body["project_id"], err)
+	}
+}
+
+func TestDashboardNonSearchableOptionKeepsExistingChoiceOnEnter(t *testing.T) {
+	m := sampleDashboard()
+	m.openForm("Choice", []field{{Key: "mode", Label: "Mode", Value: "second", Options: []choice{{"First", "first"}, {"Second", "second"}}}, {Key: "name", Label: "Name"}}, func(map[string]any) tea.Cmd { return nil })
+	m.focusField()
+	m.updateForm(tea.KeyMsg{Type: tea.KeyEnter})
+	if m.form.fields[0].Value != "second" || m.form.index != 1 {
+		t.Fatalf("enter changed non-searchable option: value=%q index=%d", m.form.fields[0].Value, m.form.index)
+	}
+}
+
+func TestDashboardProjectFilterCommitsOnTab(t *testing.T) {
+	m := sampleDashboard()
+	m.projects = []row{{"id": float64(1), "name": "Alpha"}, {"id": float64(2), "name": "Beta"}}
+	m.newForm()
+	projectIndex := 2
+	m.form.index = projectIndex
+	m.focusField()
+	for _, r := range []rune("Beta") {
+		m.updateForm(key(string(r)))
+	}
+	m.updateForm(tea.KeyMsg{Type: tea.KeyTab})
+	if m.form.fields[projectIndex].Value != "2" || m.form.index != projectIndex+1 {
+		t.Fatalf("tab did not commit filtered project: value=%q index=%d", m.form.fields[projectIndex].Value, m.form.index)
+	}
+}
+
 func TestDashboardFailedMutationKeepsDraft(t *testing.T) {
 	m := sampleDashboard()
 	m.renameForm()

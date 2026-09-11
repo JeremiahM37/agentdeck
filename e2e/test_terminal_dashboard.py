@@ -129,6 +129,36 @@ def test_dashboard_creates_task_with_named_project_and_multiline_prompt(real_ter
     finally:d.close()
 
 
+def test_dashboard_project_picker_searches_many_projects_and_creates_selected(real_terminal):
+    t=real_terminal
+    projects=[]
+    for i in range(1,101):
+        projects.append(t['api']('/projects',{'name':f'Picker project {i:03d}',
+            'target_id':t['target_id'],'repo_path':str(t['root'])}))
+    chosen=next(p for p in projects if p['name']=='Picker project 099')
+    # Keep the launched session local and deterministic while exercising the
+    # real form, PTY, HTTP API, and tmux lifecycle.
+    request=urllib.request.Request(t['url']+'/api/agents',method='PUT',
+        headers={'Content-Type':'application/json'},
+        data=json.dumps([{'name':'codex','command':'sleep 600'}]).encode())
+    with urllib.request.urlopen(request) as response:
+        assert response.status==200
+    d=Dashboard(t)
+    try:
+        d.wait('Real terminal');d.send('n');d.wait('New session')
+        d.send('Picker session\t\t')
+        d.wait('Project')
+        d.send('Picker project 099');d.wait('1 matches')
+        d.send('\r');d.wait('Target')
+        # Return to the project with Shift-Tab, then move forward again. The
+        # selected ID must survive the focus round trip before submit.
+        d.send('\x1b[Z');d.wait('Selected: Picker project 099')
+        d.send('\t\t');d.send('\x13');d.wait('Create session completed')
+        row=next(s for s in t['api']('/sessions') if s['name']=='Picker session')
+        assert row['project_id']==chosen['id'],row
+    finally:d.close()
+
+
 def test_dashboard_context_upload_preserves_local_bytes(real_terminal,tmp_path):
     t=real_terminal;pdf=tmp_path/'context.pdf';pdf.write_bytes(b'PDF\x00\xffcontext')
     d=Dashboard(t)
