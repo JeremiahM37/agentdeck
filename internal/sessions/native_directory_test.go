@@ -21,7 +21,7 @@ func TestNativeDirectoryOverrideRemainsAReusableTemplate(t *testing.T) {
 	// Execute the generated nested shell quoting, with tiny local command
 	// stand-ins that only return argv. No coding agent or tmux is invoked.
 	for name, script := range map[string]string{
-		"tmux":  "#!/bin/sh\nexec bash -c \"$5\"\n",
+		"tmux":  "#!/bin/sh\nwhile [ \"$#\" -gt 0 ] && [ \"$1\" != -- ]; do shift; done\n[ \"$1\" = -- ] && shift\nexec \"$@\"\n",
 		"codex": "#!/bin/sh\nprintf '%s\\000' \"$@\"\n",
 	} {
 		if err := os.WriteFile(filepath.Join(root, name), []byte(script), 0755); err != nil {

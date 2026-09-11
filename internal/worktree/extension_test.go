@@ -127,16 +127,19 @@ func TestExtensionFailureRemainsDiscoverableFromOldRecord(t *testing.T) {
 }
 
 func TestExtensionCancellationDoesNotStopExistingTerminal(t *testing.T) {
+	testutil.RequireIsolated(t)
 	socketRoot, err := os.MkdirTemp("", "adk-ext-")
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("TMUX_TMPDIR", socketRoot)
 	t.Setenv("TMUX", "")
-	t.Cleanup(func() { testutil.CleanupTmux(t, socketRoot); os.RemoveAll(socketRoot) })
+	tmuxSocket := filepath.Join(socketRoot, "tmux.sock")
+	t.Setenv("ADK_TEST_TMUX_SOCKET", tmuxSocket)
+	t.Cleanup(func() { testutil.CleanupTmuxSocket(t, tmuxSocket); os.RemoveAll(socketRoot) })
 	plan, extra := extensionFixture(t)
 	ex := executor.NewLocal()
-	if output, err := exec.Command("tmux", "new-session", "-d", "-s", "extension-existing", "-c", plan.Path, "sleep 600").CombinedOutput(); err != nil {
+	if output, err := exec.Command("tmux", "-S", tmuxSocket, "new-session", "-d", "-s", "extension-existing", "-c", plan.Path, "--", "sleep", "600").CombinedOutput(); err != nil {
 		t.Fatalf("tmux: %v %s", err, output)
 	}
 	// Cancellation from an earlier operation must not poison a new extension.
@@ -177,7 +180,7 @@ func TestExtensionCancellationDoesNotStopExistingTerminal(t *testing.T) {
 	if _, err := os.Stat(escaped); !os.IsNotExist(err) {
 		t.Fatal("cancelled setup continued")
 	}
-	if err := exec.Command("tmux", "has-session", "-t", "=extension-existing").Run(); err != nil {
+	if err := exec.Command("tmux", "-S", tmuxSocket, "has-session", "-t", "=extension-existing").Run(); err != nil {
 		t.Fatal("cancellation stopped existing terminal")
 	}
 	if body, _ := os.ReadFile(filepath.Join(plan.Repositories[0].Worktree.Path, "prepared")); string(body) != "once\n" {

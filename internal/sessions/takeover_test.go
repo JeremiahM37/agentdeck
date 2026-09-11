@@ -13,7 +13,7 @@ func TestExactResumeQuotesConversationID(t *testing.T) {
 	// proven to remain one literal argument all the way into the nested command.
 	dir := t.TempDir()
 	bin := filepath.Join(dir, "tmux")
-	os.WriteFile(bin, []byte("#!/bin/sh\nshift 4\nexec sh -c \"$1\"\n"), 0755)
+	os.WriteFile(bin, []byte("#!/bin/sh\nwhile [ \"$#\" -gt 0 ] && [ \"$1\" != -- ]; do shift; done\n[ \"$1\" = -- ] && shift\nexec \"$@\"\n"), 0755)
 	for _, agent := range []string{"claude", "codex"} {
 		spec, _ := Find(Builtins(), agent)
 		spec.Command = "printf '%s\\n'"

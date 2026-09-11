@@ -418,6 +418,7 @@ func TestMultiWorkspacePlansSeparateOwnedRepositoriesAndBases(t *testing.T) {
 }
 
 func TestMultiWorkspaceCreationFailureAndCleanup(t *testing.T) {
+	testutil.RequireIsolated(t)
 	for _, bin := range []string{"git", "python3", "tmux"} {
 		if _, err := exec.LookPath(bin); err != nil {
 			t.Skip(bin + " unavailable")
@@ -429,7 +430,9 @@ func TestMultiWorkspaceCreationFailureAndCleanup(t *testing.T) {
 	}
 	t.Setenv("TMUX_TMPDIR", socket)
 	t.Setenv("TMUX", "")
-	t.Cleanup(func() { testutil.CleanupTmux(t, socket); os.RemoveAll(socket) })
+	tmuxSocket := filepath.Join(socket, "tmux.sock")
+	t.Setenv("ADK_TEST_TMUX_SOCKET", tmuxSocket)
+	t.Cleanup(func() { testutil.CleanupTmuxSocket(t, tmuxSocket); os.RemoveAll(socket) })
 	root := t.TempDir()
 	git := func(repo string, args ...string) string {
 		t.Helper()
@@ -546,13 +549,13 @@ func TestMultiWorkspaceCreationFailureAndCleanup(t *testing.T) {
 				}
 			}
 			os.WriteFile(processReceipt, receiptBefore, 0600)
-			if out, err := exec.Command("tmux", "new-session", "-d", "-s", "group-root", "-c", plan.Path, "sleep 600").CombinedOutput(); err != nil {
+			if out, err := exec.Command("tmux", "-S", tmuxSocket, "new-session", "-d", "-s", "group-root", "-c", plan.Path, "--", "sleep", "600").CombinedOutput(); err != nil {
 				t.Fatalf("tmux: %s", out)
 			}
 			if err := RunInteractive(ctx, ex, "remove", plan); err == nil || !strings.Contains(err.Error(), "terminal") {
 				t.Fatalf("active workspace root was not protected: %v", err)
 			}
-			exec.Command("tmux", "kill-session", "-t", "group-root").Run()
+			exec.Command("tmux", "-S", tmuxSocket, "kill-session", "-t", "=group-root").Run()
 			if !fails {
 				// Inject a real later edit after the first worktree removal. All
 				// initial preflights have passed, so per-child rechecks matter.

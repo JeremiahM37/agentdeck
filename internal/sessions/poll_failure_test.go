@@ -115,6 +115,7 @@ func TestPollSnapshotRejectsTruncationAndForgedFrames(t *testing.T) {
 }
 
 func TestRealTmuxBlankPaneIsLiveAndAbsentSessionIsDead(t *testing.T) {
+	testutil.RequireIsolated(t)
 	if _, err := exec.LookPath("tmux"); err != nil {
 		t.Skip("tmux not installed")
 	}
@@ -124,12 +125,14 @@ func TestRealTmuxBlankPaneIsLiveAndAbsentSessionIsDead(t *testing.T) {
 	}
 	t.Setenv("TMUX_TMPDIR", dir)
 	t.Setenv("TMUX", "")
-	t.Cleanup(func() { testutil.CleanupTmux(t, dir); _ = os.RemoveAll(dir) })
+	socket := filepath.Join(dir, "tmux.sock")
+	t.Setenv("ADK_TEST_TMUX_SOCKET", socket)
+	t.Cleanup(func() { testutil.CleanupTmuxSocket(t, socket); _ = os.RemoveAll(dir) })
 	m, sess := pollRig(t)
 	if err := m.DB.Update("sessions", sess.ID, map[string]any{"created_at": store.Now() - 60}); err != nil {
 		t.Fatal(err)
 	}
-	if out, err := exec.Command("tmux", "-f", "/dev/null", "new-session", "-d", "-s", sess.TmuxSession, "sleep 600").CombinedOutput(); err != nil {
+	if out, err := exec.Command("tmux", "-S", socket, "-f", "/dev/null", "new-session", "-d", "-s", sess.TmuxSession, "--", "sleep", "600").CombinedOutput(); err != nil {
 		t.Fatalf("tmux: %s %v", out, err)
 	}
 	m.Poll(context.Background())
@@ -138,7 +141,7 @@ func TestRealTmuxBlankPaneIsLiveAndAbsentSessionIsDead(t *testing.T) {
 		t.Fatal("blank live pane declared dead", got)
 	}
 	command := "printf '%s\n' " + shellq.Quote(strings.Repeat("visible Ω ", 30)+"\n"+PollEnd) + "; sleep 600"
-	if out, err := exec.Command("tmux", "respawn-pane", "-k", "-t", "="+sess.TmuxSession+":", command).CombinedOutput(); err != nil {
+	if out, err := exec.Command("tmux", "-S", socket, "respawn-pane", "-k", "-t", "="+sess.TmuxSession+":", "--", "bash", "-c", command).CombinedOutput(); err != nil {
 		t.Fatalf("respawn: %s %v", out, err)
 	}
 	deadline := time.Now().Add(2 * time.Second)
@@ -157,7 +160,7 @@ func TestRealTmuxBlankPaneIsLiveAndAbsentSessionIsDead(t *testing.T) {
 	// capture and paste against a shell prompt without starting a paid agent.
 	received := filepath.Join(dir, "received")
 	command = "printf '❯ '; IFS= read -r reply; printf '%s' \"$reply\" > " + shellq.Quote(received) + "; sleep 600"
-	if out, err := exec.Command("tmux", "respawn-pane", "-k", "-t", "="+sess.TmuxSession+":", command).CombinedOutput(); err != nil {
+	if out, err := exec.Command("tmux", "-S", socket, "respawn-pane", "-k", "-t", "="+sess.TmuxSession+":", "--", "bash", "-c", command).CombinedOutput(); err != nil {
 		t.Fatalf("prompt: %s %v", out, err)
 	}
 	m.primeWhenReady(sess.ID, "opening message proof")
@@ -173,7 +176,7 @@ func TestRealTmuxBlankPaneIsLiveAndAbsentSessionIsDead(t *testing.T) {
 	if string(data) != "opening message proof" {
 		t.Fatalf("opening message was not delivered: %q", data)
 	}
-	if err := exec.Command("tmux", "kill-session", "-t", "="+sess.TmuxSession).Run(); err != nil {
+	if err := exec.Command("tmux", "-S", socket, "kill-session", "-t", "="+sess.TmuxSession).Run(); err != nil {
 		t.Fatal(err)
 	}
 	m.Poll(context.Background())

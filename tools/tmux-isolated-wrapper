@@ -27,6 +27,7 @@ has_socket=0
 prev=
 label=
 command_seen=0
+command=
 for arg do
 	if [ "$command_seen" -eq 1 ]; then
 		continue
@@ -34,6 +35,11 @@ for arg do
 	if [ "$prev" = -S ]; then
         socket=$arg
         has_socket=1
+        prev=
+        continue
+    fi
+    if [ "$prev" = -f ]; then
+        # -f consumes the following config path; it is not the tmux command.
         prev=
         continue
     fi
@@ -47,9 +53,10 @@ for arg do
 		-S/*) socket=${arg#-S}; has_socket=1 ;;
 		-L) prev=-L ;;
 		-L*) label=${arg#-L} ;;
-		kill-server) : ;;
+		-f) prev=-f ;;
+		kill-server) command=kill-server; command_seen=1 ;;
 		-*) : ;;
-		*) command_seen=1 ;;
+		*) command=$arg; command_seen=1 ;;
 	esac
 done
 if [ -n "$label" ] && [ "$has_socket" -eq 0 ]; then
@@ -73,8 +80,7 @@ mkdir -p "$(dirname "$socket")"
 # TMUX before command-line defaults, so clear it even when -S is present.
 unset TMUX
 
-case " $args " in
-    *" kill-server "*)
+if [ "$command" = kill-server ]; then
         # The socket path is the ownership boundary.  Enumerate its sessions
         # and kill each exact (=name) target; never issue kill-server.
         sessions=$($real_tmux -S "$socket" list-sessions -F '#{session_name}' 2>/dev/null || true)
@@ -85,8 +91,7 @@ case " $args " in
 $sessions
 EOF
         exit 0
-        ;;
-esac
+fi
 
 if [ "$has_socket" -eq 1 ]; then
     exec "$real_tmux" "$@"

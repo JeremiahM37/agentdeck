@@ -68,6 +68,7 @@ func TestFailedCheckoutHookRetainsRecoverableOwnedWorktree(t *testing.T) {
 }
 
 func TestInteractiveIsolationOwnershipAndSafeRemoval(t *testing.T) {
+	testutil.RequireIsolated(t)
 	for _, bin := range []string{"git", "python3", "tmux"} {
 		if _, err := exec.LookPath(bin); err != nil {
 			t.Skip(bin + " unavailable")
@@ -79,7 +80,9 @@ func TestInteractiveIsolationOwnershipAndSafeRemoval(t *testing.T) {
 	}
 	t.Setenv("TMUX_TMPDIR", socketRoot)
 	t.Setenv("TMUX", "")
-	t.Cleanup(func() { testutil.CleanupTmux(t, socketRoot); os.RemoveAll(socketRoot) })
+	tmuxSocket := filepath.Join(socketRoot, "tmux.sock")
+	t.Setenv("ADK_TEST_TMUX_SOCKET", tmuxSocket)
+	t.Cleanup(func() { testutil.CleanupTmuxSocket(t, tmuxSocket); os.RemoveAll(socketRoot) })
 	root := t.TempDir()
 	repo := filepath.Join(root, "source with spaces")
 	os.Mkdir(repo, 0700)
@@ -133,13 +136,13 @@ func TestInteractiveIsolationOwnershipAndSafeRemoval(t *testing.T) {
 	if err := RunInteractive(ctx, ex, "create", collision); err == nil {
 		t.Fatal("branch collision accepted")
 	}
-	if out, err := exec.Command("tmux", "new-session", "-d", "-s", "external-proof", "-c", plan.Path, "sleep 600").CombinedOutput(); err != nil {
+	if out, err := exec.Command("tmux", "-S", tmuxSocket, "new-session", "-d", "-s", "external-proof", "-c", plan.Path, "--", "sleep", "600").CombinedOutput(); err != nil {
 		t.Fatalf("tmux: %s", out)
 	}
 	if err := RunInteractive(ctx, ex, "remove", plan); err == nil {
 		t.Fatal("worktree with external terminal removed")
 	}
-	exec.Command("tmux", "kill-session", "-t", "external-proof").Run()
+	exec.Command("tmux", "-S", tmuxSocket, "kill-session", "-t", "=external-proof").Run()
 	changed := *plan
 	changed.Token = "someone-else"
 	if err := RunInteractive(ctx, ex, "remove", &changed); err == nil {
