@@ -16,9 +16,12 @@ export function renderAgentSettings(container, {api, onChange = () => {}}) {
 
   const displayEnv = spec => {
     const env = spec?.env && typeof spec.env === 'object' ? spec.env : {};
-    return Object.keys(env).sort().map(k => `${k}=••••`).join('\n');
+    return Object.keys(env).sort().map(k => {
+      const value = env[k];
+      return `${k}=${value && typeof value === 'object' ? '••••' : value}`;
+    }).join('\n');
   };
-  const endpointKeys = ['OPENAI_BASE_URL', 'ANTHROPIC_BASE_URL', 'OLLAMA_HOST', 'BASE_URL'];
+  const endpointKeys = ['OPENAI_API_BASE', 'OPENAI_BASE_URL', 'ANTHROPIC_BASE_URL', 'OLLAMA_HOST', 'BASE_URL'];
   const providerEnv = spec => spec?.provider_env || endpointKeys.find(k => spec?.env?.[k]) || 'OPENAI_BASE_URL';
   const providerURL = spec => {
     const key = providerEnv(spec);
@@ -48,8 +51,10 @@ export function renderAgentSettings(container, {api, onChange = () => {}}) {
       const i = line.indexOf('='); if (i <= 0) throw Error('Environment lines must use KEY=value.');
       const key = line.slice(0, i).trim(), val = line.slice(i + 1);
       if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key)) throw Error(`Invalid environment name ${key}.`);
-      if (val === '••••' || val === '***' || val === '__KEEP__') continue;
-      out[key] = val;
+      if (val === '••••' || val === '***') continue;
+      // A blank KEY= is the explicit removal path. Leaving a masked line
+      // untouched retains its typed marker from GET /agents.
+      out[key] = val === '' ? '__DELETE__' : val;
     }
     return out;
   };
@@ -81,8 +86,8 @@ export function renderAgentSettings(container, {api, onChange = () => {}}) {
       <label>Fixed arguments (one per line; JSON array accepted)<textarea class="agent-args" rows="2" spellcheck="false" placeholder="--some-flag"></textarea></label>
       <div class="agent-two"><label>Model flag<input class="agent-model-flag" maxlength="80" placeholder="--model"></label>
         <label>Provider endpoint URL (optional)<input class="agent-provider-url" type="url" maxlength="2048" placeholder="http://127.0.0.1:11434/v1"></label></div>
-      <label>Provider URL environment variable<input class="agent-provider-env" maxlength="80" placeholder="OPENAI_BASE_URL"></label>
-      <p class="sub agent-provider-help">AgentDeck passes this endpoint to the runner through the named environment variable.</p>
+      <div class="agent-provider-fields"><label>Provider URL environment variable<input class="agent-provider-env" maxlength="80" placeholder="OPENAI_API_BASE"></label>
+      <p class="sub agent-provider-help">AgentDeck passes this endpoint to the runner through the named environment variable.</p></div>
       <label class="check"><input type="checkbox" class="agent-prompt-arg"> Opening prompt is a positional argument</label>
       <p class="sub agent-prompt-help">Leave off when the CLI prompts inside its terminal; AgentDeck will type the opening message after the pane is ready.</p>
       <div class="agent-two"><label>Resume arguments (one per line; JSON accepted)<textarea class="agent-resume" rows="2" spellcheck="false" placeholder="--continue"></textarea></label>
@@ -110,13 +115,20 @@ export function renderAgentSettings(container, {api, onChange = () => {}}) {
     set('.agent-env', displayEnv(source));
     $('.agent-prompt-arg').checked = !!source?.prompt_arg;
     const applyPreset = value => {
-      if (value === 'opencode') { set('.agent-name', 'opencode'); set('.agent-command', 'opencode'); set('.agent-args', '[]'); set('.agent-model-flag', '--model'); set('.agent-provider-env', 'OPENAI_BASE_URL'); $('.agent-prompt-arg').checked = false; enableTask(true); set('.agent-task-command', 'opencode'); set('.agent-task-args', '[]'); set('.agent-task-prompt', 'run {prompt}'); }
-      if (value === 'aider') { set('.agent-name', 'aider'); set('.agent-command', 'aider'); set('.agent-args', '[]'); set('.agent-model-flag', '--model'); set('.agent-provider-env', 'OPENAI_BASE_URL'); $('.agent-prompt-arg').checked = false; enableTask(true); set('.agent-task-command', 'aider'); set('.agent-task-args', '[]'); set('.agent-task-prompt', '--message {prompt}'); }
+      if (value === 'opencode') { set('.agent-name', 'opencode'); set('.agent-command', 'opencode'); set('.agent-args', '[]'); set('.agent-model-flag', '--model'); set('.agent-provider-url', ''); set('.agent-provider-env', ''); $('.agent-provider-help').textContent = 'OpenCode uses its configured provider settings. Add OPENCODE_CONFIG_CONTENT in Environment for a custom provider.'; $('.agent-prompt-arg').checked = false; enableTask(true); set('.agent-task-command', 'opencode'); set('.agent-task-args', '[]'); set('.agent-task-prompt', 'run {prompt}'); }
+      if (value === 'aider') { set('.agent-name', 'aider'); set('.agent-command', 'aider'); set('.agent-args', '[]'); set('.agent-model-flag', '--model'); set('.agent-provider-env', 'OPENAI_API_BASE'); $('.agent-provider-help').textContent = 'AgentDeck passes this endpoint to Aider as OPENAI_API_BASE.'; $('.agent-prompt-arg').checked = false; enableTask(true); set('.agent-task-command', 'aider'); set('.agent-task-args', '[]'); set('.agent-task-prompt', '--message {prompt}'); }
     };
     const enableTask = value => { $('.agent-task-enabled').checked = value; $('.agent-task-fields').hidden = !value; };
+    const syncProviderFields = preset => {
+      const openCode = preset === 'opencode';
+      $('.agent-provider-fields').hidden = openCode;
+      $('.agent-provider-url').closest('label').hidden = openCode;
+      if (openCode) $('.agent-provider-help').textContent = 'OpenCode uses its configured provider settings. Add OPENCODE_CONFIG_CONTENT in Environment for a custom provider.';
+    };
+    syncProviderFields(source?.command === 'opencode' ? 'opencode' : 'custom');
     if (source?.task) { enableTask(true); set('.agent-task-command', source.task.command); set('.agent-task-args', JSON.stringify(source.task.args || [], null, 2)); set('.agent-task-prompt', source.task.prompt_template); set('.agent-task-output', source.task.output_mode || 'plain'); set('.agent-task-permissions', JSON.stringify(source.task.permission_args || {}, null, 2)); }
     $('.agent-task-enabled').onchange = e => enableTask(e.target.checked);
-    $('.agent-preset')?.addEventListener('change', e => applyPreset(e.target.value));
+    $('.agent-preset')?.addEventListener('change', e => { syncProviderFields(e.target.value); applyPreset(e.target.value); });
     const close = () => { dialog.close(); dialog.remove(); };
     $('.agent-dialog-close').onclick = close; $('.agent-cancel').onclick = close;
     dialog.addEventListener('cancel', e => {e.preventDefault(); close();});
@@ -131,18 +143,22 @@ export function renderAgentSettings(container, {api, onChange = () => {}}) {
         // If the user left a masked line in place, merge in the server value.
         // This also preserves keys returned by a redacting backend.
         const env = Object.keys(enteredEnv).length ? {...priorEnv, ...enteredEnv} : clone(priorEnv);
-        const endpointKey = $('.agent-provider-env').value.trim() || 'OPENAI_BASE_URL';
+        const presetValue = $('.agent-preset')?.value || (command === 'opencode' ? 'opencode' : 'custom');
+        const endpointKey = $('.agent-provider-env').value.trim() || 'OPENAI_API_BASE';
         if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(endpointKey)) throw Error('Provider environment name is invalid.');
         const endpoint = $('.agent-provider-url').value.trim();
+        if (presetValue === 'opencode' && endpoint) throw Error('OpenCode uses its configured provider settings; add OPENCODE_CONFIG_CONTENT in Environment instead.');
         if (endpoint) env[endpointKey] = endpoint;
-        // A redacting API can return a mask in place of a saved secret. Keep
-        // that value through the replacement PUT without ever sending it as a
-        // credential; the backend treats __KEEP__ as write-only retention.
+        else if (source && providerURL(source)) {
+          const oldEndpointKey = providerEnv(source);
+          if (source.env?.[oldEndpointKey] !== undefined) delete env[oldEndpointKey];
+        }
+        if (source && providerURL(source) && endpointKey !== providerEnv(source)) delete env[providerEnv(source)];
+        for (const [key, value] of Object.entries(env)) if (value === '__DELETE__') delete env[key];
+        // A redacting API returns typed retention markers. They remain objects
+        // in the replacement PUT, so the backend can verify and restore them.
         for (const [key, value] of Object.entries(env)) {
-          if (value === '••••' || value === '***' || value === '__KEEP__') {
-            const prior = priorEnv[key];
-            env[key] = prior && !['••••', '***', '__KEEP__'].includes(prior) ? prior : '__KEEP__';
-          }
+          if (value === '••••' || value === '***') delete env[key];
         }
         const spec = {...(source ? normalized(source) : {}), name, command,
           args: parseArgs($('.agent-args').value, 'Fixed arguments'), model_flag: $('.agent-model-flag').value.trim(),
@@ -156,6 +172,9 @@ export function renderAgentSettings(container, {api, onChange = () => {}}) {
             args: parseArgs($('.agent-task-args').value, 'Task arguments'), prompt_template: $('.agent-task-prompt').value.trim(),
             output_mode: $('.agent-task-output').value, permission_args: permissions};
         } else delete spec.task;
+        if (source?.builtin && !spec.task && !confirm('This override changes the built-in runner. Background tasks use the built-in adapter today; continue and make this an interactive-only custom override?')) {
+          throw Error('Keep the built-in task adapter or enable a separate task definition.');
+        }
         delete spec.provider_url;
         delete spec.provider_env;
         const custom = rows.filter(row => !row.builtin).map(normalized);
@@ -176,7 +195,7 @@ export function renderAgentSettings(container, {api, onChange = () => {}}) {
       const card = document.createElement('div'); card.className = 'rowcard agent-card';
       const details = [spec.command, spec.model_flag ? `model ${spec.model_flag}` : 'no model flag', spec.env?.[providerEnv(spec)] ? `provider via ${providerEnv(spec)}` : 'provider via env/default'].join(' · ');
       card.innerHTML = `<div class="agent-card-main"><h3></h3><div class="sub"></div></div><div class="agent-card-actions"><button class="b agent-edit" type="button">Edit</button><button class="b no agent-delete" type="button">Delete</button></div>`;
-      card.querySelector('h3').textContent = spec.name + (spec.builtin ? ' · built in' : ' · custom'); card.querySelector('.sub').textContent = details + (spec.task ? ' · background tasks enabled' : ' · interactive sessions');
+      card.querySelector('h3').textContent = spec.name + (spec.builtin ? ' · built in' : ' · custom'); card.querySelector('.sub').textContent = details + (spec.builtin || spec.task ? ' · background tasks enabled' : ' · interactive sessions');
       card.querySelector('.agent-delete').hidden = !!spec.builtin;
       card.querySelector('.agent-edit').onclick = () => openEditor(spec);
       card.querySelector('.agent-delete').onclick = async () => {

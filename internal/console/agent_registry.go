@@ -92,7 +92,7 @@ func cloneAgent(source row) map[string]any {
 	return out
 }
 
-var providerEndpointNames = []string{"OPENAI_BASE_URL", "ANTHROPIC_BASE_URL", "OLLAMA_HOST", "BASE_URL"}
+var providerEndpointNames = []string{"OPENAI_API_BASE", "OPENAI_BASE_URL", "ANTHROPIC_BASE_URL", "OLLAMA_HOST", "BASE_URL"}
 
 func agentProviderEnv(source row) string {
 	if source != nil {
@@ -107,7 +107,7 @@ func agentProviderEnv(source row) string {
 			}
 		}
 	}
-	return "OPENAI_BASE_URL"
+	return "OPENAI_API_BASE"
 }
 
 func agentProviderURL(source row) string {
@@ -142,6 +142,10 @@ func (m *dashboard) agentDefinitionForm(source row) tea.Cmd {
 	if command == "aider" {
 		preset = "aider"
 	}
+	taskLabel := "Enable background tasks (separate one-shot command)"
+	if source != nil && source["builtin"] == true {
+		taskLabel += "; off makes this override interactive-only"
+	}
 	fields := []field{
 		optionField("preset", "Starter template (advanced fields below)", preset, []choice{{"Custom runner", "custom"}, {"OpenCode", "opencode"}, {"Aider", "aider"}}, false),
 		{Key: "name", Label: "Runner name", Value: name},
@@ -158,7 +162,7 @@ func (m *dashboard) agentDefinitionForm(source row) tea.Cmd {
 		{Key: "models_command", Label: "Model catalog command (optional; {bin})", Value: str(sourceValue(source, "models_command"))},
 		{Key: "yolo_args_json", Label: "Yolo arguments (JSON array)", Value: agentJSON(sourceValue(source, "yolo_args")), Multiline: true},
 		{Key: "env", Label: "Environment JSON (saved credentials are masked in this form)", Value: env, Multiline: true},
-		boolField("task_enabled", "Enable background tasks (separate one-shot command)", task != nil),
+		boolField("task_enabled", taskLabel, task != nil),
 		{Key: "task_command", Label: "Task command (blank uses interactive command)", Value: str(taskValue(task, "command"))},
 		{Key: "task_args_json", Label: "Task arguments (JSON array)", Value: agentJSON(taskValue(task, "args")), Multiline: true},
 		{Key: "task_prompt_template", Label: "Task prompt template ({prompt}, {prompt_file}, or stdin)", Value: str(taskValue(task, "prompt_template"))},
@@ -227,6 +231,13 @@ func (m *dashboard) agentDefinitionForm(source row) tea.Cmd {
 			if str(body["model_flag"]) == "" {
 				body["model_flag"] = "--model"
 			}
+			if str(body["provider_env"]) == "OPENAI_BASE_URL" {
+				body["provider_env"] = "OPENAI_API_BASE"
+			}
+		}
+		if preset == "opencode" && strings.TrimSpace(str(body["provider_url"])) != "" {
+			m.notice = "OpenCode uses its configured provider settings; add OPENCODE_CONFIG_CONTENT in Environment."
+			return nil
 		}
 		if strings.TrimSpace(str(body["name"])) == "" || strings.TrimSpace(str(body["command"])) == "" {
 			m.notice = "Runner name and interactive command are required."

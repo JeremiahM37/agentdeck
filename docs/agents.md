@@ -16,9 +16,10 @@ you pick.
 
 The web Settings → **Agents** page is the place to add a runner. **Add agent**
 offers OpenCode, Aider and a custom runner starter, then keeps the command,
-model flag, provider endpoint and environment together. The endpoint is written
-to the named environment variable (for example `OPENAI_BASE_URL`) so every
-runner receives it through the same contract. The same editor is available
+model flag, provider endpoint and environment together. Aider's endpoint uses
+`OPENAI_API_BASE`; OpenCode uses its configured provider settings (add
+`OPENCODE_CONFIG_CONTENT` under Environment when configuring one). Custom
+runners can name the endpoint variable their CLI expects. The same editor is available
 in the terminal dashboard from **All actions → Manage agent runners** or the
 `Q` shortcut. A target is chosen when the session or task is launched.
 
@@ -167,10 +168,11 @@ built-in Claude and Codex adapters; a custom task with MCP fails early with an
 actionable capability error instead of silently claiming tools it cannot pass.
 
 Agent-wide and project environment values are layered for both sessions and
-tasks. This is the provider/local-model configuration door: use the CLI's
-documented variables such as `OPENAI_BASE_URL`/`OPENAI_API_KEY` or
-`ANTHROPIC_BASE_URL`/`ANTHROPIC_AUTH_TOKEN`, while keeping a runnable CLI
-command in the definition. An HTTP endpoint by itself is not an executable
+tasks. This is the provider/local-model configuration door: Aider's OpenAI
+compatible endpoint uses `OPENAI_API_BASE`/`OPENAI_API_KEY`; other CLIs use
+their own documented variables. OpenCode uses its provider configuration, which
+can be supplied through `OPENCODE_CONFIG_CONTENT`, while keeping a runnable
+CLI command in the definition. An HTTP endpoint by itself is not an executable
 agent. The `/api/agents` response redacts credential-shaped environment values
 with typed retention markers; send those markers back when editing another
 field so the stored secret is retained without entering the browser response.

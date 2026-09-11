@@ -23,6 +23,7 @@ def _runner(tmp_path):
     record = tmp_path / "custom-runner.json"
     path = tmp_path / "custom-runner.py"
     path.write_text(
+        "#!/usr/bin/env python3\n"
         "import json,os,sys,time\n"
         "from pathlib import Path\n"
         "Path(os.environ['RUNNER_RECORD']).write_text(json.dumps({'argv':sys.argv[1:], 'provider':os.environ.get('RUNNER_PROVIDER'), 'secret':os.environ.get('RUNNER_SECRET')}))\n"
@@ -30,6 +31,7 @@ def _runner(tmp_path):
         "for line in sys.stdin:\n"
         "  print('CUSTOM ECHO '+line.rstrip(), flush=True)\n"
     )
+    path.chmod(0o755)
     return path, record
 
 
@@ -65,19 +67,30 @@ def test_custom_agent_settings_session_and_native_pty(page, real_terminal, tmp_p
     page.unroute("**/api/agents", reject)
     dialog.get_by_role("button", name="Save runner", exact=True).click()
     expect(page.locator(".agent-card", has_text="local-proof")).to_be_visible()
+    page.screenshot(path=f"/tmp/agentdeck-agent-settings-{width}.png", full_page=True)
 
     # Reopen to prove the secret is not rendered into the browser form.
     page.locator(".agent-card").filter(has_text="local-proof").get_by_role("button", name="Edit", exact=True).click()
     edit = page.get_by_role("dialog", name="Edit agent local-proof", exact=True)
     expect(edit.get_by_label("Environment (KEY=value lines; existing values are masked and retained)", exact=True)).to_have_value(
-        f"OPENAI_BASE_URL=••••\nRUNNER_PROVIDER=••••\nRUNNER_RECORD=••••\nRUNNER_SECRET=••••"
+        f"OPENAI_BASE_URL=http://127.0.0.1:11434/v1\nRUNNER_PROVIDER=http://127.0.0.1:11434/v1\nRUNNER_RECORD={record}\nRUNNER_SECRET=••••"
     )
     edit.get_by_role("button", name="Close", exact=True).click()
 
+    subprocess.run(["git", "-C", str(t["root"]), "add", "hello.txt"], check=True)
+    subprocess.run(["git", "-C", str(t["root"]), "-c", "user.name=fixture", "-c",
+                    "user.email=fixture@example.invalid", "commit", "-qm", "fixture"], check=True)
+    base_branch = subprocess.check_output(["git", "-C", str(t["root"]), "branch", "--show-current"], text=True).strip()
+    project = t["api"]("/projects", {"name": "Local proof project", "target_id": t["target_id"],
+                                     "repo_path": str(t["root"]), "default_base_branch": base_branch,
+                                     "default_agent": "local-proof"})
+
     page.goto(t["url"] + "/#sessions")
+    page.reload()
     page.locator("#sess-new").click()
     sheet = page.get_by_role("dialog", name="New session", exact=True)
     sheet.get_by_label("Name", exact=True).fill("Local proof session")
+    sheet.locator("#ns-project").select_option(str(project["id"]))
     sheet.get_by_label("Agent", exact=True).select_option("local-proof")
     sheet.get_by_label("Model", exact=True).fill("local-model")
     sheet.get_by_label("First message (optional)", exact=True).fill("hello custom runner")
@@ -94,16 +107,15 @@ def test_custom_agent_settings_session_and_native_pty(page, real_terminal, tmp_p
 
     # A task uses the declared one-shot command and reaches the same custom
     # runner selector. It is not inferred from the interactive session args.
-    project = t["api"]("/projects", {"name": "Local proof project", "target_id": t["target_id"],
-                                     "repo_path": str(t["root"]), "default_agent": "local-proof"})
     page.goto(t["url"] + "/#board")
+    page.reload()
     page.locator("#fab").click()
-    task_sheet = page.get_by_role("dialog", name="New task", exact=True)
-    task_sheet.get_by_label("Project", exact=True).select_option(str(project["id"]))
-    task_sheet.get_by_label("Title", exact=True).fill("Local proof task")
-    task_sheet.get_by_label("Prompt — what should the agent do?", exact=False).fill("task proof")
+    task_sheet = page.locator("#sheet")
+    task_sheet.locator("#f-project").select_option(str(project["id"]))
+    task_sheet.locator("#f-title").fill("Local proof task")
+    task_sheet.locator("#f-prompt").fill("task proof")
     task_sheet.locator("#f-agent button[data-agent='local-proof']").click()
-    task_sheet.get_by_role("button", name="Dispatch to board", exact=True).click()
+    task_sheet.locator("#f-go").click()
     task_card = page.locator(".card", has_text="Local proof task")
     expect(task_card).to_be_visible(timeout=15000)
     expect(page.locator(".col.s-review .card", has_text="Local proof task")).to_be_visible(timeout=30000)
@@ -111,6 +123,17 @@ def test_custom_agent_settings_session_and_native_pty(page, real_terminal, tmp_p
     assert "task proof" in " ".join(task_launch["argv"])
     assert task_launch["provider"] == "http://127.0.0.1:11434/v1"
     assert task_launch["secret"] == "synthetic-secret"
+
+    # Routines use the same explicit task capability and dispatch path.
+    routine = t["api"]("/routines", {"name": "Local proof routine", "title": "Local proof routine run",
+                                     "prompt": "routine proof", "project_ids": [project["id"]],
+                                     "agent": "local-proof", "permission_mode": "acceptEdits", "dispatch": True})
+    fired = t["api"](f"/routines/{routine['id']}/run", {})
+    assert fired["tasks"]
+    page.goto(t["url"] + "/#board")
+    expect(page.locator(".col.s-review .card", has_text="Local proof routine run")).to_be_visible(timeout=30000)
+    routine_launch = json.loads(record.read_text())
+    assert "routine proof" in " ".join(routine_launch["argv"])
 
     # Native PTY attachment remains available for a custom runner session.
     session = next(row for row in t["api"]("/sessions") if row["name"] == "Local proof session")
@@ -133,5 +156,9 @@ def test_custom_agent_settings_session_and_native_pty(page, real_terminal, tmp_p
         assert b"CUSTOM ECHO pty-proof" in output
     finally:
         os.write(master, b"\x02d")
-        child.wait(timeout=10)
+        try:
+            child.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            child.terminate()
+            child.wait(timeout=5)
         os.close(master)
