@@ -190,7 +190,8 @@ def test_source_and_binary_local_install_create_persist_and_reattach(local_binar
         check=True,
     )
     subprocess.run(
-        ["tmux", "send-keys", "-t", collision_name, "printf COLLISION_SENTINEL\\n", "Enter"],
+        ["tmux", "send-keys", "-t", collision_name,
+         "printf 'COLLISION_%s\\n' 'SENTINEL'", "Enter"],
         env=collision_env,
         check=True,
     )
@@ -260,7 +261,7 @@ def test_source_and_binary_local_install_create_persist_and_reattach(local_binar
     os.close(slave)
     try:
         _read_until(master, b"LOCAL_AGENT_READY")
-        os.write(master, b"printf LOCAL_PTY_SENTINEL\\n\r")
+        os.write(master, b"printf 'LOCAL_%s\\n' 'PTY_SENTINEL'\r")
         _read_until(master, b"LOCAL_PTY_SENTINEL")
         # Let the shell finish repainting before sending the tmux prefix and
         # detach key, as a real terminal user would.
@@ -280,6 +281,7 @@ def test_source_and_binary_local_install_create_persist_and_reattach(local_binar
         capture_output=True, text=True, check=True,
     ).stdout
     assert "COLLISION_SENTINEL" in collision_capture
+    assert "LOCAL_PTY_SENTINEL" not in collision_capture
 
     task = _json_command(
         binary,
@@ -334,7 +336,7 @@ def test_source_and_binary_local_install_create_persist_and_reattach(local_binar
     os.close(slave)
     try:
         _read_until(master, b"LOCAL_AGENT_READY")
-        os.write(master, b"printf LOCAL_REATTACH_SENTINEL\\n\r")
+        os.write(master, b"printf 'LOCAL_%s\\n' 'REATTACH_SENTINEL'\r")
         _read_until(master, b"LOCAL_REATTACH_SENTINEL")
         time.sleep(0.5)
         os.write(master, b"\x02d")
@@ -354,6 +356,7 @@ def test_source_and_binary_local_install_create_persist_and_reattach(local_binar
         capture_output=True, text=True, check=True,
     ).stdout
     assert "COLLISION_SENTINEL" in collision_capture
+    assert "LOCAL_REATTACH_SENTINEL" not in collision_capture
     _run(binary, env, "stop", check=False)
 
 
