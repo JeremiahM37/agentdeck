@@ -428,7 +428,7 @@ func TestAProjectShellIsARealShellInTheRepo(t *testing.T) {
 	}
 	path := filepath.Join(r.repo, marker)
 	for time.Now().Before(deadline) {
-		if _, err := os.Stat(path); err == nil {
+		if raw, err := os.ReadFile(path); err == nil && string(raw) == "hello" {
 			break
 		}
 		time.Sleep(100 * time.Millisecond)
