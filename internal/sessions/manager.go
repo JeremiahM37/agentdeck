@@ -814,25 +814,34 @@ func (m *Manager) Release(ctx context.Context, id int64) error {
 		return fmt.Errorf("workspace setup is still running; inspect its progress before stopping the session")
 	}
 	m.lifecycleMu.Lock()
-	defer m.lifecycleMu.Unlock()
 	sess, err := m.DB.Session(id)
 	if err != nil {
+		m.lifecycleMu.Unlock()
 		return err
 	}
 	if sess.EndedAt != nil {
+		m.lifecycleMu.Unlock()
 		return nil
 	}
 	identity := sess.TrackingIdentity
+	targetID, tmuxSession := sess.TargetID, sess.TmuxSession
+	origin, status := sess.Origin, sess.Status
+	// Release's database transition is serialized, but target I/O is not. An
+	// unreachable SSH target must not hold the lifecycle lock and block release
+	// of every healthy session on the board.
+	m.lifecycleMu.Unlock()
 	// Old live records can identify the tmux session they are tracking now.
 	// Already-released records never enter this path. Offline capture is optional:
 	// stopping tracking must remain possible even when SSH is unavailable.
-	if identity == "" && sess.Origin == "discovered" && sess.Status != StatusDead {
+	if identity == "" && origin == "discovered" && status != StatusDead {
 		if _, ex, err := m.resolve(id); err == nil {
 			captureCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
-			identity = captureTrackingIdentity(captureCtx, ex, sess.TmuxSession)
+			identity = captureTrackingIdentity(captureCtx, ex, tmuxSession)
 			cancel()
 		}
 	}
+	m.lifecycleMu.Lock()
+	defer m.lifecycleMu.Unlock()
 	err = func() error {
 		current, err := m.DB.Session(id)
 		if err != nil {
@@ -841,7 +850,7 @@ func (m *Manager) Release(ctx context.Context, id int64) error {
 		if current.EndedAt != nil {
 			return nil
 		}
-		if current.TargetID != sess.TargetID || current.TmuxSession != sess.TmuxSession {
+		if current.TargetID != targetID || current.TmuxSession != tmuxSession {
 			return fmt.Errorf("session moved while stopping tracking; retry")
 		}
 		if current.TrackingIdentity != "" {
@@ -859,7 +868,7 @@ func (m *Manager) Release(ctx context.Context, id int64) error {
 	}
 	m.Bus.Publish("board", "session_dismissed", map[string]any{"id": id})
 	m.Log.Info("session released (process left running)", "session", id,
-		"tmux", sess.TmuxSession)
+		"tmux", tmuxSession)
 	return nil
 }
 
