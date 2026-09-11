@@ -15,6 +15,7 @@ import (
 	"github.com/JeremiahM37/agentdeck/internal/config"
 	"github.com/JeremiahM37/agentdeck/internal/executor"
 	"github.com/JeremiahM37/agentdeck/internal/store"
+	"github.com/JeremiahM37/agentdeck/internal/testutil"
 )
 
 var lifecycleRigSeq atomic.Int64
@@ -224,9 +225,10 @@ func insertLifecycleTarget(t *testing.T, h *harness, kind, tmuxDir string) *stor
 	if tmuxDir != "" {
 		prefix = "mkdir -m 700 -p " + shellQuoteForTest(tmuxDir) + " && env TMUX_TMPDIR=" + shellQuoteForTest(tmuxDir) + " sh -c"
 	}
+	sshFixture := testutil.NewSSHFixture(t)
 	target, err := h.App.DB.InsertTarget(&store.Target{
-		Name: "lifecycle ssh", Kind: "ssh", Host: "127.0.0.1", User: "root", Port: 22,
-		KeyPath: "/home/admin/.ssh/id_ed25519", CommandPrefix: prefix,
+		Name: "lifecycle ssh", Kind: "ssh", Host: "127.0.0.1", User: "test", Port: sshFixture.Port,
+		KeyPath: sshFixture.KeyPath, CommandPrefix: prefix,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -512,7 +514,11 @@ func assertProjectFiles(t *testing.T, agent, repo, home string, before []fileSna
 		}
 	}
 	if agent == "claude" {
-		stateRoot := filepath.Join(home, ".local", "state", "agentdeck", "mcp")
+		stateRoot := os.Getenv("XDG_STATE_HOME")
+		if stateRoot == "" {
+			stateRoot = filepath.Join(home, ".local", "state")
+		}
+		stateRoot = filepath.Join(stateRoot, "agentdeck", "mcp")
 		result, err := ex.Run(context.Background(), "find "+shellQuoteForTest(stateRoot)+" -type f -name mcp.json -printf '%m %p\\n'", executor.RunOpts{Timeout: 20})
 		if err != nil || !result.OK() || strings.TrimSpace(result.Stdout) == "" {
 			t.Fatal("Claude launch did not publish a private MCP runtime")

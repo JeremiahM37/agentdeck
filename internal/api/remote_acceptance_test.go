@@ -17,6 +17,7 @@ import (
 	"github.com/JeremiahM37/agentdeck/internal/config"
 	"github.com/JeremiahM37/agentdeck/internal/executor"
 	"github.com/JeremiahM37/agentdeck/internal/store"
+	"github.com/JeremiahM37/agentdeck/internal/testutil"
 )
 
 type remoteAcceptanceRig struct {
@@ -29,14 +30,16 @@ type remoteAcceptanceRig struct {
 	tmuxDir  string
 	tmuxName string
 	knownMCP string
+	ssh      *testutil.SSHFixture
 }
 
 func newRemoteAcceptanceRig(t *testing.T, h *harness) *remoteAcceptanceRig {
 	t.Helper()
 	dir := t.TempDir()
+	sshFixture := testutil.NewSSHFixture(t)
 	r := &remoteAcceptanceRig{t: t, h: h,
 		root: filepath.Join(dir, "repo"), home: filepath.Join(dir, "home"),
-		tmuxDir: filepath.Join(dir, "tmux"), tmuxName: "remote-accept-" + strings.ReplaceAll(t.Name(), "/", "-")}
+		tmuxDir: filepath.Join(dir, "tmux"), tmuxName: "remote-accept-" + strings.ReplaceAll(t.Name(), "/", "-"), ssh: sshFixture}
 	for _, p := range []string{r.root, r.home, r.tmuxDir, filepath.Join(dir, "work")} {
 		if err := os.MkdirAll(p, 0o700); err != nil {
 			t.Fatal(err)
@@ -45,8 +48,8 @@ func newRemoteAcceptanceRig(t *testing.T, h *harness) *remoteAcceptanceRig {
 	prefix := fmt.Sprintf("env HOME=%s TMUX=%s TMUX_TMPDIR=%s GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=safe.directory GIT_CONFIG_VALUE_0=%s sh -c",
 		executor.ShellQuote(r.home), executor.ShellQuote(""), executor.ShellQuote(r.tmuxDir), executor.ShellQuote("*"))
 	target, err := h.App.DB.InsertTarget(&store.Target{
-		Name: "loopback SSH acceptance", Kind: "ssh", Host: "127.0.0.1", User: "root", Port: 22,
-		KeyPath: "/home/admin/.ssh/id_ed25519", Workroot: filepath.Join(dir, "work"),
+		Name: "loopback SSH acceptance", Kind: "ssh", Host: "127.0.0.1", User: "test", Port: sshFixture.Port,
+		KeyPath: sshFixture.KeyPath, Workroot: filepath.Join(dir, "work"),
 		MaxConcurrent: 2, Status: "ok", CommandPrefix: prefix,
 	})
 	if err != nil {

@@ -620,7 +620,12 @@ func TestARealInteractiveMCPWorktreeStaysCleanAndRemovable(t *testing.T) {
 	if sourceStatus := strings.TrimSpace(mustRun(t, r.repo, "git", "status", "--porcelain", "--untracked-files=all", "--ignored=matching")); sourceStatus != "" {
 		t.Fatalf("MCP launch changed source checkout: %q", sourceStatus)
 	}
-	if !strings.Contains(log, "--mcp-config "+home+"/.local/state/agentdeck/mcp/") || !strings.Contains(log, "--strict-mcp-config") {
+	stateRoot := os.Getenv("XDG_STATE_HOME")
+	if stateRoot == "" {
+		stateRoot = filepath.Join(home, ".local", "state")
+	}
+	privateMCPRoot := filepath.Join(stateRoot, "agentdeck", "mcp") + string(filepath.Separator)
+	if !strings.Contains(log, "--mcp-config "+privateMCPRoot) || !strings.Contains(log, "--strict-mcp-config") {
 		t.Fatalf("private MCP config was not passed as an absolute state path: %s", log)
 	}
 	if code, body := r.do("DELETE", fmt.Sprintf("/api/sessions/%d", sess.ID), nil); code != 200 {
