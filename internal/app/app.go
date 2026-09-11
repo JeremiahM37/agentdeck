@@ -6,6 +6,8 @@ import (
 	"context"
 	"log/slog"
 	"net/http"
+	"os"
+	"strings"
 
 	"github.com/JeremiahM37/agentdeck/internal/agents"
 	"github.com/JeremiahM37/agentdeck/internal/api"
@@ -111,6 +113,33 @@ func New(cfg *config.Config, log *slog.Logger) (*App, error) {
 			return nil, err
 		}
 	}
+	// The upgrade preparer leaves a private manifest in the systemd environment.
+	// Import it after store.Open has applied normal migrations, but before the
+	// startup checkpoint workers or the first recovery poll can observe rows.
+	if checkpoint := strings.TrimSpace(os.Getenv("AGENTDECK_CHECKPOINT")); checkpoint != "" {
+		report, importErr := sessions.ImportCheckpoint(checkpoint, cfg.DBPath)
+		if importErr != nil {
+			log.Warn("session checkpoint import incomplete", "path", checkpoint, "err", importErr)
+		} else {
+			log.Info("session checkpoint imported", "path", checkpoint, "imported", report.Imported, "skipped", len(report.Skipped))
+			for _, skipped := range report.Skipped {
+				log.Warn("session checkpoint row skipped", "session_id", skipped.ID, "reason", skipped.Reason)
+				if skipped.Reason == "native identity unavailable" {
+					// Keep an unidentifiable pre-restart row visible for inspection;
+					// it must not enter boot recovery as if its old conversation were
+					// safely resumable.
+					_, _ = db.Exec("UPDATE sessions SET status=?, updated_at=? WHERE id=? AND ended_at IS NULL AND status<>?", sessions.StatusInterrupted, store.Now(), skipped.ID, sessions.StatusInterrupted)
+				}
+			}
+		}
+	}
+	// Install native checkpoint workers from the local DB before exposing the
+	// server. Remote boot probes and recovery launches remain asynchronous in the
+	// scheduler, so one unreachable SSH target cannot delay API availability.
+	err = sessMgr.PrepareStartup()
+	if err != nil {
+		log.Warn("session startup checkpoint setup incomplete", "err", err)
+	}
 	sched.Start()
 	return app, nil
 }
@@ -142,6 +171,12 @@ func (a *App) Handler() http.Handler { return a.Server.Handler() }
 
 // Close stops the scheduler and releases the database.
 func (a *App) Close() {
+	if a.Sched != nil {
+		a.Sched.Stop()
+	}
+	if a.Sessions != nil {
+		a.Sessions.Close()
+	}
 	a.Server.Shutdown(context.Background())
 	a.DB.Close()
 }

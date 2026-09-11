@@ -268,7 +268,10 @@ func KillCommand(tmuxName string) string {
 
 // HasSessionCommand asks whether a tmux session still exists.
 func HasSessionCommand(tmuxName string) string {
-	return fmt.Sprintf("tmux has-session -t %s 2>/dev/null", shellq.Quote(tmuxName))
+	// The leading '=' prevents tmux from treating a numeric-looking name as a
+	// prefix. Keep stderr intact: callers must distinguish a missing session
+	// (a normal non-zero result) from a target-side probe failure.
+	return fmt.Sprintf("tmux has-session -t %s", shellq.Quote("="+tmuxName))
 }
 
 // TimesCommand asks tmux when a session started and when it last did anything.

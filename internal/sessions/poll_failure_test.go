@@ -16,6 +16,7 @@ import (
 	"github.com/JeremiahM37/agentdeck/internal/executor"
 	"github.com/JeremiahM37/agentdeck/internal/shellq"
 	"github.com/JeremiahM37/agentdeck/internal/store"
+	"github.com/JeremiahM37/agentdeck/internal/testutil"
 )
 
 func pollRig(t *testing.T) (*Manager, *store.Session) {
@@ -67,6 +68,35 @@ func TestFailedPollDoesNotEndLiveRecord(t *testing.T) {
 	}
 }
 
+func TestUnknownBootDoesNotEndOwnedMissingPane(t *testing.T) {
+	db, err := store.Open(filepath.Join(t.TempDir(), "state.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	target, err := db.InsertTarget(&store.Target{Name: "mock-target", Kind: "mock"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	row, err := db.InsertSession(&store.Session{
+		TargetID: target.ID, Name: "reboot candidate", Agent: "codex", Workdir: "/mock/work",
+		TmuxSession: "missing-owned", Status: StatusIdle, Origin: "agentdeck",
+		BootID: "11111111-2222-3333-4444-555555555555", TrackingIdentity: "0123456789abcdef0123456789abcdef",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := New(db, executor.NewRegistry(true, 0), bus.New(), Launcher{}, nil, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	m.Poll(context.Background())
+	got, err := db.Session(row.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.EndedAt != nil || got.Status == StatusDead {
+		t.Fatalf("unknown boot identity ended an owned row: %+v", got)
+	}
+}
+
 func TestPollSnapshotRejectsTruncationAndForgedFrames(t *testing.T) {
 	frame := func(name, state, body string) string {
 		return base64.StdEncoding.EncodeToString([]byte(name)) + "\t" + state + "\t" + base64.StdEncoding.EncodeToString([]byte(body)) + "\n"
@@ -94,7 +124,7 @@ func TestRealTmuxBlankPaneIsLiveAndAbsentSessionIsDead(t *testing.T) {
 	}
 	t.Setenv("TMUX_TMPDIR", dir)
 	t.Setenv("TMUX", "")
-	t.Cleanup(func() { _ = exec.Command("tmux", "kill-server").Run(); _ = os.RemoveAll(dir) })
+	t.Cleanup(func() { testutil.CleanupTmux(t, dir); _ = os.RemoveAll(dir) })
 	m, sess := pollRig(t)
 	if err := m.DB.Update("sessions", sess.ID, map[string]any{"created_at": store.Now() - 60}); err != nil {
 		t.Fatal(err)

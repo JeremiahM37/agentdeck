@@ -386,7 +386,9 @@ func (s Spec) LaunchCommand(o Start) string {
 	if o.SetupToken != "" {
 		setupEnv = " -e " + shellq.Quote("AGENTDECK_SETUP_TOKEN="+o.SetupToken)
 	}
-	return fmt.Sprintf("tmux new-session -d%s -s %s %s", setupEnv,
+	// Spell out the shell invocation so tmux cannot reinterpret the generated
+	// command string differently across versions or target configurations.
+	return fmt.Sprintf("tmux new-session -d%s -s %s -- bash -c %s", setupEnv,
 		shellq.Quote(o.TmuxName), shellq.Quote(inner))
 }
 

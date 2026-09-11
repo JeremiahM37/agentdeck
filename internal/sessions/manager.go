@@ -41,6 +41,7 @@ type Manager struct {
 	HandoffTimeout time.Duration
 
 	lifecycleMu               sync.Mutex
+	pollMu                    sync.Mutex
 	workspaceMu               sync.Mutex
 	workspaceUses             map[*workspaceUse]bool
 	sendMu                    sync.Mutex
@@ -51,6 +52,11 @@ type Manager struct {
 	workspaceCancelDeliveries map[int64]bool
 	setupLaunching            map[int64]bool
 	handoffs                  map[int64]bool // sessions with a wrap in flight
+	checkpointMu              sync.Mutex
+	checkpoints               map[int64]context.CancelFunc
+	checkpointGeneration      map[int64]uint64
+	checkpointWG              sync.WaitGroup
+	checkpointClosed          bool
 }
 
 // New builds a session manager.
@@ -60,7 +66,7 @@ func New(db *store.DB, reg *executor.Registry, b *bus.Bus, l Launcher,
 		mem = memory.None{}
 	}
 	return &Manager{DB: db, Reg: reg, Bus: b, Launcher: l, Memory: mem, Log: log,
-		HandoffTimeout: 4 * time.Minute, handoffs: map[int64]bool{}}
+		HandoffTimeout: 4 * time.Minute, handoffs: map[int64]bool{}, checkpoints: map[int64]context.CancelFunc{}, checkpointGeneration: map[int64]uint64{}}
 }
 
 func (m *Manager) publish(s *store.Session) {
@@ -96,9 +102,10 @@ type LaunchOpts struct {
 	// Resume asks the agent to pick up its own previous conversation
 	// (`claude --continue`), which is what you want when re-opening a project
 	// you were in yesterday.
-	Resume   bool
-	ResumeID string
-	ForkID   string
+	Resume      bool
+	ResumeID    string
+	RecoveryCID string
+	ForkID      string
 	// ReservedID is an internal durable session reservation for task takeover.
 	ReservedID int64
 	// ExtraArgs carries already-validated runtime configuration from a task.
@@ -123,8 +130,18 @@ type LaunchOpts struct {
 	Scratch bool
 }
 
-// Launch starts an interactive agent and records it.
+// Launch starts an interactive agent and records it. The lifecycle lock spans
+// the reservation and the target launch, so a stop cannot remove the old
+// process between recovery's absence check and the replacement launch.
 func (m *Manager) Launch(ctx context.Context, o LaunchOpts) (*store.Session, error) {
+	m.lifecycleMu.Lock()
+	defer m.lifecycleMu.Unlock()
+	return m.launch(ctx, o)
+}
+
+// launch is the unlocked implementation. Recovery calls it while it already
+// owns lifecycleMu after atomically claiming the stale row.
+func (m *Manager) launch(ctx context.Context, o LaunchOpts) (*store.Session, error) {
 	var profileErr error
 	o, profileErr = m.ApplyLaunchProfile(o)
 	if profileErr != nil {
@@ -163,6 +180,7 @@ func (m *Manager) Launch(ctx context.Context, o LaunchOpts) (*store.Session, err
 	if err != nil {
 		return nil, err
 	}
+	bootID, _ := ProbeBootID(ctx, ex)
 	paths := []string{workdir}
 	for _, source := range workspaceSources {
 		paths = append(paths, source.Repo)
@@ -223,7 +241,7 @@ func (m *Manager) Launch(ctx context.Context, o LaunchOpts) (*store.Session, err
 	} else {
 		sess, err = m.DB.InsertSession(&store.Session{
 			ResumeID: o.ResumeID, GroupPath: group, ProjectID: o.ProjectID, TargetID: o.TargetID, Name: name, Agent: agent,
-			Model: o.Model, Workdir: workdir, Status: StatusStarting, Origin: "agentdeck",
+			Model: o.Model, Workdir: workdir, Status: StatusStarting, Origin: "agentdeck", BootID: bootID,
 		})
 	}
 	if err != nil {
@@ -251,7 +269,7 @@ func (m *Manager) Launch(ctx context.Context, o LaunchOpts) (*store.Session, err
 		m.end(sess.ID, "dead")
 		return nil, fmt.Errorf("agent %q does not support forking", agent)
 	}
-	if o.ResumeID != "" && len(spec.ResumeIDArgs) == 0 {
+	if (o.ResumeID != "" || o.RecoveryCID != "") && len(spec.ResumeIDArgs) == 0 {
 		m.end(sess.ID, "dead")
 		return nil, fmt.Errorf("agent %q does not support resuming an exact conversation", agent)
 	}
@@ -515,7 +533,7 @@ func (m *Manager) Launch(ctx context.Context, o LaunchOpts) (*store.Session, err
 	}
 	cmd := spec.LaunchCommand(Start{
 		SetupToken: setupToken,
-		Workdir:    workdir, TmuxName: tmuxName, Model: o.Model, Resume: o.Resume, ResumeID: o.ResumeID, ForkID: forkID,
+		Workdir:    workdir, TmuxName: tmuxName, Model: o.Model, Resume: o.Resume, ResumeID: firstNonEmpty(o.RecoveryCID, o.ResumeID), ForkID: forkID,
 		Prompt: argPrompt, EnvPrefix: envPrefix, Yolo: o.Yolo, ToolArgs: toolArgs})
 	r, err := ex.Run(ctx, cmd, executor.RunOpts{Timeout: 60})
 	if err != nil {
@@ -538,6 +556,10 @@ func (m *Manager) Launch(ctx context.Context, o LaunchOpts) (*store.Session, err
 			m.Log.Warn("could not record terminal identity", "session", sess.ID, "err", err)
 		}
 	}
+	// A resumed conversation can later compact/fork to a newer native CID, so
+	// checkpoint every owned launch, including exact resumes. The capture is
+	// target-side process/FD evidence and never scans history.
+	m.startNativeCheckpoint(sess.ID, agent, workdir, nativeHome(spec, agent), tmuxName)
 	fresh, err := m.DB.Session(sess.ID)
 	if err != nil {
 		return sess, nil
@@ -747,14 +769,19 @@ func (m *Manager) Kill(ctx context.Context, id int64) error {
 	if m.setupActive(id) {
 		return fmt.Errorf("workspace setup is still running; inspect its progress before stopping the session")
 	}
+	// Take the lifecycle lock before resolving or probing the process. Recovery
+	// uses the same lock through its replacement launch; otherwise it can claim a
+	// row while stopProcess is still looking at the old terminal.
+	m.lifecycleMu.Lock()
 	sess, ex, err := m.resolve(id)
 	if err != nil {
+		m.lifecycleMu.Unlock()
 		return err
 	}
 	if err := m.stopProcess(ctx, ex, sess); err != nil {
+		m.lifecycleMu.Unlock()
 		return err
 	}
-	m.lifecycleMu.Lock()
 	current, err := m.DB.Session(id)
 	if err == nil && (current.TargetID != sess.TargetID || current.TmuxSession != sess.TmuxSession) {
 		err = fmt.Errorf("session changed during stop; refresh before retrying")
@@ -786,6 +813,8 @@ func (m *Manager) Release(ctx context.Context, id int64) error {
 	if m.setupActive(id) {
 		return fmt.Errorf("workspace setup is still running; inspect its progress before stopping the session")
 	}
+	m.lifecycleMu.Lock()
+	defer m.lifecycleMu.Unlock()
 	sess, err := m.DB.Session(id)
 	if err != nil {
 		return err
@@ -805,8 +834,6 @@ func (m *Manager) Release(ctx context.Context, id int64) error {
 		}
 	}
 	err = func() error {
-		m.lifecycleMu.Lock()
-		defer m.lifecycleMu.Unlock()
 		current, err := m.DB.Session(id)
 		if err != nil {
 			return err
@@ -838,6 +865,8 @@ func (m *Manager) Release(ctx context.Context, id int64) error {
 
 // Dismiss drops a dead session from the live list without touching any process.
 func (m *Manager) Dismiss(id int64) error {
+	m.lifecycleMu.Lock()
+	defer m.lifecycleMu.Unlock()
 	sess, err := m.DB.Session(id)
 	if err != nil {
 		return err

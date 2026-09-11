@@ -11,6 +11,11 @@ import (
 // ResumeConversation starts an exact native conversation after its old terminal
 // has stopped. History validation belongs to the API's target-side reader.
 func (m *Manager) ResumeConversation(ctx context.Context, sourceID int64, cid, name string) (*store.Session, error) {
+	// Keep the absence check and successor launch in one lifecycle critical
+	// section. Recovery and stop use the same gate; otherwise a concurrent
+	// recovery can create the same native CID after this poll but before launch.
+	m.lifecycleMu.Lock()
+	defer m.lifecycleMu.Unlock()
 	source, ex, err := m.resolve(sourceID)
 	if err != nil {
 		return nil, err
@@ -47,12 +52,19 @@ func (m *Manager) ResumeConversation(ctx context.Context, sourceID int64, cid, n
 		return nil, err
 	}
 	names := []string{source.TmuxSession}
+	seenNames := map[string]bool{source.TmuxSession: true}
 	for _, row := range rows {
-		if row.TargetID == source.TargetID && row.Agent == source.Agent && row.ResumeID == cid {
+		if row.ID == source.ID {
+			continue
+		}
+		if row.TargetID == source.TargetID && row.Agent == source.Agent && (row.ResumeID == cid || row.NativeRecoveryCID == cid) {
 			if row.TmuxSession == "" {
 				return nil, fmt.Errorf("session %d has an unfinished launch; inspect it before retrying", row.ID)
 			}
-			names = append(names, row.TmuxSession)
+			if !seenNames[row.TmuxSession] {
+				names = append(names, row.TmuxSession)
+				seenNames[row.TmuxSession] = true
+			}
 		}
 	}
 	result, err := ex.Run(ctx, PollCommand(names), executor.RunOpts{Timeout: 10})
@@ -78,5 +90,5 @@ func (m *Manager) ResumeConversation(ctx context.Context, sourceID int64, cid, n
 	if name == "" {
 		name = source.Name + " · resumed"
 	}
-	return m.Launch(ctx, LaunchOpts{Configuration: config, TargetID: source.TargetID, ProjectID: source.ProjectID, GroupPath: source.GroupPath, Name: name, Agent: source.Agent, Model: source.Model, Workdir: source.Workdir, ResumeID: cid})
+	return m.launch(ctx, LaunchOpts{Configuration: config, TargetID: source.TargetID, ProjectID: source.ProjectID, GroupPath: source.GroupPath, Name: name, Agent: source.Agent, Model: source.Model, Workdir: source.Workdir, ResumeID: cid})
 }

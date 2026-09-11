@@ -14,16 +14,60 @@ import (
 // sessions are on it. Status is derived from what the pane is actually doing —
 // see DeriveStatus — and `last_activity_at` is only moved when the pane really
 // changed, because "quiet for 40 minutes" is the number an operator acts on.
-func (m *Manager) Poll(ctx context.Context) { m.RecoverWorkspaceOperations(ctx); m.poll(ctx, nil) }
+func (m *Manager) Poll(ctx context.Context) {
+	m.pollMu.Lock()
+	defer m.pollMu.Unlock()
+	m.RecoverWorkspaceOperations(ctx)
+	m.poll(ctx, nil)
+}
+
+// PrepareStartup performs the fast, local part of restart reconciliation before
+// the HTTP server is exposed. It only reads SQLite and starts checkpoint
+// workers; target probes and recovery launches remain in the scheduler's
+// asynchronous poll so a slow SSH target cannot hide the API after boot.
+func (m *Manager) PrepareStartup() error {
+	m.pollMu.Lock()
+	defer m.pollMu.Unlock()
+	live, err := m.DB.LiveSessions()
+	if err != nil {
+		return err
+	}
+	m.startCheckpointsForLiveRows(live)
+	return nil
+}
+
+// Startup performs one bounded reconciliation for callers that explicitly
+// need synchronous startup behavior. The hosted app uses PrepareStartup and
+// lets the scheduler perform the remote poll asynchronously.
+func (m *Manager) Startup(ctx context.Context) error {
+	m.pollMu.Lock()
+	defer m.pollMu.Unlock()
+	m.RecoverWorkspaceOperations(ctx)
+	live, err := m.DB.LiveSessions()
+	if err != nil {
+		return err
+	}
+	m.startCheckpointsForLiveRows(live)
+	m.poll(ctx, nil)
+	return nil
+}
 
 // Action refreshes visit only the affected target, not every machine in the fleet.
-func (m *Manager) pollTarget(ctx context.Context, targetID int64) { m.poll(ctx, &targetID) }
+func (m *Manager) pollTarget(ctx context.Context, targetID int64) {
+	m.pollMu.Lock()
+	defer m.pollMu.Unlock()
+	m.poll(ctx, &targetID)
+}
 
 func (m *Manager) poll(ctx context.Context, onlyTarget *int64) {
 	live, err := m.DB.LiveSessions()
 	if err != nil || len(live) == 0 {
 		return
 	}
+	// The manager may have been constructed after the agents were launched (for
+	// example, the service restarted). Ensure those rows receive the same native
+	// identity checkpoint as a fresh launch.
+	m.startCheckpointsForLiveRows(live)
 	byTarget := map[int64][]*store.Session{}
 	for _, s := range live {
 		if onlyTarget != nil && s.TargetID != *onlyTarget {
@@ -33,6 +77,9 @@ func (m *Manager) poll(ctx context.Context, onlyTarget *int64) {
 			if !m.setupActive(s.ID) {
 				m.recoverSetup(ctx, s)
 			}
+			continue
+		}
+		if s.Status == StatusInterrupted {
 			continue
 		}
 		byTarget[s.TargetID] = append(byTarget[s.TargetID], s)
@@ -45,6 +92,26 @@ func (m *Manager) poll(ctx context.Context, onlyTarget *int64) {
 		ex, err := m.Reg.For(target)
 		if err != nil {
 			continue
+		}
+		boot, known := ProbeBootID(ctx, ex)
+		if known {
+			m.recoverAfterBoot(ctx, target, ex, group, boot)
+			// Recovery may have ended a row or replaced its tmux process. Do not
+			// apply the pre-recovery snapshot to stale pointers: that can mark a
+			// freshly relaunched session dead immediately.
+			fresh, ferr := m.DB.LiveSessions()
+			if ferr != nil {
+				continue
+			}
+			group = group[:0]
+			for _, candidate := range fresh {
+				if candidate.TargetID == targetID && candidate.SetupState != "creating" && candidate.Status != StatusInterrupted {
+					group = append(group, candidate)
+				}
+			}
+			if len(group) == 0 {
+				continue
+			}
 		}
 		names := make([]string, 0, len(group))
 		for _, s := range group {
@@ -66,6 +133,24 @@ func (m *Manager) poll(ctx context.Context, onlyTarget *int64) {
 			pane := panes[s.TmuxSession]
 			if pane.Failed {
 				continue
+			}
+			// A successful missing-pane result cannot distinguish a reboot from
+			// a dead process while the target's boot identity is unavailable.
+			// Keep an AgentDeck-owned row recoverable until a known boot probe
+			// establishes that decision.
+			if !known && pane.Missing && s.Origin == "agentdeck" && s.BootID != "" {
+				continue
+			}
+			// Older AgentDeck rows may predate boot checkpoints. Bind one only
+			// after a known boot and a live, identity-bound pane are observed;
+			// a missing pane must remain unresolved until a later probe.
+			if known && s.BootID == "" && !pane.Missing && s.Origin == "agentdeck" && validTrackingIdentity(s.TrackingIdentity) {
+				identity, identityErr := ProbeTrackingIdentity(ctx, ex, s.TmuxSession)
+				if identityErr == nil && identity == s.TrackingIdentity {
+					if err := m.DB.Update("sessions", s.ID, map[string]any{"boot_id": boot, "updated_at": store.Now()}); err == nil {
+						s.BootID = boot
+					}
+				}
 			}
 			m.applyPane(s, pane.Text, pane.Missing)
 		}
