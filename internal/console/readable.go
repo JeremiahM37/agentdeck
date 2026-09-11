@@ -74,7 +74,11 @@ func writeReadable(b *strings.Builder, v any, depth int, key string) {
 		}
 	case []any:
 		if len(x) == 0 {
-			writeScalar(b, indent, humanLabel(key)+": ", "(none)")
+			prefix := ""
+			if key != "" {
+				prefix = humanLabel(key) + ": "
+			}
+			writeScalar(b, indent, prefix, "(none)")
 			return
 		}
 		if key != "" {
@@ -95,7 +99,11 @@ func writeReadable(b *strings.Builder, v any, depth int, key string) {
 			writeScalar(b, itemIndent, "• ", item)
 		}
 	default:
-		writeScalar(b, indent, humanLabel(key)+": ", x)
+		prefix := ""
+		if key != "" {
+			prefix = humanLabel(key) + ": "
+		}
+		writeScalar(b, indent, prefix, x)
 	}
 }
 
@@ -116,7 +124,7 @@ func writeScalar(b *strings.Builder, indent, prefix string, v any) {
 }
 
 func humanLabel(s string) string {
-	parts := strings.FieldsFunc(clean(s), func(r rune) bool { return r == '_' || r == '-' })
+	parts := strings.FieldsFunc(oneLine(clean(s)), func(r rune) bool { return r == '_' || r == '-' })
 	for i := range parts {
 		runes := []rune(parts[i])
 		if len(runes) > 0 {

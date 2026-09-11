@@ -94,6 +94,27 @@ def test_dashboard_search_rename_live_refresh_and_resize(real_terminal):
     finally:d.close()
 
 
+def test_dashboard_details_are_readable_at_wide_and_narrow_widths_and_api_stays_json(real_terminal):
+    t = real_terminal
+    project = t['api']('/projects', {'name': 'Readable fixture project', 'target_id': t['target_id'],
+                                     'repo_path': str(t['root'])})
+    d = Dashboard(t)
+    try:
+        d.wait('Real terminal'); d.send('4'); d.wait('Readable fixture project')
+        for cols in (144, 80):
+            d.resize(cols, 30); d.send('/Readable fixture project\r'); d.wait('Readable fixture project')
+            assert 'Repo Path' in d.text and 'repo_path' not in d.text
+            assert '{' not in d.text and '"' not in d.text
+            d.send('\x1b')
+        raw = subprocess.run([_binary(), 'api', 'GET', f"/projects/{project['id']}"],
+                             env={**t['env'], 'AGENTDECK_API': t['url'], 'TERM': 'dumb'},
+                             text=True, capture_output=True, check=True)
+        decoded = json.loads(raw.stdout)
+        assert decoded['name'] == 'Readable fixture project' and 'repo_path' in decoded
+        d.quit()
+    finally: d.close()
+
+
 @pytest.mark.parametrize("outer_tmux",[False,True])
 def test_dashboard_native_attach_detach_returns_to_selection(real_terminal,outer_tmux):
     t=real_terminal;d=Dashboard(t,['console'],outer_tmux=outer_tmux)
