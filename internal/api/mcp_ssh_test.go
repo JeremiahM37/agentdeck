@@ -241,6 +241,7 @@ func writeLifecycleWrapper(t *testing.T, root string) string {
 set -eu
 n=$(find "$CAPTURE_DIR" -maxdepth 1 -name '*.log' -type f | wc -l)
 out="$CAPTURE_DIR/$n.log"
+tmp="$CAPTURE_DIR/.$n.capture.$$"
 {
   printf 'CLAUDE_CONFIG_DIR=%s\n' "${CLAUDE_CONFIG_DIR-}"
   printf 'CODEX_HOME=%s\n' "${CODEX_HOME-}"
@@ -248,7 +249,11 @@ out="$CAPTURE_DIR/$n.log"
   skill_target=$(realpath .claude/skills/lifecycle 2>/dev/null || realpath .agents/skills/lifecycle 2>/dev/null || true)
   printf 'SKILL_TARGET=%s\n' "$skill_target"
   for arg in "$@"; do printf 'ARG=%s\n' "$arg"; done
-} > "$out"
+} > "$tmp"
+# Publish only after the complete capture has been written. waitCapture polls
+# for the final name, so exposing it before the final line lets the test read
+# a partial lifecycle record under load.
+mv -- "$tmp" "$out"
 exec sleep 600
 `
 	if err := os.WriteFile(path, []byte(body), 0700); err != nil {
