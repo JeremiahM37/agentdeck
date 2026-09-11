@@ -1,6 +1,7 @@
 package console
 
 import (
+	"encoding/json"
 	"fmt"
 	"reflect"
 	"sort"
@@ -70,7 +71,11 @@ func writeReadable(b *strings.Builder, v any, depth int, key string) {
 		}
 		sort.Strings(keys)
 		for _, k := range keys {
-			writeReadable(b, x[k], depth, k)
+			value, omit, displayKey := readableJSONField(x[k], k)
+			if omit {
+				continue
+			}
+			writeReadable(b, value, depth, displayKey)
 		}
 	case []any:
 		if len(x) == 0 {
@@ -105,6 +110,38 @@ func writeReadable(b *strings.Builder, v any, depth int, key string) {
 		}
 		writeScalar(b, indent, prefix, x)
 	}
+}
+
+// readableJSONField expands JSON stored in *_json fields for interactive
+// views. These fields are persisted as strings in API rows, but showing the
+// storage encoding (for example, `env_json: {}`) makes the dashboard harder
+// to scan. Empty JSON carries no information in a detail view, so omit it.
+// Other string fields remain untouched, including explicit API output.
+func readableJSONField(v any, key string) (any, bool, string) {
+	if !strings.HasSuffix(strings.ToLower(key), "_json") {
+		return v, false, key
+	}
+	s, ok := v.(string)
+	if !ok {
+		return v, false, key
+	}
+	var decoded any
+	if err := json.Unmarshal([]byte(s), &decoded); err != nil {
+		return v, false, key
+	}
+	switch x := decoded.(type) {
+	case nil:
+		return nil, true, key
+	case map[string]any:
+		if len(x) == 0 {
+			return nil, true, key
+		}
+	case []any:
+		if len(x) == 0 {
+			return nil, true, key
+		}
+	}
+	return decoded, false, key[:len(key)-len("_json")]
 }
 
 func writeScalar(b *strings.Builder, indent, prefix string, v any) {

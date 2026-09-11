@@ -102,14 +102,16 @@ def test_dashboard_details_are_readable_at_wide_and_narrow_widths_and_api_stays_
     try:
         d.wait('Real terminal'); d.send('4'); d.wait('Readable fixture project')
         for cols in (144, 80):
-            d.resize(cols, 30); d.send('/Readable fixture project\r'); d.wait('Readable fixture project')
+            d.resize(cols, 30); d.send('/Readable fixture project\r'); d.send('\t'); d.wait('Repo Path')
             assert 'Repo Path' in d.text and 'repo_path' not in d.text
+            assert 'Env Json' not in d.text
             assert '{' not in d.text and '"' not in d.text
             d.send('\x1b')
-        raw = subprocess.run([_binary(), 'api', 'GET', f"/projects/{project['id']}"],
+        raw = subprocess.run([_binary(), 'api', 'GET', '/projects'],
                              env={**t['env'], 'AGENTDECK_API': t['url'], 'TERM': 'dumb'},
                              text=True, capture_output=True, check=True)
         decoded = json.loads(raw.stdout)
+        decoded = next(row for row in decoded if row['id'] == project['id'])
         assert decoded['name'] == 'Readable fixture project' and 'repo_path' in decoded
         d.quit()
     finally: d.close()

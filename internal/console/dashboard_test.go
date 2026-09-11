@@ -40,6 +40,21 @@ func TestReadableInteractiveDetailsUseLabelsAndRetainUnknownFields(t *testing.T)
 	}
 }
 
+func TestReadableJSONFieldsHideEmptyAndExpandNonemptyValues(t *testing.T) {
+	got := readable(map[string]any{
+		"env_json":      `{}`,
+		"settings_json": `{"region":"west","retries":2}`,
+	})
+	if strings.Contains(got, "Env Json") || strings.ContainsAny(got, "{}\"") {
+		t.Fatalf("JSON storage encoding leaked into interactive details: %q", got)
+	}
+	for _, want := range []string{"Settings", "Region: west", "Retries: 2"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("readable JSON field missing %q:\n%s", want, got)
+		}
+	}
+}
+
 func TestFormatDetailKeepsGenericAPIFieldsReadable(t *testing.T) {
 	got := formatDetail("API result", []byte(`{"status":"ready","limits":{"max":3},"provider_flag":true}`))
 	if strings.ContainsAny(got, "{}\"") {
