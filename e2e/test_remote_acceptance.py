@@ -87,7 +87,7 @@ def test_remote_pty_accepts_input_after_browser_resize(page, remote_terminal):
     t = remote_terminal
     _open_remote_terminal(page, {"url": t["url"], "id": t["id"]})
 
-    page.keyboard.type("printf 'REMOTE-BEFORE-RESIZE\\n'")
+    page.keyboard.type("printf 'REMOTE-%s-RESIZE\\n' BEFORE")
     page.keyboard.press("Enter")
     expect(page.locator("#agent-terminal .xterm-screen")).to_contain_text(
         "REMOTE-BEFORE-RESIZE", timeout=10000)
@@ -96,7 +96,7 @@ def test_remote_pty_accepts_input_after_browser_resize(page, remote_terminal):
     # window-change request through the browser terminal client.
     page.set_viewport_size({"width": 390, "height": 700})
     page.wait_for_timeout(500)
-    page.keyboard.type("printf 'REMOTE-AFTER-RESIZE\\n'")
+    page.keyboard.type("printf 'REMOTE-%s-RESIZE\\n' AFTER")
     page.keyboard.press("Enter")
     expect(page.locator("#agent-terminal .xterm-screen")).to_contain_text(
         "REMOTE-AFTER-RESIZE", timeout=10000)
