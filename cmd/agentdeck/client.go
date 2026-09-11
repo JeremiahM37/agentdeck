@@ -50,12 +50,12 @@ Examples:
   agentdeck agent list
   agentdeck agent save @agents.json
 
-AGENTDECK_API sets the server URL (default http://127.0.0.1:9110).
+AGENTDECK_API selects an explicit hosted server URL.
 AGENTDECK_AUTH_TOKEN supplies bearer authentication.
 AGENTDECK_ATTACH_HOST sets an SSH alias for native attachment to a remote server.
 All web operations use this same API. See docs/terminal-client.md for the catalog.
 With no AGENTDECK_API, client commands use the private local runtime automatically.
-agentdeck local wraps the existing AgentDeck commands; it does not launch local claude.
+agentdeck local [COMMAND ...] forces those existing AgentDeck commands to use this machine.
 `
 
 func clientCommand(cfg *config.Config, command string, args []string) error {
