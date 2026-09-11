@@ -201,7 +201,8 @@ func genericTaskCommand(s LaunchSpec, prefix string, d TaskDefinition) (string, 
 		return "", fmt.Errorf("agent %q has unsupported task output mode %q", d.Name, mode)
 	}
 	if s.PermissionMode == "plan" || s.PermissionMode == "bypassPermissions" {
-		if _, ok := d.PermissionArgs[s.PermissionMode]; !ok {
+		args, ok := d.PermissionArgs[s.PermissionMode]
+		if !ok || !permissionArgsConfigured(args) {
 			return "", fmt.Errorf("agent %q does not support permission mode %q; configure permission_args or use acceptEdits",
 				d.Name, s.PermissionMode)
 		}
@@ -247,6 +248,18 @@ func genericTaskCommand(s LaunchSpec, prefix string, d TaskDefinition) (string, 
 			shellQuote(s.Worktree), invocation, quotedRT, quotedRT, quotedRT)
 	}
 	return "tmux new-session -d -s " + shellQuote(s.TmuxSession) + " " + shellQuote(inner), nil
+}
+
+func permissionArgsConfigured(args []string) bool {
+	if len(args) == 0 {
+		return false
+	}
+	for _, arg := range args {
+		if strings.TrimSpace(arg) == "" {
+			return false
+		}
+	}
+	return true
 }
 
 // renderPromptTemplate treats the template as a list of argument tokens. This

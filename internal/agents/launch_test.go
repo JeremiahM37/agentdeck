@@ -240,10 +240,12 @@ func TestGenericPromptTemplateQuotesLiteralTokens(t *testing.T) {
 }
 
 func TestGenericTaskRejectsUnsupportedPermissionMode(t *testing.T) {
-	_, err := launcher().Command(LaunchSpec{Agent: "custom", Worktree: "/wt", TmuxSession: "s",
-		PermissionMode: "plan", Definition: &TaskDefinition{Name: "custom", Command: "custom",
-			PromptTemplate: "{prompt}"}})
-	if err == nil || !strings.Contains(err.Error(), "permission mode") {
-		t.Fatalf("expected an actionable permission capability error, got %v", err)
+	for _, args := range []([]string){nil, {}, {""}, {"  "}} {
+		_, err := launcher().Command(LaunchSpec{Agent: "custom", Worktree: "/wt", TmuxSession: "s",
+			PermissionMode: "plan", Definition: &TaskDefinition{Name: "custom", Command: "custom",
+				PromptTemplate: "{prompt}", PermissionArgs: map[string][]string{"plan": args}}})
+		if err == nil || !strings.Contains(err.Error(), "permission mode") {
+			t.Fatalf("expected an actionable permission capability error for %#v, got %v", args, err)
+		}
 	}
 }

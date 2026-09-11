@@ -166,6 +166,11 @@ func ValidateSpecs(raw string) error {
 					return fmt.Errorf("agent %q: permission_args has unsupported mode %q", name, mode)
 				}
 			}
+			for _, mode := range []string{"plan", "bypassPermissions"} {
+				if args, ok := c.Task.PermissionArgs[mode]; ok && !TaskPermissionArgsConfigured(args) {
+					return fmt.Errorf("agent %q: permission_args.%s must contain a non-empty flag", name, mode)
+				}
+			}
 		}
 		for k := range c.Env {
 			if !validEnvName(k) {
@@ -174,6 +179,20 @@ func ValidateSpecs(raw string) error {
 		}
 	}
 	return nil
+}
+
+// TaskPermissionArgsConfigured distinguishes a real capability mapping from
+// an empty JSON array that would silently claim a mode while emitting no flag.
+func TaskPermissionArgsConfigured(args []string) bool {
+	if len(args) == 0 {
+		return false
+	}
+	for _, arg := range args {
+		if strings.TrimSpace(arg) == "" {
+			return false
+		}
+	}
+	return true
 }
 
 func validTaskPromptTemplate(template string) error {

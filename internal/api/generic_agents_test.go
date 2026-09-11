@@ -100,8 +100,10 @@ func TestAgentProviderSecretsUseTypedRetentionMarkers(t *testing.T) {
 	if cmd := h.launchCmd(); !strings.Contains(cmd, "OPENAI_API_KEY=test-only-secret") {
 		t.Fatalf("retained provider key did not reach the session launcher: %s", cmd)
 	}
-	if code := h.status("PUT", "/api/agents", []obj{{"name": "bad", "command": "runner", "env": obj{"OPENAI_API_KEY": "[secret retained]"}}}); code != 400 {
-		t.Fatalf("placeholder string should be rejected rather than stored as a key: %d", code)
+	for _, placeholder := range []string{"[secret retained]", "__KEEP__", "••••"} {
+		if code := h.status("PUT", "/api/agents", []obj{{"name": "bad", "command": "runner", "env": obj{"OPENAI_API_KEY": placeholder}}}); code != 400 {
+			t.Fatalf("placeholder %q should be rejected rather than stored as a key: %d", placeholder, code)
+		}
 	}
 }
 

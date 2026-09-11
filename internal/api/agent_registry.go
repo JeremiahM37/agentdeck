@@ -130,7 +130,7 @@ func (s *Server) agentConfigWithRetainedSecrets(body string) (string, error) {
 
 func isAgentSecretPlaceholder(value string) bool {
 	switch strings.ToLower(strings.TrimSpace(value)) {
-	case "[secret retained]", "[redacted]", "<redacted>", "***", "••••••":
+	case "__keep__", "[secret retained]", "[redacted]", "<redacted>", "***", "••••", "••••••":
 		return true
 	default:
 		return false
@@ -170,7 +170,8 @@ func taskPermissionError(spec sessions.Spec, mode string) error {
 			if spec.Task == nil {
 				return fmt.Errorf("agent %q has no non-interactive task definition", spec.Name)
 			}
-			if _, ok := spec.Task.PermissionArgs[mode]; !ok {
+			args, ok := spec.Task.PermissionArgs[mode]
+			if !ok || !sessions.TaskPermissionArgsConfigured(args) {
 				return fmt.Errorf("agent %q does not support permission mode %q; configure task.permission_args or use acceptEdits", spec.Name, mode)
 			}
 		}
