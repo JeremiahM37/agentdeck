@@ -1,0 +1,97 @@
+#root {
+  min-height: 100dvh;
+}
+#toasts {
+  pointer-events: none;
+}
+.token-dialog {
+  max-width: 30rem;
+  width: calc(100% - 2rem);
+  background: var(--surface, #111827);
+  color: var(--ink, #eee);
+  border: 1px solid var(--line, #374151);
+  border-radius: 14px;
+  padding: 24px;
+}
+.token-dialog form {
+  display: grid;
+  gap: 12px;
+}
+.token-dialog input {
+  min-width: 0;
+  padding: 12px;
+  background: var(--bg, #080b14);
+  color: inherit;
+}
+.pane-head {
+  width: 100%;
+  text-align: left;
+  color: inherit;
+  background: transparent;
+  border: 0;
+}
+.brand-mark {
+  font-size: 24px;
+}
+/* New React controls retain the shared visual language and fit a real mobile viewport. */
+#view {
+  min-width: 0;
+}
+#view button:not([class]),
+#view .filters button {
+  background: var(--panel-2);
+  color: var(--ink);
+  border: 1px solid var(--line-2);
+  border-radius: var(--r);
+  padding: 8px 12px;
+  min-height: 40px;
+  cursor: pointer;
+}
+#view input:not([type="checkbox"]):not([type="radio"]):not([class]),
+#view select:not([class]),
+#view textarea:not([class]) {
+  background: var(--panel);
+  color: var(--ink);
+  border: 1px solid var(--line-2);
+  border-radius: var(--r);
+  padding: 10px;
+  min-width: 0;
+  max-width: 100%;
+}
+#view .scard .btnrow {
+  flex-wrap: wrap;
+}
+#view .scard,
+#view .filters,
+#view .page-heading {
+  min-width: 0;
+}
+#view .scard > header {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: baseline;
+}
+#view .scard pre {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-height: 12rem;
+  overflow: auto;
+}
+#view .filters {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 0 16px 12px;
+}
+#view .page-heading > div {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+@media (max-width: 1023px) {
+  #view button:not([class]) {
+    min-height: 44px;
+  }
+}

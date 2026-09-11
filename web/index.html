@@ -1,113 +1,27 @@
 <!doctype html>
 <html lang="en" class="dark">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
-<title>agentdeck</title>
-<meta name="theme-color" content="#080b14">
-<meta name="description" content="Mission control for AI coding agents on your own infrastructure.">
-<link rel="manifest" href="/manifest.webmanifest">
-<link rel="icon" href="/icon.svg" type="image/svg+xml">
-<link rel="apple-touch-icon" href="/icon.svg">
-<link rel="stylesheet" href="/fonts.css">
-<link rel="stylesheet" href="/style.css">
-<link rel="stylesheet" href="/conversation.css">
-<link rel="stylesheet" href="/workspace.css">
-<link rel="stylesheet" href="/review.css">
-<link rel="stylesheet" href="/native-history.css">
-<link rel="stylesheet" href="/native-search.css">
-<link rel="stylesheet" href="/launch-profiles.css">
-<link rel="stylesheet" href="/agent-settings.css">
-<link rel="stylesheet" href="/command-palette.css">
-</head>
-<body>
-<div id="aurora" aria-hidden="true"></div>
-
-<header id="topbar">
-  <div class="brand">
-    <span class="brand-mark" aria-hidden="true">
-      <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor"
-           stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
-        <rect x="3" y="4" width="18" height="6" rx="2"/>
-        <rect x="3" y="14" width="10" height="6" rx="2"/>
-        <path d="M17 14v6M20 17h-6"/>
-      </svg>
-    </span>
-    <h1>agent<b>deck</b></h1>
-    <span class="brand-sub">mission control</span>
-  </div>
-  <button id="command-open" aria-label="Search sessions and actions" aria-haspopup="dialog" title="Search (Ctrl+K or ⌘K)"><svg aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="10" cy="10" r="6"/><path d="m15 15 5 5"/></svg><span class="command-label">Search anything…</span><kbd>Ctrl K</kbd></button>
-  <div class="top-status">
-    <span id="conn-led" class="led led-off" title="live connection"></span>
-    <span id="conn-label">OFFLINE</span>
-  </div>
-</header>
-
-<main id="view"></main>
-<section id="terminal-workspace" aria-label="Terminals" hidden></section>
-
-<button id="fab" title="new task" aria-label="New task">
-  <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor"
-       stroke-width="2.2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg><span>New task</span>
-</button>
-
-<nav id="tabbar">
-  <button data-tab="board" class="tab on">
-    <span class="tab-ic" aria-hidden="true">
-      <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor"
-           stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
-        <rect x="3" y="4" width="5" height="16" rx="1.5"/>
-        <rect x="10" y="4" width="5" height="10" rx="1.5"/>
-        <rect x="17" y="4" width="4" height="14" rx="1.5"/></svg>
-    </span>Board</button>
-  <button data-tab="sessions" class="tab">
-    <span class="tab-ic" aria-hidden="true">
-      <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor"
-           stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
-        <rect x="3" y="4" width="18" height="16" rx="2"/>
-        <path d="M7 9l3 3-3 3M13 15h4"/></svg>
-    </span>Sessions<b id="sess-badge" class="badge dim" hidden></b></button>
-  <button data-tab="terminals" class="tab">
-    <span class="tab-ic" aria-hidden="true">
-      <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
-        <rect x="3" y="4" width="18" height="16" rx="2"/><path d="M7 9l3 3-3 3M13 15h4"/>
-      </svg>
-    </span>Terminals<b id="terminal-badge" class="badge dim" hidden></b></button>
-  <button data-tab="deck" class="tab desktop-only">
-    <span class="tab-ic" aria-hidden="true">
-      <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor"
-           stroke-width="1.9" stroke-linejoin="round">
-        <rect x="3" y="4" width="8" height="7" rx="1.5"/><rect x="13" y="4" width="8" height="7" rx="1.5"/>
-        <rect x="3" y="13" width="8" height="7" rx="1.5"/><rect x="13" y="13" width="8" height="7" rx="1.5"/></svg>
-    </span>Deck</button>
-  <button data-tab="approvals" class="tab">
-    <span class="tab-ic" aria-hidden="true">
-      <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor"
-           stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
-        <path d="M12 3l7 3v6c0 4.2-2.9 7.6-7 9-4.1-1.4-7-4.8-7-9V6z"/>
-        <path d="M9 12l2 2 4-4"/></svg>
-    </span>Approvals<b id="appr-badge" class="badge" hidden></b></button>
-  <button data-tab="targets" class="tab">
-    <span class="tab-ic" aria-hidden="true">
-      <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor"
-           stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
-        <rect x="3" y="4" width="18" height="6" rx="2"/><rect x="3" y="14" width="18" height="6" rx="2"/>
-        <path d="M7 7h.01M7 17h.01"/></svg>
-    </span>Settings</button>
-  <details id="nav-overflow" class="action-menu">
-    <summary aria-label="More pages"><span aria-hidden="true">···</span>More<b id="more-badge" class="badge" hidden></b></summary>
-    <div class="action-menu-panel">
-      <button data-nav-target="deck">Deck · live overview</button>
-      <button data-nav-target="approvals">Approvals</button>
-      <button data-nav-target="targets">Settings</button>
-    </div>
-  </details>
-</nav>
-
-<div id="sheet-backdrop" hidden></div>
-<section id="sheet" hidden></section>
-<div id="toasts"></div>
-
-<script type="module" src="/app.js"></script>
-</body>
+  <head>
+    <meta charset="utf-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content"
+    />
+    <meta name="theme-color" content="#080b14" />
+    <meta
+      name="description"
+      content="Mission control for AI coding agents on your own infrastructure."
+    />
+    <title>agentdeck</title>
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <link rel="icon" href="/icon.svg" type="image/svg+xml" />
+    <link rel="apple-touch-icon" href="/icon.svg" />
+    <link rel="stylesheet" href="/fonts.css" />
+    <script type="module" crossorigin src="/react/assets/app-CBdsxmmN.js"></script>
+    <link rel="modulepreload" crossorigin href="/react/assets/Review-yknlI8gi.js">
+    <link rel="stylesheet" crossorigin href="/react/assets/Review-DR5PCwew.css">
+    <link rel="stylesheet" crossorigin href="/react/assets/app-Cb4BDn83.css">
+  </head>
+  <body>
+    <div id="root"></div>
+  </body>
 </html>

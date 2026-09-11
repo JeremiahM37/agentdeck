@@ -607,7 +607,7 @@ def test_blank_room_session_can_be_promoted_to_a_project(page, server):
     page.select_option("#ns-project", "")
     expect(page.locator("#ns-proj-hint")).to_contain_text("throwaway directory")
     # nothing is known about a room that does not exist yet
-    assert page.locator("#ns-start option[value='brief']").is_disabled()
+    expect(page.locator("#ns-start option[value='brief']")).to_be_disabled()
 
     page.fill("#ns-name", "half an idea")
     page.click("#ns-go")

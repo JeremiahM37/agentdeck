@@ -15,18 +15,18 @@ def search(page, text):
 
 
 def test_command_ranking_handles_multiple_terms_unicode_and_title_priority():
-    source=Path('web/static/command-palette.js').read_text()
     script="""
-const {rankCommands}=await import('data:text/javascript;base64,'+Buffer.from(SOURCE).toString('base64'));
-const items=[{id:'a',title:'Open terminals',category:'Navigate'}, {id:'b',title:'Backend repair',category:'Sessions',detail:'Work/Client codex'}, {id:'c',title:'Work',category:'Tasks'}, {id:'d',title:'研究 API',category:'Sessions'}];
-const assert=(ok)=>{if(!ok)throw Error('ranking mismatch')};
-assert(rankCommands(items,'work')[0].id==='c');
-assert(rankCommands(items,'client CODEX')[0].id==='b');
-assert(rankCommands(items,'研究')[0].id==='d');
+import {rankCommands} from './src/shell/Palette.tsx';
+const noop=()=>{};
+const items=[{id:'a',title:'Open terminals',category:'Navigate',run:noop}, {id:'b',title:'Backend repair',category:'Sessions',detail:'Work/Client codex',run:noop}, {id:'c',title:'Work',category:'Tasks',run:noop}, {id:'d',title:'研究 API',category:'Sessions',run:noop}];
+const assert=(ok:boolean)=>{if(!ok)throw Error('ranking mismatch')};
+assert(rankCommands(items,'work')[0]?.id==='c');
+assert(rankCommands(items,'client CODEX')[0]?.id==='b');
+assert(rankCommands(items,'研究')[0]?.id==='d');
 assert(rankCommands(items,'missing').length===0);
 assert(rankCommands(items,'').length===4);
-""".replace('SOURCE',json.dumps(source))
-    subprocess.run(['node','--input-type=module','-e',script],check=True)
+"""
+    subprocess.run(['node','--import','tsx','--input-type=module','-e',script.replace('(ok:boolean)','(ok)')],cwd=Path('frontend'),check=True)
 
 
 @pytest.mark.parametrize('width',[390,1440])
@@ -48,7 +48,7 @@ def test_command_search_attaches_and_keeps_terminal_alive(page,real_terminal,wid
     expect(page.locator('#terminal-workspace iframe')).to_have_count(1)
     assert one.locator('body').evaluate('()=>window.paletteTerminalIdentity')=='same-terminal'
     search(page,'notifications').get_by_role('option').click()
-    expect(page.locator('[data-settings="notifications"]')).to_have_attribute('aria-selected','true')
+    expect(page.get_by_role('tab',name='Notifications',exact=True)).to_have_attribute('aria-selected','true')
     assert not errors
 
 
@@ -57,14 +57,14 @@ def test_command_search_keyboard_drafts_empty_results_and_refresh_error(page,rea
     page.keyboard.press('Control+k')
     box=page.get_by_role('combobox',name='Search sessions, tasks, and actions');expect(box).to_be_focused()
     box.fill('new');page.keyboard.press('ArrowDown');page.keyboard.press('Enter')
-    expect(page.locator('#sheet')).to_be_visible()
+    expect(page.get_by_role('dialog',name='New task',exact=True)).to_be_visible()
     # Opening search over a form and escaping must preserve the form/draft.
-    field=page.locator('#sheet input').first;field.fill('Keep this draft');field.focus()
+    field=page.get_by_role('dialog',name='New task',exact=True).locator('input').first;field.fill('Keep this draft');field.focus()
     page.keyboard.press('Control+k');expect(box).to_be_focused()
     box.fill('nothing-matches-92836');expect(page.locator('#command-results').get_by_role('option')).to_have_count(0)
     page.keyboard.press('Enter');expect(page.get_by_role('dialog',name='Search AgentDeck')).to_be_visible()
     page.keyboard.press('Escape');expect(field).to_have_value('Keep this draft');expect(field).to_be_focused()
-    expect(page.locator('#sheet')).to_be_visible()
+    expect(page.get_by_role('dialog',name='New task',exact=True)).to_be_visible()
     page.keyboard.press('Escape')
     # Exercise actual offline fetches, including when the service worker has
     # already taken control; page.route cannot reliably intercept that path.
@@ -84,5 +84,5 @@ def test_command_search_touch_navigation_and_small_viewport(page,real_terminal):
         dialog=phone.get_by_role('dialog',name='Search AgentDeck')
         dialog.get_by_role('combobox').fill('notifications')
         dialog.get_by_role('option').tap()
-        expect(phone.locator('[data-settings="notifications"]')).to_have_attribute('aria-selected','true')
+        expect(phone.get_by_role('tab',name='Notifications',exact=True)).to_have_attribute('aria-selected','true')
         phone.screenshot(path='/tmp/agentdeck-command-touch-navigation.png')

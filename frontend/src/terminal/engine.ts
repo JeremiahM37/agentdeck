@@ -1,0 +1,417 @@
+import { errorMessage } from "./model";
+import { Terminal, type IDisposable } from "@xterm/xterm";
+import { FitAddon } from "@xterm/addon-fit";
+import { SearchAddon } from "@xterm/addon-search";
+import { WebLinksAddon } from "@xterm/addon-web-links";
+import { installTerminalScroll } from "./scroll";
+import {
+  copyClipboard,
+  json,
+  request,
+  themes,
+  withToken,
+  type History,
+  type Prefs,
+} from "./model";
+export interface Snapshot {
+  connected: boolean;
+  paused: boolean;
+  status: string;
+  frozen: string;
+  retained: boolean;
+}
+export interface EngineOptions {
+  url: string;
+  host: HTMLElement;
+  pane: HTMLElement;
+  frozen: HTMLPreElement;
+  prefs: () => Prefs;
+  select: () => void;
+  change: (state: Snapshot) => void;
+  notice: (text: string) => void;
+  history: () => void;
+  matches: (index: number, count: number) => void;
+}
+export class Engine {
+  readonly term: Terminal;
+  readonly fit = new FitAddon();
+  readonly search = new SearchAddon();
+  connected = false;
+  paused = false;
+  stopped = false;
+  readingRetainedHistory = false;
+  private ws?: WebSocket;
+  private controller?: AbortController;
+  private generation = 0;
+  private historyRevision = 0;
+  private retry = 500;
+  private timer?: number;
+  private fitFrame?: number;
+  private pending = 0;
+  private flowPaused = false;
+  private resizePending = false;
+  private loadingHistory = false;
+  private lastHistoryRead = 0;
+  private retainedLines = 0;
+  private frozenText = "";
+  private status = "Connecting…";
+  private disposeScroll: () => void;
+  private observer: ResizeObserver;
+  private disposables: IDisposable[] = [];
+  constructor(readonly options: EngineOptions) {
+    const prefs = options.prefs();
+    this.term = new Terminal({
+      fontSize: prefs.fontSize,
+      lineHeight: prefs.lineHeight,
+      theme: themes[prefs.theme] || themes.slate,
+      fontFamily: "Cascadia Mono, Consolas, Liberation Mono, monospace",
+      scrollback: 100000,
+      convertEol: false,
+      allowProposedApi: true,
+      scrollOnUserInput: true,
+      disableStdin: true,
+    });
+    this.term.loadAddon(this.fit);
+    this.term.loadAddon(this.search);
+    this.term.loadAddon(
+      new WebLinksAddon((_event, url) => {
+        if (/^https?:\/\//i.test(url)) window.open(url, "_blank", "noopener");
+      }),
+    );
+    this.term.open(options.host);
+    this.fit.fit();
+    this.disposables.push(
+      this.term.onData((data) => this.input(data)),
+      this.term.onBinary((data) => this.sendBinary(data)),
+      this.term.onResize(({ cols, rows }) => {
+        this.resizePending = true;
+        this.send("1" + JSON.stringify({ columns: cols, rows }));
+        this.term.scrollToBottom();
+      }),
+      this.search.onDidChangeResults((event) =>
+        options.matches(event.resultIndex, event.resultCount),
+      ),
+    );
+    this.observer = new ResizeObserver(() => this.scheduleFit());
+    this.observer.observe(options.host);
+    this.term.attachCustomKeyEventHandler((event) => {
+      if (event.type !== "keydown") return true;
+      if (
+        (event.ctrlKey || event.metaKey) &&
+        event.shiftKey &&
+        event.code === "KeyF"
+      ) {
+        event.preventDefault();
+        options.history();
+        return false;
+      }
+      if (
+        (event.ctrlKey || event.metaKey) &&
+        event.code === "KeyC" &&
+        (event.shiftKey || this.selectedText())
+      ) {
+        event.preventDefault();
+        void copyClipboard(this.selectedText(), () => this.term.focus()).catch(
+          (error) => options.notice(errorMessage(error)),
+        );
+        return false;
+      }
+      return true;
+    });
+    this.disposeScroll = installTerminalScroll({
+      host: options.host,
+      term: this.term,
+      enabled: () => this.connected && !this.paused && !this.stopped,
+      autoscrollHost: options.pane,
+      historyViewport: () =>
+        this.readingRetainedHistory ? options.frozen : null,
+      retainedHistory: (lines) => {
+        void this.readRetainedHistory(lines);
+      },
+      liveIntent: () => {
+        ++this.historyRevision;
+      },
+    });
+    void this.connect();
+  }
+  private changed() {
+    if (!this.stopped)
+      this.options.change({
+        connected: this.connected,
+        paused: this.paused,
+        status: this.status,
+        frozen: this.frozenText,
+        retained: this.readingRetainedHistory,
+      });
+  }
+  private send(text: string) {
+    if (this.ws?.readyState === WebSocket.OPEN)
+      this.ws.send(new TextEncoder().encode(text));
+  }
+  input(text: string) {
+    if (!this.connected || this.paused) return;
+    ++this.historyRevision;
+    this.leaveRetainedHistory();
+    this.send("0" + text);
+  }
+  private sendBinary(text: string) {
+    if (!this.connected || this.paused || !this.ws) return;
+    ++this.historyRevision;
+    this.leaveRetainedHistory();
+    const bytes = new Uint8Array(text.length + 1);
+    bytes[0] = 48;
+    for (let i = 0; i < text.length; i++)
+      bytes[i + 1] = text.charCodeAt(i) & 255;
+    this.ws.send(bytes);
+  }
+  scheduleFit() {
+    if (this.fitFrame !== undefined) cancelAnimationFrame(this.fitFrame);
+    this.fitFrame = requestAnimationFrame(() => {
+      if (
+        this.stopped ||
+        this.paused ||
+        !this.options.host.getBoundingClientRect().width
+      )
+        return;
+      this.fit.fit();
+      this.options.frozen.style.top = this.options.host.offsetTop + "px";
+      this.term.refresh(0, this.term.rows - 1);
+    });
+  }
+  async connect() {
+    if (this.stopped) return;
+    ++this.historyRevision;
+    this.leaveRetainedHistory();
+    const generation = ++this.generation;
+    const current = () => !this.stopped && generation === this.generation;
+    clearTimeout(this.timer);
+    this.controller?.abort();
+    this.controller = new AbortController();
+    this.ws?.close();
+    this.ws = undefined;
+    this.connected = false;
+    this.status = "Connecting…";
+    this.term.options.disableStdin = true;
+    this.changed();
+    try {
+      await new Promise<void>((resolve) => this.term.write("", resolve));
+      if (!current()) return;
+      this.term.reset();
+      if (!this.paused) this.fit.fit();
+      const data = await json<{ token: string }>(
+        withToken(this.options.url + "/token"),
+        { signal: this.controller.signal },
+      );
+      if (!current()) return;
+      const url = new URL(this.options.url + "/ws", location.href);
+      url.protocol = location.protocol === "https:" ? "wss:" : "ws:";
+      const ws = new WebSocket(withToken(url.toString()), ["tty"]);
+      this.ws = ws;
+      ws.binaryType = "arraybuffer";
+      ws.onopen = () => {
+        if (!current()) {
+          ws.close();
+          return;
+        }
+        this.pending = 0;
+        this.flowPaused = false;
+        this.connected = true;
+        this.retry = 500;
+        this.term.options.disableStdin = this.paused;
+        this.send(
+          JSON.stringify({
+            AuthToken: data.token,
+            columns: this.term.cols,
+            rows: this.term.rows,
+          }),
+        );
+        this.status = "Connected";
+        this.changed();
+        this.scheduleFit();
+      };
+      ws.onmessage = (event) => {
+        if (!current()) return;
+        const bytes = new Uint8Array(event.data as ArrayBuffer);
+        if (bytes[0] !== 48) return;
+        const content = bytes.subarray(1);
+        this.pending += content.length;
+        if (this.pending > 1000000 && !this.flowPaused) {
+          this.flowPaused = true;
+          this.send("2");
+        }
+        this.term.write(content, () => {
+          if (!current()) return;
+          this.pending = Math.max(0, this.pending - content.length);
+          if (this.resizePending && this.pending === 0 && !this.paused) {
+            this.term.scrollToBottom();
+            this.resizePending = false;
+          }
+          if (this.pending < 100000 && this.flowPaused) {
+            this.flowPaused = false;
+            this.send("3");
+          }
+        });
+      };
+      ws.onclose = () => {
+        if (current()) this.reconnect();
+      };
+      ws.onerror = () => ws.close();
+    } catch (error) {
+      if (current())
+        this.reconnect(
+          error instanceof Error ? error.message : errorMessage(error),
+        );
+    }
+  }
+  private reconnect(message = "Reconnecting…") {
+    ++this.generation;
+    this.connected = false;
+    this.status = message;
+    this.term.options.disableStdin = true;
+    this.changed();
+    if (this.stopped) return;
+    clearTimeout(this.timer);
+    this.timer = window.setTimeout(() => {
+      void this.connect();
+    }, this.retry);
+    this.retry = Math.min(this.retry * 2, 10000);
+  }
+  paste(text: string) {
+    if (!this.connected)
+      throw new Error(
+        "Terminal disconnected. Reconnect before inserting a path.",
+      );
+    if (this.paused) this.freeze(false);
+    this.term.paste(text);
+    this.term.focus();
+  }
+  selectedText() {
+    const selection = window.getSelection();
+    return selection?.toString() &&
+      this.options.frozen.contains(selection.anchorNode)
+      ? selection.toString()
+      : this.term.getSelection();
+  }
+  async readRetainedHistory(lines: number) {
+    if (
+      this.loadingHistory ||
+      this.paused ||
+      this.readingRetainedHistory ||
+      this.stopped ||
+      Date.now() - this.lastHistoryRead < 1000
+    )
+      return;
+    const revision = this.historyRevision;
+    this.lastHistoryRead = Date.now();
+    this.loadingHistory = true;
+    try {
+      const out = await json<History>(
+        this.options.url.replace("/term/", "/api/term/") + "/history",
+      );
+      if (this.stopped || this.paused || revision !== this.historyRevision)
+        return;
+      if (out.text.trimEnd().split("\n").length <= this.term.rows) {
+        this.options.notice(
+          "No older output is retained in tmux. Full-screen chats may keep their history inside the app.",
+        );
+        return;
+      }
+      this.frozenText = out.text;
+      this.retainedLines = lines;
+      this.readingRetainedHistory = true;
+      this.changed();
+    } catch (error) {
+      if (!this.stopped)
+        this.options.notice(
+          error instanceof Error ? error.message : errorMessage(error),
+        );
+    } finally {
+      this.loadingHistory = false;
+    }
+  }
+  syncFrozenLayout() {
+    if (this.stopped || !this.readingRetainedHistory) return;
+    const frozen = this.options.frozen;
+    frozen.style.top = this.options.host.offsetTop + "px";
+    frozen.scrollTop =
+      frozen.scrollHeight -
+      frozen.clientHeight +
+      this.retainedLines * this.options.prefs().fontSize;
+  }
+  leaveRetainedHistory() {
+    if (!this.readingRetainedHistory) return;
+    this.readingRetainedHistory = false;
+    this.term.scrollToBottom();
+    this.changed();
+  }
+  freeze(on: boolean, snapshot?: string) {
+    ++this.historyRevision;
+    if (on && this.readingRetainedHistory) snapshot ??= this.frozenText;
+    this.leaveRetainedHistory();
+    this.paused = on;
+    if (on) {
+      const lines: string[] = [],
+        buffer = this.term.buffer.active;
+      for (let i = 0; i < buffer.length; i++)
+        lines.push(buffer.getLine(i)?.translateToString(true) || "");
+      this.frozenText = snapshot ?? lines.join("\n");
+    }
+    this.term.options.disableStdin = on || !this.connected;
+    this.changed();
+    if (!on)
+      requestAnimationFrame(() => {
+        if (this.stopped) return;
+        this.fit.fit();
+        this.term.scrollToBottom();
+        this.term.focus();
+      });
+  }
+  applyPrefs() {
+    const prefs = this.options.prefs();
+    this.term.options.fontSize = prefs.fontSize;
+    this.term.options.lineHeight = prefs.lineHeight;
+    this.term.options.theme = themes[prefs.theme] || themes.slate;
+    if (!this.paused) this.scheduleFit();
+  }
+  fileLinks(workdir: string, preview: (path: string) => void) {
+    this.disposables.push(
+      this.term.registerLinkProvider({
+        provideLinks: (y, callback) => {
+          const text =
+              this.term.buffer.active.getLine(y - 1)?.translateToString() || "",
+            links = [];
+          for (const match of text.matchAll(
+            /(?:\/|\.\/)?[\w@.+~-]+(?:\/[\w@.+~-]+)*\.[a-zA-Z0-9]{1,12}(?::\d+(?::\d+)?)?/g,
+          )) {
+            let value = match[0].replace(/:\d+(?::\d+)?$/, "");
+            if (value.startsWith("/") && !value.startsWith(workdir + "/"))
+              continue;
+            if (value.startsWith(workdir + "/"))
+              value = value.slice(workdir.length + 1);
+            links.push({
+              text: match[0],
+              range: {
+                start: { x: match.index + 1, y },
+                end: { x: match.index + match[0].length, y },
+              },
+              activate: () => preview(value),
+            });
+          }
+          callback(links);
+        },
+      }),
+    );
+  }
+  dispose() {
+    this.stopped = true;
+    ++this.generation;
+    this.controller?.abort();
+    if (this.fitFrame !== undefined) cancelAnimationFrame(this.fitFrame);
+    clearTimeout(this.timer);
+    this.ws?.close();
+    this.disposeScroll();
+    this.observer.disconnect();
+    this.disposables.forEach((disposable) => disposable.dispose());
+    this.term.dispose();
+  }
+}

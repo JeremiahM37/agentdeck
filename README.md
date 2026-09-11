@@ -104,6 +104,9 @@ installation and the difference between local and remote operation.
 <summary>…or build the binary</summary>
 
 ```bash
+npm ci --prefix frontend                  # Node 24 at build time
+npm run build --prefix frontend
+python3 frontend/scripts/stage.py
 go build -o agentdeck ./cmd/agentdeck
 ./agentdeck serve                          # → http://<host>:9110
 # In an interactive terminal, a bare `agentdeck` opens the terminal dashboard.

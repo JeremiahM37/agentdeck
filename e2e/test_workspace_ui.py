@@ -128,7 +128,9 @@ def test_session_sheet_keeps_keyboard_focus_and_returns_to_opener(page, server):
     expect(sheet.locator('#ns-go')).to_be_focused()
     page.keyboard.press('Tab')
     expect(close).to_be_focused()
-    assert page.locator('#tabbar').evaluate('(e)=>e.inert')
+    # Native modal dialogs make the background inert without an HTML attribute.
+    page.locator('#tabbar .tab').first.evaluate('(e)=>e.focus()')
+    assert sheet.evaluate('(e)=>e.contains(document.activeElement)')
     sheet.get_by_label('Name', exact=True).fill('Keep this draft')
     sheet.locator('#ns-manage-profiles').click()
     profiles = page.get_by_role('dialog', name='Launch profiles', exact=True)
@@ -137,10 +139,9 @@ def test_session_sheet_keeps_keyboard_focus_and_returns_to_opener(page, server):
     expect(profiles).not_to_be_visible()
     expect(sheet.locator('#ns-manage-profiles')).to_be_focused()
     expect(sheet.get_by_label('Name', exact=True)).to_have_value('Keep this draft')
-    # The live session refresh replaces the opener while the form is open.
-    # Escape must return to its replacement, not a detached button or the body.
-    prior_opener = opener.element_handle()
-    page.wait_for_function('(el)=>!el.isConnected', arg=prior_opener, timeout=8000)
+    # React retains the opener across live refreshes; the draft and focus
+    # return must survive the same refresh interval.
+    page.wait_for_timeout(5500)
     expect(sheet.get_by_label('Name', exact=True)).to_have_value('Keep this draft')
     page.keyboard.press('Escape')
     expect(sheet).not_to_be_visible()
