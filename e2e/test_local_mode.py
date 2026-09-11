@@ -38,8 +38,7 @@ def local_binary(tmp_path_factory):
     supplied = os.environ.get("AGENTDECK_LOCAL_TEST_BINARY") or os.environ.get("AGENTDECK_BIN")
     candidate = Path(supplied) if supplied else Path(_binary())
     probe = subprocess.run([candidate, "local", "--help"], text=True, capture_output=True)
-    if probe.returncode != 0:
-        pytest.skip("backend local runtime is not in the selected binary")
+    assert probe.returncode == 0, f"selected binary has no local runtime: {probe.stderr}"
 
     root = tmp_path_factory.mktemp("local-install")
     source_prefix = root / "source-bin"
@@ -122,20 +121,99 @@ def _read_until(master, token, timeout=20):
     raise AssertionError(f"did not read {token!r}; got {output[-2000:]!r}")
 
 
-def test_source_and_binary_local_install_create_persist_and_reattach(local_binary, tmp_path):
+def test_source_and_binary_local_install_create_persist_and_reattach(local_binary, tmp_path, request):
     binary, root = local_binary
     fake_agent = tmp_path / "fake-claude"
     fake_agent.write_text("#!/bin/sh\nprintf 'LOCAL_AGENT_READY\\n'\nexec /bin/bash --noprofile --norc\n")
     fake_agent.chmod(0o755)
+    fake_task = tmp_path / "fake-task"
+    fake_task.write_text(
+        "#!/bin/sh\n"
+        "cat >/dev/null\n"
+        "mkdir -p .agentdeck\n"
+        "printf 'LOCAL_TASK_SENTINEL\\n' > .agentdeck/local-task-sentinel\n"
+        "sleep 2\n"
+    )
+    fake_task.chmod(0o755)
     env = _local_env(root, fake_agent)
     workdir = tmp_path / "project"
     workdir.mkdir()
-    subprocess.run(["git", "init", "-q", str(workdir)], check=True)
+    subprocess.run(["git", "init", "-q", "-b", "main", str(workdir)], check=True)
+    (workdir / "README.md").write_text("local runtime fixture\n")
+    subprocess.run(["git", "-C", str(workdir), "add", "README.md"], check=True)
+    subprocess.run(
+        ["git", "-C", str(workdir), "-c", "user.name=AgentDeck Test", "-c",
+         "user.email=agentdeck-test@example.invalid", "commit", "-qm", "initial"],
+        check=True,
+    )
+
+    # A local engine owns a private tmux socket. Keep an unrelated session with
+    # the same conventional name alive on the inherited default socket so this
+    # test catches accidental attachment to the user's/default tmux namespace.
+    collision_env = {**env, "TMUX": ""}
+    collision_socket = None
+    collision_name = "adk-s1"
+    session_id = 0
+    task_id = 0
+    private_tmux = None
+
+    def cleanup():
+        # Register cleanup before starting the local helper, so assertion
+        # failures cannot leave test sessions or an engine alive.
+        if task_id:
+            view = _run(binary, env, "api", "GET", f"/tasks/{task_id}", check=False)
+            if view.returncode == 0:
+                try:
+                    state = json.loads(view.stdout).get("status")
+                    if state == "review":
+                        _run(binary, env, "api", "PATCH", f"/tasks/{task_id}",
+                             json.dumps({"status": "done"}), check=False)
+                    elif state in {"queued", "running"}:
+                        _run(binary, env, "api", "POST", f"/tasks/{task_id}/cancel", "{}", check=False)
+                except json.JSONDecodeError:
+                    pass
+        if session_id:
+            _run(binary, env, "api", "DELETE", f"/sessions/{session_id}", check=False)
+        _run(binary, env, "stop", check=False)
+        for socket in (private_tmux, collision_socket):
+            if socket:
+                subprocess.run(["tmux", "-S", str(socket), "kill-server"], check=False,
+                               capture_output=True)
+
+    request.addfinalizer(
+        cleanup
+    )
+    subprocess.run(
+        ["tmux", "new-session", "-d", "-s", collision_name, "-c", str(workdir),
+         "bash", "--noprofile", "--norc"],
+        env=collision_env,
+        check=True,
+    )
+    subprocess.run(
+        ["tmux", "send-keys", "-t", collision_name, "printf COLLISION_SENTINEL\\n", "Enter"],
+        env=collision_env,
+        check=True,
+    )
+    collision_candidates = list(Path(collision_env["TMUX_TMPDIR"]).glob("tmux-*/default"))
+    assert collision_candidates, "fixture tmux did not publish its default socket"
+    collision_socket = collision_candidates[0]
 
     before = _json_command(binary, env, "status")
-    assert before["running"] is False
+    assert before["state"] == "stopped"
     targets = _json_command(binary, env, "api", "GET", "/targets")
     target = next(row for row in targets if row["kind"] == "local")
+    _json_command(
+        binary,
+        env,
+        "api",
+        "PUT",
+        "/agents",
+        json.dumps([{
+            "name": "local-fake",
+            "command": str(fake_agent),
+            "task": {"command": str(fake_task), "prompt_template": "stdin", "output_mode": "plain"},
+        }]),
+    )
     project = _json_command(
         binary,
         env,
@@ -150,8 +228,25 @@ def test_source_and_binary_local_install_create_persist_and_reattach(local_binar
         "api",
         "POST",
         "/sessions",
-        json.dumps({"name": "Persistent local session", "project_id": project["id"], "agent": "claude"}),
+        json.dumps({"name": "Persistent local session", "project_id": project["id"], "agent": "local-fake"}),
     )
+    session_id = session["id"]
+    endpoint_file = root / "state" / "agentdeck" / "local" / "endpoint.json"
+    endpoint = json.loads(endpoint_file.read_text())
+    private_candidates = list(Path(endpoint["tmux_dir"]).glob("tmux-*/default"))
+    assert private_candidates, endpoint
+    private_tmux = private_candidates[0]
+    assert private_tmux != collision_socket
+    assert session["tmux_session"] == collision_name
+    assert subprocess.run(
+        ["tmux", "display-message", "-p", "-t", collision_name, "#{session_name}"],
+        env=collision_env, capture_output=True, text=True, check=True,
+    ).stdout.strip() == collision_name
+    pane_pid = subprocess.run(
+        ["tmux", "-S", str(private_tmux), "list-panes", "-t", session["tmux_session"],
+         "-F", "#{pane_pid}"], capture_output=True, text=True, check=True,
+    ).stdout.strip()
+    assert pane_pid.isdigit()
 
     master, slave = pty.openpty()
     attached = subprocess.Popen(
@@ -167,6 +262,9 @@ def test_source_and_binary_local_install_create_persist_and_reattach(local_binar
         _read_until(master, b"LOCAL_AGENT_READY")
         os.write(master, b"printf LOCAL_PTY_SENTINEL\\n\r")
         _read_until(master, b"LOCAL_PTY_SENTINEL")
+        # Let the shell finish repainting before sending the tmux prefix and
+        # detach key, as a real terminal user would.
+        time.sleep(0.5)
         os.write(master, b"\x02d")
         attached.wait(timeout=15)
         assert attached.returncode == 0
@@ -177,14 +275,85 @@ def test_source_and_binary_local_install_create_persist_and_reattach(local_binar
         os.close(master)
 
     assert _json_command(binary, env, "api", "GET", f"/sessions/{session['id']}")["name"] == "Persistent local session"
+    collision_capture = subprocess.run(
+        ["tmux", "capture-pane", "-p", "-t", collision_name], env=collision_env,
+        capture_output=True, text=True, check=True,
+    ).stdout
+    assert "COLLISION_SENTINEL" in collision_capture
+
+    task = _json_command(
+        binary,
+        env,
+        "api",
+        "POST",
+        "/tasks",
+        json.dumps({
+            "project_id": project["id"],
+            "title": "Local task execution",
+            "prompt": "write the local task marker",
+            "agent": "local-fake",
+        }),
+    )
+    task_id = task["id"]
+    _json_command(binary, env, "api", "POST", f"/tasks/{task['id']}/dispatch", "{}")
+    deadline = time.time() + 30
+    task_view = None
+    private_task_seen = False
+    while time.time() < deadline:
+        task_view = _json_command(binary, env, "api", "GET", f"/tasks/{task['id']}")
+        running_attempt = task_view.get("attempt") or {}
+        if task_view["status"] == "running" and running_attempt.get("tmux_session"):
+            private_task_seen = subprocess.run(
+                ["tmux", "-S", str(private_tmux), "has-session", "-t", running_attempt["tmux_session"]],
+                capture_output=True, check=False,
+            ).returncode == 0
+        if task_view["status"] in {"done", "review", "failed"}:
+            break
+        time.sleep(0.2)
+    assert task_view and task_view["status"] in {"done", "review"}, task_view
+    attempt = task_view.get("attempt") or {}
+    marker = Path(attempt["worktree_path"]) / ".agentdeck" / "local-task-sentinel"
+    assert marker.is_relative_to(root / "state"), attempt
+    assert private_task_seen, "local task did not run in the private tmux namespace"
+    assert marker.read_text() == "LOCAL_TASK_SENTINEL\n"
+    _json_command(binary, env, "api", "PATCH", f"/tasks/{task['id']}", json.dumps({"status": "done"}))
     stopped = _run(binary, env, "stop")
     assert stopped.returncode == 0, stopped.stderr
-    assert _json_command(binary, env, "status")["running"] is False
+    assert _json_command(binary, env, "status")["state"] == "stopped"
 
     sessions = _json_command(binary, env, "api", "GET", "/sessions")
     projects = _json_command(binary, env, "api", "GET", "/projects")
     assert any(row["id"] == session["id"] for row in sessions)
     assert any(row["id"] == project["id"] for row in projects)
+    master, slave = pty.openpty()
+    reattached = subprocess.Popen(
+        [str(binary), "local", "attach", "session", str(session["id"])],
+        stdin=slave, stdout=slave, stderr=slave,
+        env={**env, "TERM": "xterm-256color"}, start_new_session=True,
+    )
+    os.close(slave)
+    try:
+        _read_until(master, b"LOCAL_AGENT_READY")
+        os.write(master, b"printf LOCAL_REATTACH_SENTINEL\\n\r")
+        _read_until(master, b"LOCAL_REATTACH_SENTINEL")
+        time.sleep(0.5)
+        os.write(master, b"\x02d")
+        reattached.wait(timeout=15)
+        assert reattached.returncode == 0
+    finally:
+        if reattached.poll() is None:
+            reattached.terminate()
+            reattached.wait(timeout=10)
+        os.close(master)
+    assert subprocess.run(
+        ["tmux", "-S", str(private_tmux), "list-panes", "-t", session["tmux_session"],
+         "-F", "#{pane_pid}"], capture_output=True, text=True, check=True,
+    ).stdout.strip() == pane_pid
+    collision_capture = subprocess.run(
+        ["tmux", "capture-pane", "-p", "-t", collision_name], env=collision_env,
+        capture_output=True, text=True, check=True,
+    ).stdout
+    assert "COLLISION_SENTINEL" in collision_capture
     _run(binary, env, "stop", check=False)
 
 
