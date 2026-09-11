@@ -42,6 +42,18 @@ jobs:
           mkdir -p "$RUNNER_TEMP/adk-test-bin"
           cat > "$RUNNER_TEMP/adk-test-bin/bwrap" <<'EOF'
           #!/bin/sh
+          # run-isolated-tests.sh creates its staging directory with mode 700.
+          # Root bwrap drops to nobody while resolving bind sources, so expose
+          # only that disposable staging directory for the duration of setup.
+          for arg in "$@"; do
+            case "$arg" in
+              /tmp/adk-isolated-stage.*/*)
+                stage_root=${arg#/tmp/}
+                stage_root=${stage_root%%/*}
+                chmod 0755 "/tmp/$stage_root"
+                ;;
+            esac
+          done
           exec sudo -n /usr/bin/bwrap "$@"
           EOF
           chmod 0755 "$RUNNER_TEMP/adk-test-bin/bwrap"
