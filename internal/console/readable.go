@@ -1,0 +1,128 @@
+package console
+
+import (
+	"fmt"
+	"reflect"
+	"sort"
+	"strings"
+	"unicode"
+)
+
+// readable is the presentation layer for interactive terminal views. The API
+// and `agentdeck api` keep their machine-readable JSON contract unchanged.
+// Unknown fields are retained, and maps are sorted so redraws stay stable.
+func readable(v any) string {
+	var b strings.Builder
+	writeReadable(&b, normalizeReadable(reflect.ValueOf(v)), 0, "")
+	return strings.TrimRight(b.String(), "\n")
+}
+
+func normalizeReadable(v reflect.Value) any {
+	if !v.IsValid() {
+		return nil
+	}
+	for v.Kind() == reflect.Interface || v.Kind() == reflect.Pointer {
+		if v.IsNil() {
+			return nil
+		}
+		v = v.Elem()
+	}
+	switch v.Kind() {
+	case reflect.Map:
+		if v.Type().Key().Kind() != reflect.String {
+			return fmt.Sprint(v.Interface())
+		}
+		out := make(map[string]any, v.Len())
+		for _, key := range v.MapKeys() {
+			out[key.String()] = normalizeReadable(v.MapIndex(key))
+		}
+		return out
+	case reflect.Slice, reflect.Array:
+		out := make([]any, v.Len())
+		for i := range out {
+			out[i] = normalizeReadable(v.Index(i))
+		}
+		return out
+	default:
+		return v.Interface()
+	}
+}
+
+func writeReadable(b *strings.Builder, v any, depth int, key string) {
+	indent := strings.Repeat("  ", depth)
+	switch x := v.(type) {
+	case map[string]any:
+		if len(x) == 0 {
+			if key == "" {
+				writeScalar(b, indent, "", "(none)")
+			} else {
+				writeScalar(b, indent, humanLabel(key)+": ", "(none)")
+			}
+			return
+		}
+		if key != "" {
+			b.WriteString(indent + humanLabel(key) + "\n")
+			depth++
+		}
+		keys := make([]string, 0, len(x))
+		for k := range x {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		for _, k := range keys {
+			writeReadable(b, x[k], depth, k)
+		}
+	case []any:
+		if len(x) == 0 {
+			writeScalar(b, indent, humanLabel(key)+": ", "(none)")
+			return
+		}
+		if key != "" {
+			b.WriteString(indent + humanLabel(key) + "\n")
+		}
+		for _, item := range x {
+			itemIndent := strings.Repeat("  ", depth+1)
+			if _, nestedMap := item.(map[string]any); nestedMap {
+				b.WriteString(itemIndent + "•\n")
+				writeReadable(b, item, depth+2, "")
+				continue
+			}
+			if _, nestedList := item.([]any); nestedList {
+				b.WriteString(itemIndent + "•\n")
+				writeReadable(b, item, depth+2, "")
+				continue
+			}
+			writeScalar(b, itemIndent, "• ", item)
+		}
+	default:
+		writeScalar(b, indent, humanLabel(key)+": ", x)
+	}
+}
+
+func writeScalar(b *strings.Builder, indent, prefix string, v any) {
+	value := "(none)"
+	if v != nil {
+		value = clean(fmt.Sprint(v))
+	}
+	lines := strings.Split(value, "\n")
+	for i, line := range lines {
+		if i == 0 {
+			b.WriteString(indent + prefix + line)
+		} else {
+			b.WriteString("\n" + indent + strings.Repeat("  ", 1) + line)
+		}
+	}
+	b.WriteByte('\n')
+}
+
+func humanLabel(s string) string {
+	parts := strings.FieldsFunc(clean(s), func(r rune) bool { return r == '_' || r == '-' })
+	for i := range parts {
+		runes := []rune(parts[i])
+		if len(runes) > 0 {
+			runes[0] = unicode.ToUpper(runes[0])
+			parts[i] = string(runes)
+		}
+	}
+	return strings.Join(parts, " ")
+}

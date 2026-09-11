@@ -20,6 +20,55 @@ func sampleDashboard() *dashboard {
 	m.filter()
 	return m
 }
+
+func TestReadableInteractiveDetailsUseLabelsAndRetainUnknownFields(t *testing.T) {
+	got := readable(map[string]any{
+		"status":         "running",
+		"provider_extra": map[string]any{"region": "west", "count": float64(2)},
+		"labels":         []any{"urgent", "ui"},
+		"nested":         []map[string]string{{"name": "one"}},
+		"message":        "first line\nsecond line\x1b]52;c;bad\a",
+		"empty":          map[string]any{},
+	})
+	if strings.ContainsAny(got, "{}\"\x1b") {
+		t.Fatalf("interactive details still look like raw JSON: %q", got)
+	}
+	for _, want := range []string{"Status: running", "Provider Extra", "Region: west", "Count: 2", "• urgent", "• ui", "Name: one", "Message: first line", "second line", "Empty: (none)"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("readable output missing %q:\n%s", want, got)
+		}
+	}
+}
+
+func TestFormatDetailKeepsGenericAPIFieldsReadable(t *testing.T) {
+	got := formatDetail("API result", []byte(`{"status":"ready","limits":{"max":3},"provider_flag":true}`))
+	if strings.ContainsAny(got, "{}\"") {
+		t.Fatalf("generic detail regressed to JSON: %q", got)
+	}
+	for _, want := range []string{"Status: ready", "Limits", "Max: 3", "Provider Flag: true"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("detail missing %q:\n%s", want, got)
+		}
+	}
+}
+
+func TestReadableDashboardPreviewAtWideAndNarrowTerminalWidths(t *testing.T) {
+	m := sampleDashboard()
+	m.section = 4
+	m.rows = []row{{"id": float64(1), "name": "Fixture target", "provider_extra": map[string]any{"region": "west", "mode": "fixture"}}}
+	m.filter()
+	m.selected = 0
+	for _, width := range []int{120, 52} {
+		m.Update(tea.WindowSizeMsg{Width: width, Height: 30})
+		view := m.View()
+		if strings.Contains(view, "provider_extra") || strings.ContainsAny(view, "{}\"") {
+			t.Fatalf("width %d rendered raw JSON:\n%s", width, view)
+		}
+		if width >= 100 && !strings.Contains(view, "Provider Extra") {
+			t.Fatalf("width %d omitted readable preview:\n%s", width, view)
+		}
+	}
+}
 func TestDashboardSearchGroupingAndSelectionSurviveRefresh(t *testing.T) {
 	m := sampleDashboard()
 	m.selected = 1

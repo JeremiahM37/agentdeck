@@ -405,10 +405,10 @@ func (m *dashboard) updatePreview() {
 		case "tasks":
 			content = fmt.Sprintf("%s\n%s · %s\n\n%s", name(r), str(r["status"]), str(r["project_name"]), str(r["prompt"]))
 			if a, ok := r["attempt"].(map[string]any); ok {
-				content += "\n\nBranch: " + str(a["branch"]) + "\nWorktree: " + str(a["worktree_path"]) + "\n\n" + pretty(a["result"])
+				content += "\n\nBranch: " + str(a["branch"]) + "\nWorktree: " + str(a["worktree_path"]) + "\n\nResult\n" + readable(a["result"])
 			}
 		default:
-			content = pretty(r)
+			content = readable(r)
 		}
 	}
 	rendered := ansi.Wrap(clean(content), m.preview.Width, "")

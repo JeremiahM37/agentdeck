@@ -60,6 +60,26 @@ func TestClientAuthenticationErrorsAndUpload(t *testing.T) {
 		t.Fatalf("%d requests", requests)
 	}
 }
+
+func TestPlainConsoleRendersAPIObjectsAsReadableFields(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/health" {
+			t.Fatalf("unexpected path %s", r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		io.WriteString(w, `{"status":"ok","provider_extra":{"region":"west"}}`)
+	}))
+	defer srv.Close()
+	var out bytes.Buffer
+	u := NewUI(New(srv.URL, ""), strings.NewReader(""), &out, nil)
+	if err := u.request("GET", "/health", nil); err != nil {
+		t.Fatal(err)
+	}
+	got := out.String()
+	if strings.ContainsAny(got, "{}\"") || !strings.Contains(got, "Provider Extra") || !strings.Contains(got, "Region: west") {
+		t.Fatalf("plain console emitted raw or incomplete data: %q", got)
+	}
+}
 func TestDownloadPreservesExistingAndBinary(t *testing.T) {
 	payload := []byte{0, 255, 27, 10}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.Write(payload) }))

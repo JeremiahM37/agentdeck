@@ -40,19 +40,19 @@ func (u *UI) ask(label, def string) (string, error) {
 	return s, nil
 }
 func (u *UI) show(data []byte) {
-	var pretty strings.Builder
 	var v any
 	if json.Unmarshal(data, &v) == nil {
-		b, _ := json.MarshalIndent(v, "", "  ")
-		pretty.Write(b)
+		u.say("%s", readable(v))
+		return
 	} else {
+		var cleanText strings.Builder
 		for _, r := range string(data) {
 			if r == '\n' || r == '\t' || r >= 32 && r != 127 {
-				pretty.WriteRune(r)
+				cleanText.WriteRune(r)
 			}
 		}
+		u.say("%s", cleanText.String())
 	}
-	u.say("%s", pretty.String())
 }
 func (u *UI) request(method, path string, body any) error {
 	data, e := u.Client.JSON(method, path, body)

@@ -1078,7 +1078,7 @@ func formatDetail(label string, data []byte) string {
 			return "No changed files in the captured diff."
 		}
 	}
-	return pretty(value)
+	return readable(value)
 }
 func (m *dashboard) discover() tea.Cmd {
 	if m.busy {
