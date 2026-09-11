@@ -114,7 +114,9 @@ def test_terminal_creates_grouped_workspace(real_terminal):
     try:
         d.wait('Real terminal');d.send('/Real terminal\r');d.send('n');d.wait('New session')
         d.send('Terminal grouped creation')
-        d.send('\t'*8+'\x1b[C')
+        # The adopted terminal is intentionally unassigned; choose the first
+        # registered project before enabling the multi-repository workflow.
+        d.send('\t\t\x1b[C'+'\t'*6+'\x1b[C')
         # Additional repository workflow immediately follows isolation.
         d.send('\t\x1b[C\x13');d.wait('Workspace repositories:')
         d.wait('Add Second repository');d.send('\x13');d.wait('Base (blank uses committed HEAD)')
