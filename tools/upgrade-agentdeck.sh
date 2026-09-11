@@ -27,7 +27,25 @@ service_user=$(systemctl show "$unit" -p User --value)
 service_home=$(getent passwd "$service_user" | cut -d: -f6)
 service_group=$(systemctl show "$unit" -p Group --value)
 [[ -n "$service_group" ]] || service_group=$(id -gn "$service_user")
-command -v runuser >/dev/null || { echo "runuser is required for a service-user export" >&2; exit 1; }
+if command -v runuser >/dev/null 2>&1; then
+  service_runner_mode=runuser
+  service_runner_text="runuser -u $service_user --"
+elif [[ "$(id -u)" == 0 ]] && command -v su >/dev/null 2>&1; then
+  service_runner_mode=su
+  service_runner_text="su -s /bin/bash $service_user -c"
+else
+  echo "runuser or root su is required for a service-user export" >&2
+  exit 1
+fi
+run_service() {
+  if [[ "$service_runner_mode" == runuser ]]; then
+    runuser -u "$service_user" -- "$@"
+  else
+    local command
+    printf -v command '%q ' "$@"
+    su -s /bin/bash "$service_user" -c "$command"
+  fi
+}
 main=$(systemctl show "$unit" -p MainPID --value)
 cg=$(systemctl show "$unit" -p ControlGroup --value)
 dropin=/etc/systemd/system/${unit}.service.d/10-session-persistence.conf
@@ -109,7 +127,7 @@ if command -v tmux >/dev/null 2>&1; then
       [[ "$pane_pid" =~ ^[0-9]+$ && -r "/proc/$pane_pid/stat" ]] || continue
       pane_starttime=$(awk '{print $22}' "/proc/$pane_pid/stat")
       [[ -n "$pane_starttime" ]] && baseline_panes["$pane_pid"]="$pane_starttime"
-    done < <(runuser -u "$service_user" -- env -u TMUX -u TMUX_TMPDIR HOME="$service_home" tmux list-panes -t "=$tmux_name" -F '#{pane_pid}' 2>/dev/null || true)
+    done < <(run_service env -u TMUX -u TMUX_TMPDIR HOME="$service_home" tmux list-panes -t "=$tmux_name" -F '#{pane_pid}' 2>/dev/null || true)
   done < <(python3 - "$db" <<'PY'
 import sqlite3, sys
 db = sqlite3.connect("file:" + sys.argv[1] + "?mode=ro", uri=True)
@@ -125,7 +143,7 @@ PY
   )
 fi
 
-runuser -u "$service_user" -- env -u TMUX -u TMUX_TMPDIR HOME="$service_home" AGENTDECK_DB="$db" "$binary" recovery-checkpoint export "$checkpoint"
+run_service env -u TMUX -u TMUX_TMPDIR HOME="$service_home" AGENTDECK_DB="$db" "$binary" recovery-checkpoint export "$checkpoint"
 
 current_main_pid=$(systemctl show "$unit" -p MainPID --value)
 current_main_starttime=""
@@ -208,4 +226,4 @@ for pane_pid in "${!baseline_panes[@]}"; do
   fi
 done
 echo "prepared; checkpoint captured and binary installed; service was not restarted"
-echo "refresh checkpoint before the first manual restart if sessions changed: runuser -u $service_user -- env -u TMUX -u TMUX_TMPDIR HOME=$service_home AGENTDECK_DB=$db $live recovery-checkpoint export $checkpoint"
+echo "refresh checkpoint before the first manual restart if sessions changed: $service_runner_text env -u TMUX -u TMUX_TMPDIR HOME=$service_home AGENTDECK_DB=$db $live recovery-checkpoint export $checkpoint"
