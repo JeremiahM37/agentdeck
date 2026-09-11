@@ -10,6 +10,9 @@ overall web superiority claim.
   (artifact SHA256 `282f53a5f7157c851953c0b7bb90cb6bced2e546d0d22745928e741ad97643d6`).
   Full release verification passed `6/6` web steps; the run manifest is
   `/tmp/agentdeck-mobile-verify-178bc00.manifest.json`.
+- The deployed live `178bc00` build passed post-deploy verification `6/6`
+  (exit 0), handle `49422`, PID `739182`; log:
+  `/tmp/agentdeck-postdeploy-178bc00.log`.
 - The C1/C2/C5/C6 browser evidence was executed against the preceding e84
   feature run; the mobile follow-up and atomic fixture correction are recorded
   separately in `docs/parity/evidence-2026-09-10.json`.
@@ -77,9 +80,9 @@ Equivalent upstream Agent Deck C3 is accepted by the real ttyd receipt
 composite of the documented modes in `docs/parity/receipts/aoe-c3-final-evidence.json`:
 the one-session LIVE preview proves attach, actual 27x71 pane resize, `Ctrl-Q`
 dashboard exit, Tab reentry, same shell identity, and a fresh sentinel; native
-attach proves tmux copy-mode PageUp scroll (`C3_NATIVE_SCROLL01..33`) and Escape
-cancellation. The LIVE alternate-screen preview did not advance its xterm
-viewport on PageUp, so that mode-specific limitation remains explicit.
+attach proves tmux copy-mode PageUp scroll (`C3_NATIVE_SCROLL_01..33`) and Escape
+cancellation. LIVE preview Shift+PageUp did not change visible markers in this
+run, so that mode-specific limitation remains explicit.
 
 ## C4 child isolation and diff review
 

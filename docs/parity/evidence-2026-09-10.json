@@ -42,6 +42,14 @@
       },
       "assertion": "Tools/status do not intersect the xterm viewport at 390x900, 390x640, 390x550, or restored 390x900",
       "gesture": "real CDP touch flick switches adjacent mounted tabs; xterm selection, vertical backtrack, and body mouse-mode gestures do not switch; the tab-strip fallback was tested separately while mouse mode was active"
+    },
+    "live_build_revision": "178bc00d406a893da8b7d4c76d5c5533021ea568",
+    "postdeploy_verify": {
+      "status": "PASS: 6/6 steps passed (backend=web)",
+      "exit": 0,
+      "exec_handle": "49422",
+      "pid": "739182",
+      "log": "/tmp/agentdeck-postdeploy-178bc00.log"
     }
   },
   "browser_cells": {
@@ -158,11 +166,11 @@
         "live_preview_scroll_observed": false
       },
       "native_attach": {
-        "copy_mode_pageup_revealed": "C3_NATIVE_SCROLL01..33",
+        "copy_mode_pageup_revealed": "C3_NATIVE_SCROLL_01..33",
         "copy_mode_cancelled": true,
         "scroll_status": "PASS"
       },
-      "strict_reason": "Composite PASS across the two documented modes; LIVE alternate-screen PageUp did not advance its xterm viewport, while native tmux attach supplied the scroll proof.",
+      "strict_reason": "Composite PASS across the two documented modes; LIVE preview Shift+PageUp did not change visible markers in this run, while native tmux attach supplied the scroll proof.",
       "receipt": "docs/parity/receipts/aoe-c3-final-evidence.json",
       "native_scroll_receipt": "docs/parity/receipts/aoe-c3-native-scroll-receipt.json"
     }

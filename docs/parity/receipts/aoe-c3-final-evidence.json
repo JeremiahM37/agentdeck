@@ -28,7 +28,8 @@
     "same_pane_pid": "805317",
     "fresh_shell_pid": "805319",
     "resize_stty": "C3_ONE_RESIZE_STTY:27:71",
-    "actual_pane_geometry": "71 columns x 27 rows"
+    "actual_pane_geometry": "71 columns x 27 rows",
+    "native_tmux_scroll_marker": "C3_NATIVE_SCROLL_01..33"
   },
   "artifacts": [
     "/tmp/agentdeck-parity-proof-v3/aoe-web/c3-aoe-one-final-proof2",
@@ -37,8 +38,8 @@
   "strict_c3_verdict": "PASS",
   "notes": [
     "LIVE preview lifecycle: one-session Alpha attach, actual pane resize 27x71, Ctrl+Q dashboard exit, Tab reentry, same shell identity, and fresh sentinel.",
-    "Native attach is the documented quick-start path: Ctrl+B [ enters tmux copy mode, PageUp reveals C3_NATIVE_SCROLL01..33, and Escape returns mode 0.",
-    "The LIVE alternate-screen preview did not advance its xterm viewport on PageUp; native tmux attach supplies the scroll proof. This is a composite across documented modes, not one continuous view.",
+    "Native attach is the documented quick-start path: Ctrl+B [ enters tmux copy mode, PageUp reveals C3_NATIVE_SCROLL_01..33, and Escape returns mode 0.",
+    "LIVE preview Shift+PageUp did not change visible markers in this run; native tmux attach supplies the scroll proof. This is a composite across documented modes, not one continuous view.",
     "No real Codex/model was invoked."
   ],
   "native_scroll_artifacts": "/tmp/agentdeck-parity-proof-v3/aoe-web/c3-aoe-native-scroll-proof",
