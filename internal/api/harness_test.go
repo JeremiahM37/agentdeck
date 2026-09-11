@@ -17,6 +17,7 @@ import (
 	"github.com/JeremiahM37/agentdeck/internal/app"
 	"github.com/JeremiahM37/agentdeck/internal/config"
 	"github.com/JeremiahM37/agentdeck/internal/executor"
+	"github.com/JeremiahM37/agentdeck/internal/testutil"
 )
 
 // harness is a whole agentdeck — real HTTP server, real scheduler, real hook
@@ -53,6 +54,9 @@ func newHarness(t *testing.T, tweak ...func(*config.Config)) *harness {
 		fn(cfg)
 	}
 	if !cfg.Mock {
+		// Refuse every real-target harness unless the reviewed bwrap runner has
+		// established a private process/tmux namespace before app.New starts.
+		testutil.RequireIsolated(t)
 		// Real executor tests must never inspect or affect the host tmux server.
 		isolateTmux(t)
 	}
