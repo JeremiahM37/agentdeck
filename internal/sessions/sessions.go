@@ -164,7 +164,24 @@ func DeriveStatus(pane, prevHash string) string {
 			return StatusWaiting
 		}
 	}
+	// Some CLIs render a bare prompt on its own line and tmux capture-pane may
+	// leave blank viewport rows beneath it. Inspect the last visible line rather
+	// than only the fixed tail, while keeping busy/change signals above this
+	// compatibility case.
+	if last := lastNonEmptyLine(pane); last == ">" {
+		return StatusWaiting
+	}
 	return StatusIdle
+}
+
+func lastNonEmptyLine(s string) string {
+	lines := strings.Split(s, "\n")
+	for i := len(lines) - 1; i >= 0; i-- {
+		if line := strings.TrimSpace(lines[i]); line != "" {
+			return line
+		}
+	}
+	return ""
 }
 
 // ContextPct reads the agent's own context gauge off the pane when it shows one.
