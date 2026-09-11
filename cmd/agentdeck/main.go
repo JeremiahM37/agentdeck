@@ -49,6 +49,13 @@ func main() {
 		}
 		return
 	}
+	if len(os.Args) > 1 && os.Args[1] == "recovery-checkpoint" {
+		if err := recoveryCheckpoint(cfg, os.Args[2:]); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		return
+	}
 	explicitRemote := strings.TrimSpace(os.Getenv("AGENTDECK_API")) != ""
 	if len(os.Args) == 1 && interactiveTerminal() {
 		var err error
