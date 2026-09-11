@@ -77,12 +77,46 @@ def prefix_identity(older, newer):
     return left[:3]==right[:3] and bool(left[3]) and left[3]==right[3][:len(left[3])]
 
 
+def process_starttime(pid):
+    # Linux exposes a monotonically increasing start tick in /proc/<pid>/stat.
+    # A PID (and therefore a PGID, whose leader is the child PID below) can be
+    # reused after the recorded worker exits, so the number alone is not an
+    # identity.  Targets without procfs rely on the workspace flock instead.
+    try:
+        fields = (pathlib.Path('/proc') / str(pid) / 'stat').read_text().rsplit(')', 1)[1].split()
+        return fields[19]
+    except (FileNotFoundError, ProcessLookupError, IndexError, OSError):
+        return None
+
+
+def boot_id():
+    try:
+        return pathlib.Path('/proc/sys/kernel/random/boot_id').read_text().strip()
+    except (FileNotFoundError, OSError):
+        return None
+
+
 def busy():
     receipt = root / '.agentdeck-process.json'
     if os.path.lexists(receipt):
-        pgid = read_record('.agentdeck-process.json')['pgid']
+        record = read_record('.agentdeck-process.json')
+        pgid = record['pgid']
         if type(pgid) is not int or pgid <= 1:
             raise ValueError('Workspace process receipt is invalid; inspect it before cleanup')
+        expected_start = record.get('starttime')
+        expected_boot = record.get('boot_id')
+        current_boot = boot_id()
+        # A boot-id mismatch proves this record cannot describe a live worker.
+        # A start-time mismatch is equally conclusive while the recorded
+        # leader still exists. Missing metadata or a missing leader stays on
+        # the conservative PGID path below: an orphaned descendant may still
+        # be writing even after its leader exits.
+        if expected_boot and current_boot and expected_boot != current_boot:
+            return
+        if isinstance(expected_start, str) and expected_start:
+            actual_start = process_starttime(pgid)
+            if actual_start is not None and actual_start != expected_start:
+                return
         try:
             os.killpg(pgid, 0)
         except ProcessLookupError:
@@ -137,7 +171,11 @@ def run_child(entry, operation):
             stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
             start_new_session=True, pass_fds=(read_fd, lock.fileno()),
         )
-        write_record('.agentdeck-process.json', {'pgid': child.pid})
+        write_record('.agentdeck-process.json', {
+            'pgid': child.pid,
+            'starttime': process_starttime(child.pid),
+            'boot_id': boot_id(),
+        })
         os.write(write_fd, b'1')
     finally:
         os.close(read_fd)

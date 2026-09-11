@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -129,6 +130,153 @@ func TestMultiWorkspaceTargetPreflightPreservesRepositories(t *testing.T) {
 	}
 	if out, _ := exec.Command("git", "-C", sources[0].Repo, "branch", "--list", "feature/grouped").Output(); len(out) != 0 {
 		t.Fatal("preflight created a branch in the first repository")
+	}
+}
+
+func TestMultiWorkspaceIgnoresReusedProcessReceipt(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git unavailable")
+	}
+	root := t.TempDir()
+	repo := filepath.Join(root, "repo")
+	if err := os.Mkdir(repo, 0700); err != nil {
+		t.Fatal(err)
+	}
+	git := func(args ...string) {
+		t.Helper()
+		if out, err := exec.Command("git", append([]string{"-C", repo}, args...)...).CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %s", args, out)
+		}
+	}
+	git("init", "-q")
+	git("-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", "commit", "--allow-empty", "-qm", "base")
+	plan, err := PlanMultiWorkspace([]RepositorySource{{Name: "repo", Repo: repo}}, 91, InteractiveOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := RunInteractive(context.Background(), executor.NewLocal(), "create", plan); err != nil {
+		t.Fatal(err)
+	}
+
+	// A live, unrelated process group stands in for a recycled PID/PGID. The
+	// deliberately wrong start tick must make its receipt non-authoritative;
+	// status must not report it as our checkout or signal it.
+	unrelated := exec.Command("sleep", "600")
+	unrelated.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	if err := unrelated.Start(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if unrelated.Process != nil {
+			_ = syscall.Kill(-unrelated.Process.Pid, syscall.SIGKILL)
+			_ = unrelated.Wait()
+		}
+	})
+	receiptPath := filepath.Join(plan.Path, ".agentdeck-process.json")
+	receipt := map[string]any{"pgid": unrelated.Process.Pid, "starttime": "0", "boot_id": "test-boot"}
+	raw, _ := json.Marshal(receipt)
+	if err := os.WriteFile(receiptPath, raw, 0600); err != nil {
+		t.Fatal(err)
+	}
+	status := *plan
+	if err := RunInteractive(context.Background(), executor.NewLocal(), "status", &status); err != nil {
+		t.Fatal(err)
+	}
+	if status.OperationActive {
+		t.Fatal("reused process receipt was reported as an active workspace operation")
+	}
+	if err := unrelated.Process.Signal(syscall.Signal(0)); err != nil {
+		t.Fatalf("unrelated process was signalled: %v", err)
+	}
+	if err := RunInteractive(context.Background(), executor.NewLocal(), "remove", plan); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestMultiWorkspaceLegacyReceiptGuardsLiveProcessGroups(t *testing.T) {
+	for _, bin := range []string{"git", "python3"} {
+		if _, err := exec.LookPath(bin); err != nil {
+			t.Skip(bin + " unavailable")
+		}
+	}
+	root := t.TempDir()
+	repo := filepath.Join(root, "repo")
+	if err := os.Mkdir(repo, 0700); err != nil {
+		t.Fatal(err)
+	}
+	for _, args := range [][]string{
+		{"init", "-q"},
+		{"-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", "commit", "--allow-empty", "-qm", "base"},
+	} {
+		if out, err := exec.Command("git", append([]string{"-C", repo}, args...)...).CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %s", args, out)
+		}
+	}
+	plan, err := PlanMultiWorkspace([]RepositorySource{{Name: "repo", Repo: repo}}, 92, InteractiveOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := RunInteractive(context.Background(), executor.NewLocal(), "create", plan); err != nil {
+		t.Fatal(err)
+	}
+	receiptPath := filepath.Join(plan.Path, ".agentdeck-process.json")
+	writeReceipt := func(pgid int) {
+		t.Helper()
+		raw, _ := json.Marshal(map[string]any{"pgid": pgid})
+		if err := os.WriteFile(receiptPath, raw, 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	status := func() bool {
+		t.Helper()
+		current := *plan
+		if err := RunInteractive(context.Background(), executor.NewLocal(), "status", &current); err != nil {
+			t.Fatal(err)
+		}
+		return current.OperationActive
+	}
+	stopGroup := func(process *os.Process) {
+		t.Helper()
+		_ = syscall.Kill(-process.Pid, syscall.SIGKILL)
+		_ = process.Release()
+	}
+
+	// Legacy receipts remain conservative while their process group is live.
+	live := exec.Command("sleep", "600")
+	live.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	if err := live.Start(); err != nil {
+		t.Fatal(err)
+	}
+	writeReceipt(live.Process.Pid)
+	if !status() {
+		stopGroup(live.Process)
+		t.Fatal("legacy receipt stopped guarding a live process group")
+	}
+	stopGroup(live.Process)
+	_ = live.Wait()
+
+	// If the worker leader exits while a descendant still writes, the legacy
+	// PGID scan must continue to block cleanup.
+	orphan := exec.Command("python3", "-c", "import subprocess,time; subprocess.Popen(['sleep','600']); time.sleep(.2)")
+	orphan.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	if err := orphan.Start(); err != nil {
+		t.Fatal(err)
+	}
+	pgid := orphan.Process.Pid
+	if err := orphan.Wait(); err != nil {
+		t.Fatal(err)
+	}
+	if err := syscall.Kill(-pgid, 0); err != nil {
+		t.Fatalf("orphan descendant did not remain in process group: %v", err)
+	}
+	writeReceipt(pgid)
+	if !status() {
+		stopGroup(orphan.Process)
+		t.Fatal("leader-gone process group was not guarded")
+	}
+	stopGroup(orphan.Process)
+	if err := RunInteractive(context.Background(), executor.NewLocal(), "remove", plan); err != nil {
+		t.Fatal(err)
 	}
 }
 
