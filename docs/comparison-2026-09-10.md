@@ -72,10 +72,14 @@ AgentDeck's C3 cell is accepted PASS from the actual ttyd evidence:
 - `/tmp/agentdeck-parity-proof-v3/c3/real-ttyd/ours-final/04-resize.png`
 
 The recorded evidence includes fresh same-PID `669016`, the marker, tmux scrollback containing `C3_KNOWN_01`, readable `30x110` output with the status row, and reattachment.
-Equivalent upstream Agent Deck C3 is now accepted by the real ttyd receipt
-`upstream-c3-final-cancel-resume-receipt.json`; the final AoE C3 worker receipt is retained as `UNVERIFIED`: it observed attach,
-scroll, resize screen, detach, same-pane reattach, and a fresh sentinel, but did
-not expose every strict criterion.
+Equivalent upstream Agent Deck C3 is accepted by the real ttyd receipt
+`upstream-c3-final-cancel-resume-receipt.json`. AoE C3 is accepted as a
+composite of the documented modes in `docs/parity/receipts/aoe-c3-final-evidence.json`:
+the one-session LIVE preview proves attach, actual 27x71 pane resize, `Ctrl-Q`
+dashboard exit, Tab reentry, same shell identity, and a fresh sentinel; native
+attach proves tmux copy-mode PageUp scroll (`C3_NATIVE_SCROLL01..33`) and Escape
+cancellation. The LIVE alternate-screen preview did not advance its xterm
+viewport on PageUp, so that mode-specific limitation remains explicit.
 
 ## C4 child isolation and diff review
 
@@ -127,7 +131,7 @@ These retries are harness history, not product failure counts.
 
 The AgentDeck `178bc00` candidate has completed its full web release
 verification. The current AgentDeck/AoE browser C1/C2/C5/C6 cells, all three
-C4 paths, and AgentDeck plus upstream Agent Deck C3 are evidenced. AoE C3 is
-retained as `UNVERIFIED` because its final worker did not expose every strict
-criterion. The full cross-product rubric therefore remains open, and broader
-claims about web superiority remain unverified.
+C4 paths, and the composite C3 workflows for AgentDeck, upstream Agent Deck,
+and AoE are evidenced. The full cross-product rubric remains a bounded evidence
+record rather than a performance ranking, and broader claims about web
+superiority remain unverified.

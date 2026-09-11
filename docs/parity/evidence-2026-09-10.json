@@ -41,7 +41,7 @@
         }
       },
       "assertion": "Tools/status do not intersect the xterm viewport at 390x900, 390x640, 390x550, or restored 390x900",
-      "gesture": "real CDP touch flick switches adjacent mounted tabs; xterm selection, vertical backtrack, and body mouse-mode gestures do not switch; tab-strip fallback switches while mouse mode is active"
+      "gesture": "real CDP touch flick switches adjacent mounted tabs; xterm selection, vertical backtrack, and body mouse-mode gestures do not switch; the tab-strip fallback was tested separately while mouse mode was active"
     }
   },
   "browser_cells": {
@@ -58,7 +58,7 @@
         "status": "PASS",
         "query": "UI Gamma",
         "active_matches": 1,
-        "context": "Sessions \u00b7 starting \u00b7 fake-proof \u00b7 V3 fixture project \u00b7 v3-local \u00b7 fixture-repo"
+        "context": "Sessions · starting · fake-proof · V3 fixture project · v3-local · fixture-repo"
       },
       "C5": {
         "status": "PASS",
@@ -136,38 +136,48 @@
       "status": "PASS",
       "pane": "%0",
       "pane_pid": "689540",
-      "identity_token": "520867",
       "resize": "C3_RESUMED_SIZE:30:110",
       "marker_after_reattach": "C3_REATTACHED_UNIQUE_cancel_9f4c2a",
       "copy_mode_cancelled": true,
-      "receipt": "docs/parity/receipts/upstream-c3-final-cancel-resume-receipt.json"
+      "receipt": "docs/parity/receipts/upstream-c3-final-cancel-resume-receipt.json",
+      "fresh_shell_pid": "689557"
     },
     "AoE": {
-      "status": "UNVERIFIED",
-      "worker_result": "final c3-evidence.json",
-      "four_session_dashboard": false,
-      "attach_marker": true,
-      "scroll_known_marker": true,
-      "resize_screen": true,
-      "detach_dashboard": true,
-      "reattach_same_pane": true,
-      "reattach_live_mode": true,
-      "fresh_sentinel": true,
-      "strict_reason": "The final real ttyd run did not expose a complete four-session/search/resize receipt; no model was invoked.",
-      "receipt": "docs/parity/receipts/aoe-c3-final-evidence.json"
+      "status": "PASS",
+      "coverage": "one-session LIVE preview lifecycle plus native tmux attach copy-mode scroll",
+      "live_preview": {
+        "attach_marker": true,
+        "output_done": true,
+        "resize_stty": "C3_ONE_RESIZE_STTY:27:71",
+        "actual_pane": "71 columns x 27 rows",
+        "ctrlq_dashboard": true,
+        "tab_reattached_same_pane": true,
+        "pane_pid": "805317",
+        "same_shell_pid": "805319",
+        "fresh_sentinel": "C3_ONE_FRESH_SENTINEL_6a91d2",
+        "live_preview_scroll_observed": false
+      },
+      "native_attach": {
+        "copy_mode_pageup_revealed": "C3_NATIVE_SCROLL01..33",
+        "copy_mode_cancelled": true,
+        "scroll_status": "PASS"
+      },
+      "strict_reason": "Composite PASS across the two documented modes; LIVE alternate-screen PageUp did not advance its xterm viewport, while native tmux attach supplied the scroll proof.",
+      "receipt": "docs/parity/receipts/aoe-c3-final-evidence.json",
+      "native_scroll_receipt": "docs/parity/receipts/aoe-c3-native-scroll-receipt.json"
     }
   },
   "c4_workspace": {
     "status": "PASS",
     "products": [
       "AgentDeck web",
-      "upstream Agent Deck attached terminal",
+      "upstream Agent Deck CLI session send",
       "AoE web"
     ],
     "observable_diff": "diff --git a/tracked.txt b/tracked.txt\\n-before\\n+after",
     "identity_distinct": true,
     "parent_unchanged": true,
-    "upstream_viewer_note": "The exact diff was captured in the attached terminal; upstream has no integrated diff pane in this run."
+    "upstream_viewer_note": "The exact diff was captured after the CLI session-send workflow; upstream has no integrated diff pane. The session-send command returned a confirmation warning (exit 1), so the captured terminal output is the user-facing evidence and the warning remains part of the receipt."
   },
   "tui_search": {
     "pre_fix": {

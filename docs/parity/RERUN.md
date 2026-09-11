@@ -82,13 +82,17 @@ run_fixture tmux list-keys -T copy-mode-vi
 
 In the pinned upstream run, `Ctrl-b [` entered copy mode, PageUp scrolled, and
 Escape cancelled it; the successful detach was the product's `Ctrl-q` action.
-The pinned AoE run detached its attached tmux pane with `Ctrl-b d`. Use the
-bindings printed above when a build differs, and record the exact key sequence.
+In the pinned AoE LIVE preview, `Ctrl-q` returned to the dashboard and Tab
+reentered the same pane. AoE's native attach path uses `Ctrl-b d` only while
+directly attached to the tmux pane. Use the bindings printed above when a
+build differs, and record the exact key sequence.
 After reattaching, expect the same pane/session identity and a fresh
 `C3_REATTACHED_UNIQUE_<token>` from the same shell PID. Resize to 110 columns ×
-30 rows and expect `stty size` to report `30:110`; verify copy mode is gone
-(`pane_in_mode=0`) before sending shell input. Any missing observation is
-`UNVERIFIED`.
+30 rows for upstream and expect `stty size` to report `30:110`. Record both the
+outer terminal and the actual tmux pane for AoE: its 110×31 LIVE terminal
+produced a 71×27 pane and `stty size` reported `27:71` after the UI chrome was
+accounted for. Verify copy mode is gone (`pane_in_mode=0`) before sending shell
+input. Any missing observation is `UNVERIFIED`.
 
 For the C4 child-isolation check, the pinned upstream CLI workflow was:
 
