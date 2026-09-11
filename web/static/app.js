@@ -2477,10 +2477,13 @@ function renderNewTask(sheet) {
   // Built-ins retain their existing task adapters. A custom runner enters this
   // selector only after it declares a separate one-shot `task` definition.
   const taskAgentSpecs = allAgentSpecs.filter(a => a.builtin || a.task);
+  const agentLabel = a => a.builtin
+    ? ({claude: "Claude Code", codex: "Codex", gemini: "Gemini"}[a.name] || a.name)
+    : `${a.name} (custom)`;
   const paintTaskAgents = specs => {
     agentBox.replaceChildren(...specs.map(a => {
       const button = document.createElement("button"); button.type = "button";
-      button.dataset.agent = a.name; button.textContent = a.name + (a.builtin ? "" : " (custom)");
+      button.dataset.agent = a.name; button.textContent = agentLabel(a);
       button.onclick = () => { agentBox.dataset.value = a.name; syncAgent(); };
       return button;
     }));
