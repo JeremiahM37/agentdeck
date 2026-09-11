@@ -468,11 +468,15 @@ func WriteCheckpoint(path string, m CheckpointManifest) error {
 		return err
 	}
 	dir, err := os.Open(filepath.Dir(path))
-	if err == nil {
-		_ = dir.Sync()
-		_ = dir.Close()
+	if err != nil {
+		return err
 	}
-	return err
+	syncErr := dir.Sync()
+	closeErr := dir.Close()
+	if syncErr != nil {
+		return syncErr
+	}
+	return closeErr
 }
 
 func ReadCheckpoint(path string) (CheckpointManifest, error) {
@@ -514,6 +518,9 @@ func validateManifest(m CheckpointManifest) error {
 		}
 		if s.IdentityState != IdentityUnknown && s.NativeRecoveryCID == "" {
 			return fmt.Errorf("session %d identity state has no id", s.ID)
+		}
+		if s.IdentityState == IdentityUnknown && s.NativeRecoveryCID != "" {
+			return fmt.Errorf("session %d unknown identity state has an id", s.ID)
 		}
 	}
 	return nil
