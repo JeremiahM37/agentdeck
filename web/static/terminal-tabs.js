@@ -23,6 +23,9 @@ export class TerminalTabs {
       <div class="terminal-tablist" role="tablist" aria-label="Open terminals"></div>
       <a class="b terminal-popout" target="_blank" rel="noopener" title="Open this terminal in a separate browser tab" hidden>Pop out ↗</a>
       <button class="terminal-search" aria-label="Search sessions and actions" title="Search sessions and actions">⌕</button>
+      <details class="terminal-actions"><summary aria-label="Terminal actions" title="Terminal actions">⋯</summary>
+        <div class="terminal-actions-panel" role="menu"><a class="terminal-menu-popout" target="_blank" rel="noopener" role="menuitem">Open in new tab</a>
+          <button class="terminal-menu-close" type="button" role="menuitem">Close this view</button></div></details>
       <button class="terminal-focus" aria-label="Show navigation" title="Show navigation">☰</button>
     </div><div class="terminal-panels"></div>
     <div class="terminal-empty"><h2>No open terminals</h2>
@@ -32,6 +35,9 @@ export class TerminalTabs {
     this.list = root.querySelector('.terminal-tablist');
     this.panels = root.querySelector('.terminal-panels');
     this.popout = root.querySelector('.terminal-popout');
+    this.actions = root.querySelector('.terminal-actions');
+    this.menuPopout = root.querySelector('.terminal-menu-popout');
+    this.menuClose = root.querySelector('.terminal-menu-close');
     this.empty = root.querySelector('.terminal-empty');
     this.focusButton = root.querySelector('.terminal-focus');
     this.focusButton.onclick = () => {
@@ -40,6 +46,11 @@ export class TerminalTabs {
       this.applyLayout();
     };
     root.querySelector('.terminal-search').onclick = () => search?.();
+    this.menuClose.onclick = () => {
+      const tab = this.tabs.get(this.active);
+      if (tab) this.close(tab.path);
+      this.actions.open = false;
+    };
     this.mobile.addEventListener('change', () => this.applyLayout());
     try {
       const saved = JSON.parse(sessionStorage.getItem(STORAGE) || '{}');
@@ -88,7 +99,7 @@ export class TerminalTabs {
       panel.appendChild(frame);
       this.panels.appendChild(panel);
       tab.panel = panel; tab.frame = frame;
-      frame.onload = () => this.notifyVisible(tab);
+      frame.onload = () => { tab.swipeBound = false; this.bindSwipe(tab); this.notifyVisible(tab); };
     }
     for (const entry of this.tabs.values()) {
       if (entry.panel) {
@@ -113,6 +124,43 @@ export class TerminalTabs {
   notifyVisible(tab) {
     if (!this.root.hidden && tab.path === this.active)
       tab.frame?.contentWindow?.postMessage({type:'adk-terminal-visible', mobile:this.mobile.matches, compact:this.mobile.matches && this.compact}, location.origin);
+  }
+  bindSwipe(tab) {
+    if (tab.swipeBound || !tab.frame?.contentWindow) return;
+    const win = tab.frame.contentWindow;
+    let start = null;
+    win.addEventListener('touchstart', (event) => {
+      if (event.touches.length !== 1) { start = null; return; }
+      const touch = event.touches[0];
+      const target = event.target;
+      // Inputs, links, and xterm's modifier/key controls own their gestures.
+      if (target?.closest?.('textarea,input,button,a,select,[contenteditable="true"]')) { start = null; return; }
+      start = {x: touch.clientX, y: touch.clientY, at: performance.now()};
+    }, {passive: true});
+    win.addEventListener('touchend', (event) => {
+      if (!start || event.changedTouches.length !== 1) { start = null; return; }
+      const touch = event.changedTouches[0];
+      const dx = touch.clientX - start.x, dy = touch.clientY - start.y;
+      const elapsed = performance.now() - start.at;
+      const selection = win.getSelection?.();
+      const selected = selection && selection.toString();
+      const threshold = Math.max(72, Math.min(140, win.innerWidth * .22));
+      const flick = elapsed <= 550 && Math.abs(dx) >= threshold && Math.abs(dx) >= Math.abs(dy) * 1.6;
+      start = null;
+      // A horizontal text selection or a vertical terminal scroll remains an
+      // xterm gesture. Only an unambiguous one-finger flick changes tabs.
+      if (!flick || selected) return;
+      const moved = this.selectRelative(dx < 0 ? 1 : -1);
+      if (moved) event.preventDefault();
+    }, {passive: false});
+    tab.swipeBound = true;
+  }
+  selectRelative(delta) {
+    const keys = [...this.tabs.keys()], index = keys.indexOf(this.active);
+    const next = keys[index + delta];
+    if (!next) return false;
+    this.select(next);
+    return true;
   }
   close(path) {
     const tab = this.tabs.get(path);
@@ -175,7 +223,8 @@ export class TerminalTabs {
     }
     const tab = this.tabs.get(this.active);
     this.popout.hidden = !tab;
-    if (tab) this.popout.href = tab.path;
+    this.actions.hidden = !tab;
+    if (tab) { this.popout.href = tab.path; this.menuPopout.href = tab.path; }
     this.empty.hidden = this.tabs.size > 0;
     this.panels.hidden = this.tabs.size === 0;
     const badge = document.getElementById('terminal-badge');

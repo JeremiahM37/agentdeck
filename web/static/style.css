@@ -713,6 +713,7 @@ body.terminals-open { overflow: hidden; }
 .terminal-tab, .terminal-tab-close { border:0; background:transparent; color:var(--ink-dim); cursor:pointer; min-height:40px; }
 .terminal-tab { max-width:230px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; padding:8px 12px; font-size:13px; }
 .terminal-tab[aria-selected="true"] { color:var(--accent-soft); background:var(--accent-wash); }
+.terminal-tab[aria-selected="true"] { box-shadow:inset 0 -2px 0 var(--accent-soft); }
 .terminal-tab-close { width:36px; font-size:20px; }
 .terminal-tab-close:hover { color:var(--ink); background:var(--panel-2); }
 .terminal-popout { flex:none; text-decoration:none; white-space:nowrap; color:var(--accent-soft); background:var(--panel); border:1px solid var(--line-2); border-radius:8px; padding:9px 12px; font-size:12.5px; min-height:40px; display:flex; align-items:center; }
@@ -721,6 +722,12 @@ body.terminals-open { overflow: hidden; }
 .terminal-tabpanel iframe { display:block; border:0; width:100%; height:100%; background:var(--bg); }
 .terminal-empty { padding:28px 20px; max-width:600px; color:var(--ink-dim); }
 .terminal-empty h2 { color:var(--ink); font-size:18px; }
+.terminal-actions { display:none; position:relative; flex:none; }
+.terminal-actions>summary { list-style:none; display:flex; align-items:center; justify-content:center; width:40px; min-height:40px; border:1px solid var(--line); border-radius:7px; color:var(--ink); cursor:pointer; font-size:20px; }
+.terminal-actions>summary::-webkit-details-marker { display:none; }
+.terminal-actions-panel { position:absolute; top:calc(100% + 6px); right:0; z-index:60; width:190px; padding:6px; border:1px solid var(--line-2); border-radius:10px; background:var(--panel-2); box-shadow:0 12px 35px #0008; }
+.terminal-actions-panel>a,.terminal-actions-panel>button { display:block; width:100%; box-sizing:border-box; min-height:42px; padding:10px 12px; border:0; border-radius:6px; background:transparent; color:var(--ink); text-align:left; text-decoration:none; font:13px var(--sans); cursor:pointer; }
+.terminal-actions-panel>a:hover,.terminal-actions-panel>button:hover { background:var(--panel); }
 @media(min-width:1024px) { #terminal-workspace { bottom:0; } }
 @media(max-width:600px) {
   .terminal-tabbar { gap:4px; padding:4px; }
