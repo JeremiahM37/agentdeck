@@ -11,16 +11,24 @@ options:
     viewport: [1280, 800]
 
 steps:
+  - name: frontend checks and build pass
+    actions:
+      - shell:
+          cmd: ADK_ISOLATION_REVIEWED=1 ADK_TEST_MODE=frontend tools/run-isolated-tests.sh .
+          timeout: 300
+
   - name: go suite passes
     actions:
-      - shell: go test ./... -count=1
+      - shell:
+          cmd: ADK_ISOLATION_REVIEWED=1 ADK_TEST_MODE=go tools/run-isolated-tests.sh .
+          timeout: 1200
     expect:
       no_log_contains: "FAIL"
 
   - name: browser end-to-end passes
     actions:
       - shell:
-          cmd: /home/admin/projects/agentdeck/.venv/bin/python -m pytest -q e2e --durations=20
+          cmd: ADK_ISOLATION_REVIEWED=1 ADK_TEST_MODE=e2e tools/run-isolated-tests.sh .
           # The 201-case suite reached 100% after the 900s aggregate deadline.
           # Allow startup/teardown headroom and report slow tests for diagnosis.
           # Individual Playwright and subprocess deadlines remain unchanged.
@@ -39,7 +47,7 @@ steps:
       - wait: 2.5
     expect:
       vision: >
-        a dark slate kanban board with violet accents titled agentdeck, showing six
+        a dark kanban board titled agentdeck, showing six
         columns (backlog, queued, running, review, done, failed), a quick-dispatch
         input bar at the top, and a LIVE connection indicator; no error text, no
         blank white screen

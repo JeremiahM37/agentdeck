@@ -1,0 +1,94 @@
+#!/bin/sh
+# tmux binary used by isolated AgentDeck tests.
+#
+# The test process is expected to run in a bubblewrap mount namespace.  This
+# wrapper is still deliberately defensive: an inherited TMUX value is ignored,
+# an implicit socket is forced into the test namespace, and kill-server is
+# translated to exact kill-session calls on a validated test socket.
+set -eu
+
+real_tmux=/usr/bin/tmux
+socket_root=${ADK_TEST_TMUX_ROOT:-/tmp}
+tmux_tmpdir=${TMUX_TMPDIR:-/tmp}
+default_socket=${ADK_TEST_TMUX_SOCKET:-$tmux_tmpdir/tmux-$(id -u)/default}
+
+socket_is_allowed() {
+    case "$1" in
+        /*) case "$1" in
+            "$socket_root"/*|/tmp/*) return 0 ;;
+        esac ;;
+    esac
+    return 1
+}
+
+args="$@"
+socket=$default_socket
+has_socket=0
+prev=
+label=
+command_seen=0
+for arg do
+	if [ "$command_seen" -eq 1 ]; then
+		continue
+	fi
+	if [ "$prev" = -S ]; then
+        socket=$arg
+        has_socket=1
+        prev=
+        continue
+    fi
+    if [ "$prev" = -L ]; then
+        label=$arg
+        prev=
+        continue
+    fi
+	case "$arg" in
+		-S) prev=-S ;;
+		-S/*) socket=${arg#-S}; has_socket=1 ;;
+		-L) prev=-L ;;
+		-L*) label=${arg#-L} ;;
+		kill-server) : ;;
+		-*) : ;;
+		*) command_seen=1 ;;
+	esac
+done
+if [ -n "$label" ] && [ "$has_socket" -eq 0 ]; then
+    case "$label" in
+        ''|*[!A-Za-z0-9_.-]*) echo "refusing unsafe tmux label: $label" >&2; exit 125 ;;
+    esac
+    default_socket="$tmux_tmpdir/tmux-$(id -u)/$label"
+    socket=$default_socket
+fi
+
+socket_is_allowed "$socket" || {
+    echo "refusing tmux socket outside isolated test root: $socket" >&2
+    exit 125
+}
+
+# Explicit -S paths do not make their parent directory.  Creating it here is
+# confined to the validated test socket root (and the runner's private /tmp).
+mkdir -p "$(dirname "$socket")"
+
+# A test must never inherit the caller's client socket.  tmux itself reads
+# TMUX before command-line defaults, so clear it even when -S is present.
+unset TMUX
+
+case " $args " in
+    *" kill-server "*)
+        # The socket path is the ownership boundary.  Enumerate its sessions
+        # and kill each exact (=name) target; never issue kill-server.
+        sessions=$($real_tmux -S "$socket" list-sessions -F '#{session_name}' 2>/dev/null || true)
+        while IFS= read -r name; do
+            [ -n "$name" ] || continue
+            $real_tmux -S "$socket" kill-session -t "=$name" 2>/dev/null || true
+        done <<EOF
+$sessions
+EOF
+        exit 0
+        ;;
+esac
+
+if [ "$has_socket" -eq 1 ]; then
+    exec "$real_tmux" "$@"
+fi
+exec "$real_tmux" -S "$default_socket" "$@"

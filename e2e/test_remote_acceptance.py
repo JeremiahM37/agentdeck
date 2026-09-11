@@ -60,7 +60,7 @@ def remote_terminal(real_terminal, tmp_path):
     _ssh(known_hosts, "mkdir -p %s %s %s && git init -q -b main %s" % tuple(
         shlex.quote(str(p)) for p in (root, home, tmux_dir, root)))
     name = "remote-accept-%s" % uuid.uuid4().hex[:10]
-    env = "env HOME=%s TMUX_TMPDIR=%s" % (shlex.quote(str(home)), shlex.quote(str(tmux_dir)))
+    env = "env HOME=%s TMUX=%s TMUX_TMPDIR=%s" % (shlex.quote(str(home)), shlex.quote(""), shlex.quote(str(tmux_dir)))
     _ssh(known_hosts, "%s tmux -f /dev/null new-session -d -s %s -c %s bash --norc" % (
         env, shlex.quote(name), shlex.quote(str(root))))
     prefix = "%s sh -c" % env

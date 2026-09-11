@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"github.com/JeremiahM37/agentdeck/internal/executor"
+	"github.com/JeremiahM37/agentdeck/internal/testutil"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -23,7 +24,7 @@ func TestFailedCheckoutHookRetainsRecoverableOwnedWorktree(t *testing.T) {
 	}
 	t.Setenv("TMUX_TMPDIR", socketRoot)
 	t.Setenv("TMUX", "")
-	t.Cleanup(func() { exec.Command("tmux", "kill-server").Run(); os.RemoveAll(socketRoot) })
+	t.Cleanup(func() { testutil.CleanupTmux(t, socketRoot); os.RemoveAll(socketRoot) })
 	repo := t.TempDir()
 	git := func(dir string, args ...string) string {
 		t.Helper()
@@ -78,7 +79,7 @@ func TestInteractiveIsolationOwnershipAndSafeRemoval(t *testing.T) {
 	}
 	t.Setenv("TMUX_TMPDIR", socketRoot)
 	t.Setenv("TMUX", "")
-	t.Cleanup(func() { exec.Command("tmux", "kill-server").Run(); os.RemoveAll(socketRoot) })
+	t.Cleanup(func() { testutil.CleanupTmux(t, socketRoot); os.RemoveAll(socketRoot) })
 	root := t.TempDir()
 	repo := filepath.Join(root, "source with spaces")
 	os.Mkdir(repo, 0700)

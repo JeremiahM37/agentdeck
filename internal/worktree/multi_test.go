@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/JeremiahM37/agentdeck/internal/executor"
+	"github.com/JeremiahM37/agentdeck/internal/testutil"
 )
 
 func TestMultiWorkspaceTargetPreflightPreservesRepositories(t *testing.T) {
@@ -428,7 +429,7 @@ func TestMultiWorkspaceCreationFailureAndCleanup(t *testing.T) {
 	}
 	t.Setenv("TMUX_TMPDIR", socket)
 	t.Setenv("TMUX", "")
-	t.Cleanup(func() { exec.Command("tmux", "kill-server").Run(); os.RemoveAll(socket) })
+	t.Cleanup(func() { testutil.CleanupTmux(t, socket); os.RemoveAll(socket) })
 	root := t.TempDir()
 	git := func(repo string, args ...string) string {
 		t.Helper()
@@ -626,7 +627,7 @@ func testMultiWorkspaceSupervisorDeath(t *testing.T, cancel bool) {
 	}
 	t.Setenv("TMUX_TMPDIR", socket)
 	t.Setenv("TMUX", "")
-	t.Cleanup(func() { exec.Command("tmux", "kill-server").Run(); os.RemoveAll(socket) })
+	t.Cleanup(func() { testutil.CleanupTmux(t, socket); os.RemoveAll(socket) })
 	root := t.TempDir()
 	repo := filepath.Join(root, "repo")
 	os.Mkdir(repo, 0700)

@@ -19,8 +19,11 @@ from conftest import _binary, _unused_port
 @pytest.fixture()
 def real_terminal(tmp_path, request):
     real_tmux = shutil.which('tmux')
+    assert real_tmux, 'tmux is required for the real terminal fixture'
     tmux_dir = tempfile.TemporaryDirectory(prefix='adkt-', dir='/tmp')
-    env = {**os.environ, 'TMUX_TMPDIR': tmux_dir.name, 'TMUX': '', 'AGENTDECK_MOCK': '0',
+    fixture_tmux_dir = os.environ.get('ADK_TEST_TMUX_ROOT', tmux_dir.name)
+    Path(fixture_tmux_dir).mkdir(parents=True, exist_ok=True)
+    env = {**os.environ, 'TMUX_TMPDIR': fixture_tmux_dir, 'TMUX': '', 'AGENTDECK_MOCK': '0',
            'AGENTDECK_DB': str(tmp_path/'test.db'), 'AGENTDECK_HOST': '127.0.0.1',
            'AGENTDECK_GRIMOIRE_URL': '', 'AGENTDECK_AUTH_TOKEN': '', 'AGENTDECK_SESSION_POLL': '3600',
            'XDG_STATE_HOME': str(tmp_path/'state')}
@@ -32,7 +35,7 @@ def real_terminal(tmp_path, request):
     root = tmp_path/'workspace'; root.mkdir()
     (root/'hello.txt').write_text('A useful artifact\n<script>window.bad=true</script>\n')
     subprocess.run(['git','init','-q',str(root)], check=True)
-    subprocess.run(['tmux','-f','/dev/null','new-session','-d','-s','terminal-test','-c',str(root),'bash --norc'],env=env,check=True)
+    subprocess.run(['tmux','-f','/dev/null','new-session','-d','-s','terminal-test','-c',str(root),'bash','--norc'],env=env,check=True, capture_output=True, text=True)
     options = getattr(request, 'param', {})
     if options.get('no_alternate_screen'):
         subprocess.run(['tmux','set-option','-g','terminal-overrides',',*:smcup@:rmcup@'],env=env,check=True)
@@ -68,7 +71,7 @@ def real_terminal(tmp_path, request):
         yield dict(url=url,root=root,env=env,id=sess['id'],api=api,proc=proc,port=port,target_id=target['id'])
     finally:
         proc.terminate();proc.wait(timeout=15);log.close()
-        subprocess.run([real_tmux,'kill-server'],env=env,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
+        _cleanup_tmux(real_tmux, env, fixture_tmux_dir)
         tmux_dir.cleanup()
 
 def open_terminal(page, t):
@@ -76,6 +79,21 @@ def open_terminal(page, t):
     expect(page.locator('#connection')).to_have_text('Connected',timeout=20000)
     expect(page.locator('#agent-terminal .xterm-screen')).to_contain_text('$',timeout=10000)
     page.locator('#agent-terminal').click()
+
+def _cleanup_tmux(real_tmux, env, tmux_dir):
+    """Kill exact sessions on each socket created by this fixture."""
+    for socket_path in Path(tmux_dir).glob('tmux-*/default'):
+        try:
+            names = subprocess.check_output(
+                [real_tmux, '-S', str(socket_path), 'list-sessions', '-F', '#{session_name}'],
+                env=env, text=True, stderr=subprocess.DEVNULL,
+            ).splitlines()
+        except subprocess.CalledProcessError:
+            continue
+        for name in names:
+            if name and '\n' not in name and '\r' not in name:
+                subprocess.run([real_tmux, '-S', str(socket_path), 'kill-session', '-t', '='+name],
+                               env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
 
 def terminal_tool(page, selector):
     if not page.locator(selector).is_visible():

@@ -13,6 +13,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/JeremiahM37/agentdeck/internal/testutil"
 )
 
 func TestLocalRuntimeRealProcessPersistenceAndConcurrency(t *testing.T) {
@@ -34,7 +36,7 @@ func TestLocalRuntimeRealProcessPersistenceAndConcurrency(t *testing.T) {
 		if out, err := fixture.CombinedOutput(); err != nil {
 			t.Fatalf("create isolated fixture tmux session: %v (%s)", err, out)
 		}
-		t.Cleanup(func() { _ = exec.Command("tmux", "-S", fixtureSocket, "kill-server").Run() })
+		t.Cleanup(func() { testutil.CleanupTmuxSocket(t, fixtureSocket) })
 	}
 
 	if out, err := runLocalCLI(bin, env, "local", "--help"); err != nil || !bytes.Contains(out, []byte("agentdeck local status")) || !bytes.Contains(out, []byte("agentdeck local [COMMAND ...]")) {

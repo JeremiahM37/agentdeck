@@ -11,7 +11,12 @@ import (
 )
 
 func TestArchiveRefusedStopOrChangedIdentityKeepsRecordLive(t *testing.T) {
-	real, err := exec.LookPath("tmux")
+	testutil.RequireIsolated(t)
+	real := "/usr/bin/tmux"
+	var err error
+	if _, statErr := os.Stat(real); statErr != nil {
+		real, err = exec.LookPath("tmux")
+	}
 	if err != nil {
 		t.Skip("tmux not installed")
 	}
@@ -23,16 +28,18 @@ func TestArchiveRefusedStopOrChangedIdentityKeepsRecordLive(t *testing.T) {
 			}
 			t.Setenv("TMUX_TMPDIR", dir)
 			t.Setenv("TMUX", "")
-			t.Cleanup(func() { testutil.CleanupTmux(t, dir); _ = os.RemoveAll(dir) })
+			socket := filepath.Join(dir, "tmux.sock")
+			t.Setenv("ADK_TEST_TMUX_SOCKET", socket)
+			t.Cleanup(func() { testutil.CleanupTmuxSocket(t, socket); _ = os.RemoveAll(dir) })
 			m, s := pollRig(t)
-			if out, err := exec.Command(real, "-f", "/dev/null", "new-session", "-d", "-s", s.TmuxSession, "sleep 600").CombinedOutput(); err != nil {
+			if out, err := exec.Command(real, "-S", socket, "-f", "/dev/null", "new-session", "-d", "-s", s.TmuxSession, "--", "sleep", "600").CombinedOutput(); err != nil {
 				t.Fatalf("tmux %s %v", out, err)
 			}
 			action := "exit 0"
 			if change {
-				action = shellq.Quote(real) + " set-option -t poll-test @agentdeck-tracking-identity ffffffffffffffffffffffffffffffff"
+				action = shellq.Quote(real) + " -S " + shellq.Quote(socket) + " set-option -t poll-test @agentdeck-tracking-identity ffffffffffffffffffffffffffffffff"
 			}
-			wrapper := "#!/bin/sh\nif [ \"$1\" = if-shell ]; then " + action + "; fi\nexec " + shellq.Quote(real) + " \"$@\"\n"
+			wrapper := "#!/bin/sh\nif [ \"$1\" = if-shell ]; then " + action + "; fi\ncase \"$1\" in -S|-L) exec " + shellq.Quote(real) + " \"$@\" ;; esac\nexec " + shellq.Quote(real) + " -S " + shellq.Quote(socket) + " \"$@\"\n"
 			if err := os.WriteFile(filepath.Join(dir, "tmux"), []byte(wrapper), 0755); err != nil {
 				t.Fatal(err)
 			}
@@ -44,7 +51,7 @@ func TestArchiveRefusedStopOrChangedIdentityKeepsRecordLive(t *testing.T) {
 			if err != nil || got.EndedAt != nil || got.ArchivedAt != nil {
 				t.Fatalf("live record lost: %+v %v", got, err)
 			}
-			if err := exec.Command(real, "has-session", "-t", "=poll-test").Run(); err != nil {
+			if err := exec.Command(real, "-S", socket, "has-session", "-t", "=poll-test").Run(); err != nil {
 				t.Fatal("different/current terminal was killed")
 			}
 		})

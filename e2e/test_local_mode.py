@@ -183,8 +183,17 @@ def test_source_and_binary_local_install_create_persist_and_reattach(local_binar
         _run(binary, env, "stop", check=False)
         for socket in (private_tmux, collision_socket):
             if socket:
-                subprocess.run(["tmux", "-S", str(socket), "kill-server"], check=False,
-                               capture_output=True)
+                try:
+                    names = subprocess.check_output(
+                        ["tmux", "-S", str(socket), "list-sessions", "-F", "#{session_name}"],
+                        env=env, text=True, stderr=subprocess.DEVNULL,
+                    ).splitlines()
+                except subprocess.CalledProcessError:
+                    names = []
+                for name in names:
+                    if name and "\n" not in name and "\r" not in name:
+                        subprocess.run(["tmux", "-S", str(socket), "kill-session", "-t", "="+name],
+                                       env=env, check=False, capture_output=True)
 
     request.addfinalizer(
         cleanup

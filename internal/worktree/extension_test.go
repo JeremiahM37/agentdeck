@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"github.com/JeremiahM37/agentdeck/internal/executor"
+	"github.com/JeremiahM37/agentdeck/internal/testutil"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -132,7 +133,7 @@ func TestExtensionCancellationDoesNotStopExistingTerminal(t *testing.T) {
 	}
 	t.Setenv("TMUX_TMPDIR", socketRoot)
 	t.Setenv("TMUX", "")
-	t.Cleanup(func() { exec.Command("tmux", "kill-server").Run(); os.RemoveAll(socketRoot) })
+	t.Cleanup(func() { testutil.CleanupTmux(t, socketRoot); os.RemoveAll(socketRoot) })
 	plan, extra := extensionFixture(t)
 	ex := executor.NewLocal()
 	if output, err := exec.Command("tmux", "new-session", "-d", "-s", "extension-existing", "-c", plan.Path, "sleep 600").CombinedOutput(); err != nil {

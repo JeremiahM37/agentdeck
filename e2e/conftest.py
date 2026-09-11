@@ -54,11 +54,21 @@ def _binary() -> str:
 
 def _start(port: int, extra_env: dict):
     tmp = tempfile.mkdtemp(prefix="adk-e2e-")
+    # Do not pass a caller's tmux client/server identity into fixture
+    # subprocesses.  Each run gets private HOME and tmux state; the isolated
+    # runner adds a mount/PID namespace around this as a second guard.
+    private_home = Path(tmp) / "home"
+    private_home.mkdir()
+    private_tmux = Path(tmp) / "tmux"
+    private_tmux.mkdir()
     env = {**os.environ,
            "AGENTDECK_MOCK": "1", "AGENTDECK_TICK": "0.1",
            "AGENTDECK_MOCK_DELAY": "0.25", "AGENTDECK_PORT": str(port),
            "AGENTDECK_DB": str(Path(tmp) / "e2e.db"),
            "AGENTDECK_BASE_URL": f"http://127.0.0.1:{port}",
+           "HOME": str(private_home),
+           "TMUX": "",
+           "TMUX_TMPDIR": str(private_tmux),
            **extra_env}
     proc = subprocess.Popen([_binary()], cwd=ROOT, env=env,
                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)

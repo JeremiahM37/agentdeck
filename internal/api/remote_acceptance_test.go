@@ -42,8 +42,8 @@ func newRemoteAcceptanceRig(t *testing.T, h *harness) *remoteAcceptanceRig {
 			t.Fatal(err)
 		}
 	}
-	prefix := fmt.Sprintf("env HOME=%s TMUX_TMPDIR=%s GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=safe.directory GIT_CONFIG_VALUE_0=%s sh -c",
-		executor.ShellQuote(r.home), executor.ShellQuote(r.tmuxDir), executor.ShellQuote("*"))
+	prefix := fmt.Sprintf("env HOME=%s TMUX=%s TMUX_TMPDIR=%s GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=safe.directory GIT_CONFIG_VALUE_0=%s sh -c",
+		executor.ShellQuote(r.home), executor.ShellQuote(""), executor.ShellQuote(r.tmuxDir), executor.ShellQuote("*"))
 	target, err := h.App.DB.InsertTarget(&store.Target{
 		Name: "loopback SSH acceptance", Kind: "ssh", Host: "127.0.0.1", User: "root", Port: 22,
 		KeyPath: "/home/admin/.ssh/id_ed25519", Workroot: filepath.Join(dir, "work"),
@@ -62,9 +62,9 @@ func newRemoteAcceptanceRig(t *testing.T, h *harness) *remoteAcceptanceRig {
 		defer cancel()
 		// This private socket can contain only the named fixture session.
 		r.ex.Run(ctx, "tmux -f /dev/null kill-session -t ="+executor.ShellQuote(r.tmuxName)+" || true", executor.RunOpts{Timeout: 5})
-		// The SSH login is root while the test process owns t.TempDir; stop the
-		// private server too so its root-owned socket is removed before cleanup.
-		r.ex.Run(ctx, "tmux -f /dev/null kill-server || true", executor.RunOpts{Timeout: 5})
+		// The SSH login is root while the test process owns t.TempDir; remove
+		// only exact sessions from this fixture's private socket.
+		r.ex.Run(ctx, "socket=$(printf '%s/tmux-%s/default' \"$TMUX_TMPDIR\" \"$(id -u)\"); sessions=$(tmux -S \"$socket\" list-sessions -F '#{session_name}' 2>/dev/null || true); while IFS= read -r name; do [ -n \"$name\" ] && tmux -S \"$socket\" kill-session -t \"=$name\" || true; done <<EOF\n$sessions\nEOF", executor.RunOpts{Timeout: 5})
 		for _, path := range []string{r.root, r.home, r.tmuxDir, filepath.Join(filepath.Dir(r.root), "work")} {
 			r.ex.Run(ctx, "chmod -R a+rwX "+executor.ShellQuote(path)+" || true", executor.RunOpts{Timeout: 5})
 		}

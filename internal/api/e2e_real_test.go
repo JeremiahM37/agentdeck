@@ -29,6 +29,7 @@ import (
 	"github.com/JeremiahM37/agentdeck/internal/app"
 	"github.com/JeremiahM37/agentdeck/internal/config"
 	"github.com/JeremiahM37/agentdeck/internal/store"
+	"github.com/JeremiahM37/agentdeck/internal/testutil"
 )
 
 // tmux names come from database ids (adk-<attempt>, adk-s<session>), and every
@@ -48,7 +49,7 @@ func isolateTmux(t *testing.T) {
 	t.Setenv("TMUX", "")
 	t.Setenv("TMUX_TMPDIR", dir)
 	t.Cleanup(func() {
-		exec.Command("tmux", "kill-server").Run()
+		testutil.CleanupTmux(t, dir)
 		os.RemoveAll(dir)
 	})
 }

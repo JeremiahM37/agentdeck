@@ -48,7 +48,25 @@ func CleanupTmuxSocket(t *testing.T, socket string) {
 // bwrap namespace.
 func RequireIsolated(t *testing.T) {
 	t.Helper()
-	if os.Getenv("ADK_TEST_ISOLATED") != "1" || os.Getenv("TMUX") != "" || os.Getenv("TMUX_TMPDIR") != "/tmp/adk-test-tmux" {
+	if os.Getenv("ADK_TEST_ISOLATED") != "1" || os.Getenv("TMUX") != "" || !privateUserNamespace() {
 		t.Fatal("real-process test requires the reviewed isolated runner")
 	}
+}
+
+// privateUserNamespace verifies the runner's kernel isolation instead of
+// trusting an environment marker that a direct host invocation could set by
+// hand. The host's initial namespace has one full-range identity mapping;
+// bwrap's unprivileged namespace has a bounded mapping instead.
+func privateUserNamespace() bool {
+	for _, path := range []string{"/proc/self/uid_map", "/proc/self/gid_map"} {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return false
+		}
+		fields := strings.Fields(string(data))
+		if len(fields) < 3 || (fields[0] == "0" && fields[1] == "0" && fields[2] == "4294967295") {
+			return false
+		}
+	}
+	return true
 }
