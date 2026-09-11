@@ -293,7 +293,14 @@ try:
         seen.add(p); queue.extend(children.get(p, []))
     for p in sorted(seen):
         try:
-            if os.path.basename(os.readlink('/proc/'+str(p)+'/exe')) != agent: continue
+            executable = os.path.basename(os.readlink('/proc/'+str(p)+'/exe'))
+            # Claude Code installs each release under a versioned executable
+            # path (for example .../versions/2.1.268), while its process comm
+            # remains the name claude. This probe only locates the configured home;
+            # CaptureNativeID separately validates PID/starttime, transcript,
+            # workspace, and tmux tracking identity before accepting a CID.
+            comm = open('/proc/'+str(p)+'/comm').read().strip()
+            if executable != agent and not (agent == 'claude' and comm == 'claude'): continue
             env = {}
             for line in open('/proc/'+str(p)+'/environ','rb').read().split(b'\0'):
                 if b'=' in line:
