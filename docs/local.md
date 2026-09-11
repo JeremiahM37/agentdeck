@@ -7,9 +7,9 @@ CLI and its provider/model environment remain the source of truth.
 
 ## Install on Linux or macOS
 
-The local runtime uses `tmux` for durable sessions and Git for project
-workspaces. Install those first, then use the installer from an AgentDeck
-checkout:
+The local runtime uses `tmux` for durable sessions, Git for project workspaces,
+and Python 3 for its local session/task helpers. Install those first, then use
+the installer from an AgentDeck checkout:
 
 ```sh
 git clone https://github.com/JeremiahM37/agentdeck.git
@@ -54,8 +54,8 @@ the local runtime create its workspace.
 
 ## Windows and WSL
 
-The local runtime is Linux-based. On Windows, install WSL2, install Git, tmux,
-Go (for a source build), and the agent CLI inside the same WSL distribution,
+The local runtime is Linux-based. On Windows, install WSL2, Git, tmux, Python
+3, Go (for a source build), and the agent CLI inside the same WSL distribution,
 then run `tools/install-local.sh` from WSL. The Windows-native CLI and Windows
 paths are not automatically available inside WSL. The installer intentionally
 refuses Git Bash, MSYS, and Cygwin so a partial Windows installation is not
@@ -70,7 +70,7 @@ OpenSSH host/key setup and is separate from the local command.
 | | Standalone local | Remote client |
 |---|---|---|
 | Agent process | Same machine as the terminal | AgentDeck server or a registered target |
-| Setup | Git, tmux, agent CLI; Go for source builds | SSH alias/key and reachable control plane |
+| Setup | Git, tmux, Python 3, agent CLI; Go for source builds | SSH alias/key and reachable control plane |
 | Command | `agentdeck local` | `agentdeck` or `agentdeck console` |
 | Server URL | Not required | `AGENTDECK_API` or installer `--api` |
 | Grimoire | Optional/not required | Optional; configured by the control plane |
@@ -78,3 +78,8 @@ OpenSSH host/key setup and is separate from the local command.
 Both paths preserve the agent CLI's own provider and model settings. Choose
 the remote client when one board should manage agents on several machines;
 choose local when the terminal workspace should stay on this computer.
+
+Linux local terminal mode is the tested path. macOS terminal mode is supported
+by the same command and prerequisites, while browser, file, and URI integrations
+remain unverified there; use the hosted client for those integrations if they
+are required.

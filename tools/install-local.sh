@@ -50,7 +50,7 @@ case "$(uname -s)" in
     ;;
 esac
 
-for prerequisite in git tmux; do
+for prerequisite in git tmux python3; do
   command -v "$prerequisite" >/dev/null || {
     echo "Missing prerequisite: $prerequisite (install it before local AgentDeck)." >&2
     exit 1
@@ -105,19 +105,29 @@ fi
 mkdir -p -- "$prefix"
 if [[ -z $name ]]; then
   name=agentdeck
-  if [[ -e "$prefix/$name" || -L "$prefix/$name" ]]; then
+  managed_marker="${XDG_STATE_HOME:-${HOME:?HOME is required}/.local/state}/agentdeck/local/installed/$name"
+  if [[ -e "$prefix/$name" || -L "$prefix/$name" ]] && {
+    [[ ! -f $managed_marker ]] || [[ $(cat -- "$managed_marker") != "$prefix/$name" ]]
+  }; then
     name=agentdeck-local
   fi
 fi
 [[ $name =~ ^[a-zA-Z0-9._+-]+$ ]] || { echo 'Invalid command name' >&2; exit 2; }
 destination="$prefix/$name"
+state_root="${XDG_STATE_HOME:-${HOME:?HOME is required}/.local/state}/agentdeck/local"
 if [[ -e $destination || -L $destination ]]; then
-  backup_dir="${HOME:?HOME is required}/.local/state/agentdeck/local-backups/$(date +%Y%m%d-%H%M%S)"
+  backup_dir="$state_root/backups/$(date +%Y%m%d-%H%M%S)"
   mkdir -p -- "$backup_dir"
   cp -p -- "$destination" "$backup_dir/$name"
   echo "Previous $name saved in $backup_dir/$name"
 fi
-install -m 755 "$candidate" "$destination"
+staged_destination="$prefix/.${name}.install.$$"
+install -m 755 "$candidate" "$staged_destination"
+mv -f -- "$staged_destination" "$destination"
+mkdir -p -- "$state_root/installed"
+marker_tmp="$state_root/installed/.${name}.tmp.$$"
+printf '%s\n' "$destination" > "$marker_tmp"
+mv -f -- "$marker_tmp" "$state_root/installed/$name"
 echo "Installed $destination"
 echo "Run: $name local"
 case ":${PATH:-}:" in

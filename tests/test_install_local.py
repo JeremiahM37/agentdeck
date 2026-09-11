@@ -12,7 +12,7 @@ INSTALLER = ROOT / "tools" / "install-local.sh"
 
 def run_installer(tmp_path, *args, extra_path=()):
     home = tmp_path / "home"
-    home.mkdir()
+    home.mkdir(exist_ok=True)
     path = [str(p) for p in extra_path]
     path.extend(p for p in (shutil.which("git"), shutil.which("tmux"), "/usr/bin", "/bin") if p)
     env = {**os.environ, "HOME": str(home), "PATH": os.pathsep.join(path)}
@@ -36,15 +36,35 @@ def test_binary_install_does_not_clobber_remote_client(tmp_path):
     prefix = tmp_path / "bin"
     remote = prefix / "agentdeck"
     prefix.mkdir()
-    remote.write_text("remote launcher\n")
+    remote.write_text("#!/bin/sh\n# remote launcher\n")
+    remote.chmod(0o755)
 
     result, home = run_installer(tmp_path, "--binary", binary, "--prefix", prefix)
 
     assert result.returncode == 0, result.stderr
     assert (prefix / "agentdeck-local").is_file()
-    assert remote.read_text() == "remote launcher\n"
+    assert remote.read_text() == "#!/bin/sh\n# remote launcher\n"
     assert "agentdeck-local local" in result.stdout
     assert home.exists()
+
+
+def test_reinstall_updates_an_existing_local_command(tmp_path):
+    first = tmp_path / "first-agentdeck"
+    second = tmp_path / "second-agentdeck"
+    fake_binary(first)
+    second.write_text("#!/bin/sh\ncase \"$1\" in version) echo local-test-2;; local) exit 0;; esac\n")
+    second.chmod(0o755)
+    prefix = tmp_path / "bin"
+
+    result, _ = run_installer(tmp_path, "--binary", first, "--prefix", prefix)
+    assert result.returncode == 0, result.stderr
+    result, home = run_installer(tmp_path, "--binary", second, "--prefix", prefix)
+
+    assert result.returncode == 0, result.stderr
+    assert (prefix / "agentdeck").is_file()
+    assert not (prefix / "agentdeck-local").exists()
+    assert subprocess.run([prefix / "agentdeck", "version"], text=True, capture_output=True, check=True).stdout.strip() == "local-test-2"
+    assert list((home / ".local/state/agentdeck/local/backups").rglob("agentdeck"))
 
 
 def test_source_build_works_when_called_outside_checkout(tmp_path):
