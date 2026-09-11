@@ -2,6 +2,9 @@
 
 Reviewed upstream documentation on 2026-09-09. This is a feature/workflow review,
 not a performance benchmark or a claim that every upstream feature was tested.
+The bounded evidence ledger for the 2026-09-10 browser/TUI comparison is in
+[comparison-2026-09-10.md](comparison-2026-09-10.md); it records tested cells and
+keeps unverified parity and superiority claims open.
 
 | Project | Where it sets a useful bar |
 | --- | --- |
