@@ -71,7 +71,7 @@ On the AgentDeck server: agentdeck console
 On Linux: download install-agentdeck-cli.sh from this directory, then:
   bash install-agentdeck-cli.sh --server agentdeck --api https://YOUR_SERVER:8443
 On Windows: download install-agentdeck-cli.ps1 and run in PowerShell:
-  powershell -ExecutionPolicy Bypass -File .\install-agentdeck-cli.ps1 -Server agentdeck
+  powershell -ExecutionPolicy Bypass -File .\install-agentdeck-cli.ps1 -Server agentdeck -Api http://127.0.0.1:9110
 
 Run agentdeck to open the console; agentdeck --help lists scripting commands.
 Manage sessions, tasks, routines, projects, targets, approvals and settings.
