@@ -107,9 +107,10 @@ type Attempt struct {
 	VerifyJSON    string   `json:"verify_json"`
 	// MCPJSON and StrictMCP snapshot the project launch policy for takeover;
 	// they are internal because MCP declarations can contain credentials.
-	MCPJSON     string `json:"-"`
-	StrictMCP   int    `json:"-"`
-	MCPSnapshot int    `json:"-"`
+	MCPJSON          string `json:"-"`
+	StrictMCP        int    `json:"-"`
+	MCPSnapshot      int    `json:"-"`
+	LaunchConfigJSON string `json:"-"`
 }
 
 // Event is one normalised line of an agent's output stream.

@@ -68,9 +68,12 @@ type Scheduler struct {
 	Notifier *sinks.Notifier
 	Reg      *executor.Registry
 	Launcher agents.Launcher
-	Creds    *creds.Provisioner
-	Cfg      *config.Config
-	Log      *slog.Logger
+	// AgentDefinitions resolves configured custom CLIs at queue time. Built-ins
+	// remain in Launcher; custom definitions use the generic task adapter.
+	AgentDefinitions func() map[string]agents.TaskDefinition
+	Creds            *creds.Provisioner
+	Cfg              *config.Config
+	Log              *slog.Logger
 
 	// Sessions is the interactive-session manager. The scheduler drives its poll
 	// so there is ONE loop watching targets, not two competing for the same
@@ -430,11 +433,20 @@ func (s *Scheduler) buildLaunch(att *store.Attempt, c *runCtx, workdir, sess str
 	for k, v := range s.Creds.BaseAgentEnv() {
 		env[k] = v
 	}
-	for k, v := range projectEnv(c.Project) {
+	for k, v := range kw.Env {
 		env[k] = v
 	}
+	if kw.Env == nil {
+		for k, v := range projectEnv(c.Project) {
+			env[k] = v
+		}
+	}
+	agent := firstNonEmpty(c.Task.Agent, "claude")
+	if kw.Agent != "" {
+		agent = kw.Agent
+	}
 	return s.Launcher.Command(agents.LaunchSpec{
-		Agent:          firstNonEmpty(c.Task.Agent, "claude"),
+		Agent:          agent,
 		Worktree:       workdir,
 		TmuxSession:    sess,
 		PermissionMode: c.Task.PermissionMode,
@@ -446,6 +458,7 @@ func (s *Scheduler) buildLaunch(att *store.Attempt, c *runCtx, workdir, sess str
 		MCPConfig:      kw.MCPConfig,
 		StrictMCP:      kw.StrictMCP,
 		ExtraArgs:      kw.ExtraArgs,
+		Definition:     kw.Definition,
 	})
 }
 
@@ -477,16 +490,41 @@ func (s *Scheduler) drainEvents(ctx context.Context, ex executor.Executor,
 	// a trailing partial line is left for the next read rather than parsed half
 	nl := lastIndexByte(chunk, '\n')
 	if nl < 0 {
+		// A plain custom CLI is allowed to finish without a final newline. Once
+		// exit_code exists the bytes are complete, so do not strand its last
+		// message in the in-memory remainder forever.
+		exitRaw, exitErr := ex.ReadFile(ctx, rt+"/exit_code", 0)
+		if exitErr == nil && strings.TrimSpace(string(exitRaw)) != "" {
+			// Parsers intentionally retain an unterminated line during normal
+			// polling. At process exit it is complete by definition; synthesize
+			// the delimiter only for parsing and advance the real byte offset by
+			// the bytes that were actually read.
+			events, _ := s.parseAttemptEvents(att, c, string(chunk)+"\n")
+			if err := s.StoreEvents(att, events); err != nil {
+				return nil, err
+			}
+			att.LogOffset += int64(len(chunk))
+			s.DB.Update("attempts", att.ID, map[string]any{"log_offset": att.LogOffset})
+		}
 		return chunk, nil
 	}
-	events, _ := agents.ParseStreamLines(firstNonEmpty(c.Task.Agent, "claude"),
-		string(chunk[:nl+1]))
+	events, _ := s.parseAttemptEvents(att, c, string(chunk[:nl+1]))
 	if err := s.StoreEvents(att, events); err != nil {
 		return nil, err
 	}
 	att.LogOffset += int64(nl) + 1
 	s.DB.Update("attempts", att.ID, map[string]any{"log_offset": att.LogOffset})
 	return chunk, nil
+}
+
+func (s *Scheduler) parseAttemptEvents(att *store.Attempt, c *runCtx, buf string) ([]agents.Event, string) {
+	if att.LaunchConfigJSON != "" {
+		var cfg agents.TaskLaunchConfig
+		if json.Unmarshal([]byte(att.LaunchConfigJSON), &cfg) == nil && !cfg.Definition.Builtin {
+			return agents.ParseTaskStreamLines(cfg.Agent, cfg.Definition.OutputMode, buf)
+		}
+	}
+	return agents.ParseStreamLines(firstNonEmpty(c.Task.Agent, "claude"), buf)
 }
 
 func (s *Scheduler) poll(ctx context.Context, att *store.Attempt) error {
@@ -879,10 +917,19 @@ func (s *Scheduler) CreateAttempt(task *store.Task, o AttemptOpts) (*store.Attem
 	if err != nil {
 		return nil, err
 	}
+	project, err := s.DB.Project(task.ProjectID)
+	if err != nil {
+		return nil, err
+	}
+	launchConfig, err := s.taskLaunchConfig(&store.Attempt{}, &runCtx{Task: task, Project: project})
+	if err != nil {
+		return nil, err
+	}
+	launchJSON := store.J(launchConfig)
 	return s.DB.InsertAttempt(&store.Attempt{
 		TaskID: task.ID, N: n, Status: "queued", Token: token, Prompt: o.Prompt,
 		ResumeSession: o.ResumeSession, WorktreePath: o.WorktreePath,
-		Branch: o.Branch, Model: o.Model})
+		Branch: o.Branch, Model: o.Model, LaunchConfigJSON: launchJSON})
 }
 
 // SetTaskStatus is the one place a task's column changes, so every move is

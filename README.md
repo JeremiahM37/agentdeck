@@ -239,10 +239,12 @@ SSH integrations are covered separately by the test suite.
   `wsl -e bash -lc "echo {b64} | base64 -d | bash"` makes a Windows box with its
   toolchain in WSL an ordinary target.
 - **Agents** — Claude Code, Codex and Gemini ship built in. Sessions take **any
-  CLI**: define one in `PUT /api/agents` with its command, model flag, resume
-  args and env, and it appears in the picker — the board holds no opinion about
-  which binary is in the terminal. Local models work the same way for sessions as
-  for tasks, through a project's `env`. See [docs/agents.md](docs/agents.md).
+  CLI**, and tasks/routines can use any configured CLI with a declared batch
+  `task` definition: define it in `PUT /api/agents` with its commands, output
+  mode, permission mappings and provider env, and it appears in the picker —
+  the board holds no opinion about which binary runs. Local models use the
+  CLI's compatible endpoint variables through a project's `env`. See
+  [docs/agents.md](docs/agents.md).
 - **Control loop** — hook-gated approvals with web-push + Discord/ntfy sinks, an
   always-allow policy engine, follow-ups, auto-verify, reviewer gates, A/B parallel
   attempts, agents that file their own task cards, and shared project memory.

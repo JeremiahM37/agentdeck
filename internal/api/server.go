@@ -58,6 +58,11 @@ type Server struct {
 	mcpMu  sync.Mutex
 	mcpKey []byte
 
+	// agentMu protects the process-local key used by the agent registry's typed
+	// secret-retention markers. The key is deliberately never persisted.
+	agentMu  sync.Mutex
+	agentKey []byte
+
 	uploadMu    sync.Mutex
 	uploadCount int
 

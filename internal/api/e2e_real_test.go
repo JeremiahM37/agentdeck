@@ -383,6 +383,85 @@ func TestARealFailingAgentIsReportedAsFailed(t *testing.T) {
 	}
 }
 
+// A configured task definition uses its own batch command and plain-output
+// parser. The script intentionally omits a trailing newline so final draining
+// cannot strand the last timeline message; the second definition proves its
+// nonzero exit remains a failed task.
+func TestARealCustomTaskCapturesPlainOutputAndExitCode(t *testing.T) {
+	r := newRealRig(t)
+	bin := filepath.Join(filepath.Dir(r.repo), "custom-task-agent")
+	script := `#!/bin/sh
+cat >/dev/null
+if [ "$1" = "--fail" ]; then
+  printf 'custom failure Ω'
+  exit 3
+fi
+printf 'custom output Ω $(literal)'
+exit 0
+`
+	if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	code, body := r.do("PUT", "/api/agents", []map[string]any{
+		{"name": "plain-custom", "command": bin,
+			"task": map[string]any{"command": bin, "prompt_template": "stdin", "output_mode": "plain"}},
+		{"name": "plain-failing", "command": bin,
+			"task": map[string]any{"command": bin, "args": []string{"--fail"}, "prompt_template": "stdin", "output_mode": "plain"}},
+	})
+	if code != 200 {
+		t.Fatalf("custom agent setup: %d %s", code, body)
+	}
+	customTask := func(agent string) int64 {
+		code, body := r.do("POST", "/api/tasks", map[string]any{
+			"project_id": r.project, "title": agent, "prompt": "custom prompt", "agent": agent})
+		if code != 201 {
+			t.Fatalf("creating %s task: %d %s", agent, code, body)
+		}
+		var task struct {
+			ID int64 `json:"id"`
+		}
+		if err := json.Unmarshal(body, &task); err != nil {
+			t.Fatal(err)
+		}
+		code, body = r.do("POST", fmt.Sprintf("/api/tasks/%d/dispatch", task.ID), map[string]any{})
+		if code != 200 {
+			t.Fatalf("dispatching %s task: %d %s", agent, code, body)
+		}
+		return task.ID
+	}
+	okID := customTask("plain-custom")
+	okTask := r.waitStatus(okID, "done", "failed", "review")
+	if okTask.Status != "done" && okTask.Status != "review" {
+		attempt, _ := r.app.DB.LatestAttempt(okID)
+		t.Fatalf("custom plain task failed: task=%q result=%s status=%s worktree=%s", okTask.Status, attempt.ResultJSON, attempt.Status, attempt.WorktreePath)
+	}
+	okEvents, err := r.app.DB.TaskEvents(okID, 0, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var sawOutput bool
+	for _, event := range okEvents {
+		if strings.Contains(event.PayloadJSON, "custom output Ω $(literal)") {
+			sawOutput = true
+		}
+	}
+	if !sawOutput {
+		attempt, _ := r.app.DB.LatestAttempt(okID)
+		eventsRaw, _ := os.ReadFile(filepath.Join(attempt.WorktreePath, ".agentdeck", "events.jsonl"))
+		stderrRaw, _ := os.ReadFile(filepath.Join(attempt.WorktreePath, ".agentdeck", "stderr.log"))
+		t.Fatalf("unterminated custom output was lost: events=%q stderr=%q db=%#v", eventsRaw, stderrRaw, okEvents)
+	}
+	failID := customTask("plain-failing")
+	failTask := r.waitStatus(failID, "failed", "done", "review")
+	if failTask.Status != "failed" {
+		t.Fatalf("custom nonzero task was not failed: %q", failTask.Status)
+	}
+	failAttempt, err := r.app.DB.LatestAttempt(failID)
+	if err != nil || failAttempt.ExitCode == nil || *failAttempt.ExitCode != 3 {
+		t.Fatalf("custom nonzero exit code was not captured: %#v (err=%v)", failAttempt, err)
+	}
+}
+
 // Two attempts must not collide: separate worktrees, separate branches,
 // separate tmux sessions. This is the constraint that lets the board run a
 // whole estate at once.

@@ -56,7 +56,8 @@ CREATE TABLE IF NOT EXISTS attempts(
   result_json TEXT DEFAULT '{}', diff_stat_json TEXT DEFAULT '{}',
   verify_json TEXT DEFAULT '{}',
   mcp_json TEXT DEFAULT '{}', strict_mcp INTEGER DEFAULT 0,
-  mcp_snapshot INTEGER NOT NULL DEFAULT 0
+  mcp_snapshot INTEGER NOT NULL DEFAULT 0,
+  launch_config_json TEXT NOT NULL DEFAULT ''
 );
 CREATE INDEX IF NOT EXISTS idx_attempts_task ON attempts(task_id);
 CREATE TABLE IF NOT EXISTS project_skills(
@@ -249,4 +250,5 @@ var migrations = []string{
 	"ALTER TABLE attempts ADD COLUMN mcp_json TEXT DEFAULT '{}'",
 	"ALTER TABLE attempts ADD COLUMN strict_mcp INTEGER DEFAULT 0",
 	"ALTER TABLE attempts ADD COLUMN mcp_snapshot INTEGER NOT NULL DEFAULT 0",
+	"ALTER TABLE attempts ADD COLUMN launch_config_json TEXT NOT NULL DEFAULT ''",
 }

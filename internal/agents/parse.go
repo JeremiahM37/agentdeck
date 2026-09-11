@@ -28,6 +28,38 @@ func ParseStreamLines(agent, buf string) ([]Event, string) {
 	}
 }
 
+// ParseTaskStreamLines applies a configured task output mode. Custom CLIs do
+// not have an adapter-specific parser: plain output is one text event per line,
+// while JSONL accepts the common AgentDeck event envelope and maps other useful
+// message-shaped records to text.
+func ParseTaskStreamLines(agent, mode, buf string) ([]Event, string) {
+	if mode == "jsonl" {
+		return parseJSONL(buf, NormalizeGeneric)
+	}
+	return parsePlaintext(buf)
+}
+
+// NormalizeGeneric preserves the stable AgentDeck event types when a CLI
+// emits them, and gives ordinary JSONL responses a useful text timeline.
+func NormalizeGeneric(raw map[string]any) []Event {
+	t, _ := raw["type"].(string)
+	switch t {
+	case "init", "text", "tool_use", "tool_result", "result":
+		return []Event{{Type: t, Payload: raw}}
+	}
+	for _, key := range []string{"text", "message", "content", "output"} {
+		if value, ok := raw[key].(string); ok && strings.TrimSpace(value) != "" {
+			return []Event{{Type: "text", Payload: map[string]any{"text": clip(value, 2000)}}}
+		}
+	}
+	return []Event{{Type: "raw", Payload: map[string]any{"line": clip(stringValue(raw), 2000)}}}
+}
+
+func stringValue(raw map[string]any) string {
+	b, _ := json.Marshal(raw)
+	return string(b)
+}
+
 func parseJSONL(buf string, normalize func(map[string]any) []Event) ([]Event, string) {
 	idx := strings.LastIndex(buf, "\n")
 	if idx < 0 {
