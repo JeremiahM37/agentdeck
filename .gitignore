@@ -26,3 +26,6 @@ smoke-repo/
 
 # screenshots written by the `verify` suite
 .verify-artifacts/
+
+# Local verification output and dependency caches
+node_modules/

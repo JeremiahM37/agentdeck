@@ -757,7 +757,7 @@ function Build({ api }: { api: SettingsApi }) {
       <h3>Running build</h3>
       <p>
         {h
-          ? `${h.version} · ${h.build?.revision?.slice(0, 12) || "revision unknown"} · ${h.build?.modified ? "local changes" : "clean"}`
+          ? `${h.version} · ${h.build?.revision?.slice(0, 12) || "revision unknown"} · ${h.build?.modified === true ? "local changes" : h.build?.modified === false ? "clean" : "build status unknown"}`
           : "Loading…"}
       </p>
     </article>
