@@ -136,7 +136,19 @@ CREATE TABLE IF NOT EXISTS sessions(
   origin TEXT NOT NULL DEFAULT 'agentdeck', -- agentdeck | discovered
   pane_hash TEXT DEFAULT '', pane_tail TEXT DEFAULT '',
   context_pct INTEGER,                      -- parsed from the agent's own footer
-  last_activity_at REAL, created_at REAL, updated_at REAL, ended_at REAL
+  last_activity_at REAL, created_at REAL, updated_at REAL, ended_at REAL,
+  native_recovery_cid TEXT NOT NULL DEFAULT '',
+  boot_id TEXT NOT NULL DEFAULT '',
+  tracking_identity TEXT NOT NULL DEFAULT '',
+  group_path TEXT NOT NULL DEFAULT '',
+  worktree_json TEXT NOT NULL DEFAULT '',
+  setup_state TEXT NOT NULL DEFAULT '',
+  setup_error TEXT NOT NULL DEFAULT '',
+  setup_cancel_requested INTEGER NOT NULL DEFAULT 0,
+  archived_at REAL,
+  archive_text TEXT NOT NULL DEFAULT '',
+  resume_id TEXT NOT NULL DEFAULT '',
+  launch_config_json TEXT NOT NULL DEFAULT ''
 );
 CREATE INDEX IF NOT EXISTS idx_sessions_status ON sessions(status);
 -- One wrap per handoff: what the agent said it was doing, kept so the project
@@ -221,6 +233,8 @@ var migrations = []string{
 	"ALTER TABLE sessions ADD COLUMN archive_text TEXT NOT NULL DEFAULT ''",
 	"ALTER TABLE sessions ADD COLUMN resume_id TEXT NOT NULL DEFAULT ''",
 	"ALTER TABLE sessions ADD COLUMN tracking_identity TEXT NOT NULL DEFAULT ''",
+	"ALTER TABLE sessions ADD COLUMN native_recovery_cid TEXT NOT NULL DEFAULT ''",
+	"ALTER TABLE sessions ADD COLUMN boot_id TEXT NOT NULL DEFAULT ''",
 	"ALTER TABLE sessions ADD COLUMN group_path TEXT NOT NULL DEFAULT ''",
 	"ALTER TABLE sessions ADD COLUMN worktree_json TEXT NOT NULL DEFAULT ''",
 	"ALTER TABLE targets ADD COLUMN context_json TEXT DEFAULT '[]'",

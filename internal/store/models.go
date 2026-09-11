@@ -164,6 +164,8 @@ type Session struct {
 	LaunchConfigJSON     string   `json:"-"`
 	ArchivedAt           *float64 `json:"archived_at"`
 	ResumeID             string   `json:"resume_id,omitempty"`
+	NativeRecoveryCID    string   `json:"-"`
+	BootID               string   `json:"-"`
 	TrackingIdentity     string   `json:"-"`
 	GroupPath            string   `json:"group_path"`
 	WorktreeJSON         string   `json:"-"`

@@ -7,13 +7,13 @@ import (
 
 const sessionCols = `s.id, s.project_id, s.target_id, s.name, s.agent, s.model,
 	s.workdir, s.tmux_session, s.status, s.origin, s.pane_hash, s.pane_tail,
-	s.context_pct, s.last_activity_at, s.created_at, s.updated_at, s.ended_at, s.worktree_json, s.group_path, s.tracking_identity, s.resume_id, s.archived_at, s.launch_config_json, s.setup_state, s.setup_error, s.setup_cancel_requested`
+	s.context_pct, s.last_activity_at, s.created_at, s.updated_at, s.ended_at, s.worktree_json, s.group_path, s.tracking_identity, s.resume_id, s.native_recovery_cid, s.boot_id, s.archived_at, s.launch_config_json, s.setup_state, s.setup_error, s.setup_cancel_requested`
 
 func scanSession(sc interface{ Scan(...any) error }, withJoin bool) (*Session, error) {
 	var s Session
 	dest := []any{&s.ID, &s.ProjectID, &s.TargetID, &s.Name, &s.Agent, &s.Model,
 		&s.Workdir, &s.TmuxSession, &s.Status, &s.Origin, &s.PaneHash, &s.PaneTail,
-		&s.ContextPct, &s.LastActivityAt, &s.CreatedAt, &s.UpdatedAt, &s.EndedAt, &s.WorktreeJSON, &s.GroupPath, &s.TrackingIdentity, &s.ResumeID, &s.ArchivedAt, &s.LaunchConfigJSON, &s.SetupState, &s.SetupError, &s.SetupCancelRequested}
+		&s.ContextPct, &s.LastActivityAt, &s.CreatedAt, &s.UpdatedAt, &s.EndedAt, &s.WorktreeJSON, &s.GroupPath, &s.TrackingIdentity, &s.ResumeID, &s.NativeRecoveryCID, &s.BootID, &s.ArchivedAt, &s.LaunchConfigJSON, &s.SetupState, &s.SetupError, &s.SetupCancelRequested}
 	if withJoin {
 		var projectName sql.NullString
 		dest = append(dest, &projectName, &s.TargetName, &s.TargetKind)
@@ -83,6 +83,34 @@ func (db *DB) LiveSessions() ([]*Session, error) {
 	return out, rows.Err()
 }
 
+// RecentClosedSessions returns the newest ended, non-archived interactive
+// records. Ordering by ended_at preserves the operator's actual recent history;
+// session IDs are allocation order and can be misleading after long uptime.
+func (db *DB) RecentClosedSessions(limit int) ([]*Session, error) {
+	if limit < 1 {
+		return []*Session{}, nil
+	}
+	if limit > 100 {
+		limit = 100
+	}
+	rows, err := db.Query(`SELECT `+sessionCols+`, p.name, t.name, t.kind `+
+		sessionJoin+` WHERE s.ended_at IS NOT NULL AND s.archived_at IS NULL
+		ORDER BY s.ended_at DESC, s.id DESC LIMIT ?`, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []*Session{}
+	for rows.Next() {
+		s, err := scanSession(rows, true)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, s)
+	}
+	return out, rows.Err()
+}
+
 // SessionByTmux finds a live session by its tmux name on a target. Discovery
 // uses it to tell "already adopted" from "new to us".
 func (db *DB) SessionByTmux(targetID int64, tmuxName string) (*Session, error) {
@@ -99,10 +127,10 @@ func (db *DB) SessionByTmux(targetID int64, tmuxName string) (*Session, error) {
 func (db *DB) InsertSession(s *Session) (*Session, error) {
 	now := Now()
 	res, err := db.Exec(`INSERT INTO sessions(project_id, target_id, name, agent, model,
-		workdir, tmux_session, status, origin, last_activity_at, created_at, updated_at, group_path, resume_id)
-		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		workdir, tmux_session, status, origin, last_activity_at, created_at, updated_at, group_path, resume_id, native_recovery_cid, boot_id)
+		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 		s.ProjectID, s.TargetID, s.Name, nz(s.Agent, "claude"), s.Model, s.Workdir,
-		s.TmuxSession, nz(s.Status, "starting"), nz(s.Origin, "agentdeck"), now, now, now, s.GroupPath, s.ResumeID)
+		s.TmuxSession, nz(s.Status, "starting"), nz(s.Origin, "agentdeck"), now, now, now, s.GroupPath, s.ResumeID, s.NativeRecoveryCID, s.BootID)
 	if err != nil {
 		return nil, err
 	}

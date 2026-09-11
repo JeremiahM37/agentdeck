@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"path"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -32,6 +33,17 @@ type sessionView struct {
 	UptimeSeconds   float64 `json:"uptime_seconds"`
 	HandoffInFlight bool    `json:"handoff_in_flight"`
 	Wraps           int     `json:"wraps"`
+}
+
+// recentSessionView keeps the ordinary session representation while making the
+// one dangerous distinction visible: a released adopted session is ended in
+// the database but its tmux process was deliberately left running.
+type recentSessionView struct {
+	*sessionView
+	Released         bool   `json:"released"`
+	CanResumeRecent  bool   `json:"can_resume_recent"`
+	ResumeRecentURL  string `json:"resume_recent_url,omitempty"`
+	ConversationsURL string `json:"conversations_url"`
 }
 
 func (s *Server) sessionView(row *store.Session) *sessionView {
@@ -80,6 +92,57 @@ func (s *Server) listSessions(w http.ResponseWriter, r *http.Request) {
 		out = append(out, s.sessionView(row))
 	}
 	writeJSON(w, 200, out)
+}
+
+func (s *Server) recentSessions(w http.ResponseWriter, r *http.Request) {
+	limit := 10
+	if raw := strings.TrimSpace(r.URL.Query().Get("limit")); raw != "" {
+		value, err := strconv.Atoi(raw)
+		if err != nil || value < 1 || value > 100 {
+			httpError(w, http.StatusBadRequest, "limit must be between 1 and 100")
+			return
+		}
+		limit = value
+	}
+	rows, err := s.DB.RecentClosedSessions(limit)
+	if err != nil {
+		respondErr(w, err)
+		return
+	}
+	out := make([]*recentSessionView, 0, len(rows))
+	for _, row := range rows {
+		view := s.sessionView(row)
+		out = append(out, &recentSessionView{
+			sessionView:      view,
+			Released:         row.Origin == "discovered" && row.Status != sessions.StatusDead,
+			CanResumeRecent:  s.canResumeRecent(row),
+			ResumeRecentURL:  fmt.Sprintf("/api/sessions/%d/resume-recent", row.ID),
+			ConversationsURL: fmt.Sprintf("/api/sessions/%d/conversations", row.ID),
+		})
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	writeJSON(w, http.StatusOK, out)
+}
+
+// canResumeRecent reports whether the convenience action has enough durable
+// local evidence to be useful. It intentionally does not probe the target on
+// a listing request: the POST performs the authoritative, target-side history
+// validation before it launches anything.
+func (s *Server) canResumeRecent(row *store.Session) bool {
+	if row.EndedAt == nil || row.ArchivedAt != nil || (row.NativeRecoveryCID == "" && row.ResumeID == "") {
+		return false
+	}
+	// A released adopted row is ended in SQLite while its terminal remains
+	// alive. It can be restored/tracked, but launching a continuation would
+	// race that process and is therefore not offered by Recent.
+	if row.Origin == "discovered" && row.Status != sessions.StatusDead {
+		return false
+	}
+	if row.Agent != "claude" && row.Agent != "codex" {
+		return false
+	}
+	config, err := s.Sessions.SessionLaunchConfiguration(row)
+	return err == nil && len(config.Spec.ResumeIDArgs) > 0
 }
 
 func (s *Server) getSession(w http.ResponseWriter, r *http.Request) {

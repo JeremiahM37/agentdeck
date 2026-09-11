@@ -1,7 +1,6 @@
 package api
 
 import (
-	_ "embed"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -9,20 +8,15 @@ import (
 	"strings"
 
 	"github.com/JeremiahM37/agentdeck/internal/executor"
+	"github.com/JeremiahM37/agentdeck/internal/nativeidentity"
 	"github.com/JeremiahM37/agentdeck/internal/sessions"
 	"github.com/JeremiahM37/agentdeck/internal/shellq"
 	"github.com/JeremiahM37/agentdeck/internal/store"
 	"github.com/JeremiahM37/agentdeck/internal/worktree"
 )
 
-//go:embed scripts/conversations.py
-var nativeConversationsScript string
-
-//go:embed scripts/native_identity.py
-var nativeIdentityScript string
-
-//go:embed scripts/native_records.py
-var nativeRecordsScript string
+// Kept as a package alias for native search, which shares the record decoder.
+var nativeRecordsScript = nativeidentity.RecordsScript
 
 func (s *Server) nativeConversationData(r *http.Request, row *store.Session, cid string) (map[string]json.RawMessage, error) {
 	if row.Agent != "codex" && row.Agent != "claude" {
@@ -55,7 +49,7 @@ func (s *Server) nativeConversationData(r *http.Request, row *store.Session, cid
 	if row.EndedAt == nil && row.ArchivedAt == nil {
 		name, identity = row.TmuxSession, row.TrackingIdentity
 	}
-	cmd := prefix + "python3 -c " + shellq.Quote(nativeRecordsScript+"\n"+nativeIdentityScript+"\n"+nativeConversationsScript) + " " + shellq.Quote(row.Agent) + " " + shellq.Quote(row.Workdir) + " " + shellq.Quote(cid) + " " + shellq.Quote(r.URL.Query().Get("before")) + " " + shellq.Quote(name) + " " + shellq.Quote(identity)
+	cmd := prefix + "python3 -c " + shellq.Quote(nativeidentity.RecordsScript+"\n"+nativeidentity.IdentityScript+"\n"+nativeidentity.ConversationsScript) + " " + shellq.Quote(row.Agent) + " " + shellq.Quote(row.Workdir) + " " + shellq.Quote(cid) + " " + shellq.Quote(r.URL.Query().Get("before")) + " " + shellq.Quote(name) + " " + shellq.Quote(identity)
 	result, err := ex.Run(r.Context(), cmd, executor.RunOpts{Timeout: 30})
 	var out map[string]json.RawMessage
 	if err != nil || json.Unmarshal([]byte(result.Stdout), &out) != nil {
@@ -172,4 +166,67 @@ func (s *Server) resumeConversation(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, 201, s.sessionView(next))
+}
+
+// boundNativeCID returns the conversation bound to this session, after
+// validating that exact transcript on the target. Directory mtime is never a
+// session identity: a newer unrelated conversation in the same workspace must
+// not be selected. NativeRecoveryCID is the fresh process checkpoint and has
+// priority over the legacy ResumeID; the latter is accepted only after the
+// exact-history reader proves it still exists.
+func (s *Server) boundNativeCID(r *http.Request, row *store.Session) (string, error) {
+	if row.NativeRecoveryCID != "" {
+		if _, err := s.nativeConversationData(r, row, row.NativeRecoveryCID); err == nil {
+			return row.NativeRecoveryCID, nil
+		}
+		// A present checkpoint is authoritative. Falling back to an older ID after
+		// it fails validation could resume the wrong generation of the session.
+		return "", fmt.Errorf("the saved native conversation is unavailable; choose one from the history picker")
+	}
+	if row.ResumeID != "" {
+		if _, err := s.nativeConversationData(r, row, row.ResumeID); err == nil {
+			return row.ResumeID, nil
+		}
+	}
+	return "", fmt.Errorf("no saved native conversation is bound to this session; choose one from the history picker")
+}
+
+// resumeRecentConversation is the convenience path for the Recent sessions
+// view. It still validates the target history before launching and refuses when
+// no exact session binding can be established.
+func (s *Server) resumeRecentConversation(w http.ResponseWriter, r *http.Request) {
+	row, ok := s.sessionParam(w, r)
+	if !ok {
+		return
+	}
+	if row.EndedAt == nil || row.ArchivedAt != nil {
+		httpError(w, http.StatusConflict, "only an ended, non-archived session can be resumed from Recent")
+		return
+	}
+	var in struct {
+		Name string `json:"name"`
+	}
+	if err := decodeBody(r, &in); err != nil {
+		httpError(w, http.StatusUnprocessableEntity, "%s", err)
+		return
+	}
+	name := strings.TrimSpace(in.Name)
+	if len(name) > 160 {
+		httpError(w, http.StatusUnprocessableEntity, "name exceeds 160 bytes")
+		return
+	}
+	cid, err := s.boundNativeCID(r, row)
+	if err != nil {
+		httpError(w, http.StatusConflict, "%s", err)
+		return
+	}
+	if name == "" {
+		name = row.Name + " · resumed"
+	}
+	next, err := s.Sessions.ResumeConversation(r.Context(), row.ID, cid, name)
+	if err != nil {
+		httpError(w, http.StatusConflict, "%s", err)
+		return
+	}
+	writeJSON(w, http.StatusCreated, s.sessionView(next))
 }
