@@ -95,6 +95,12 @@ def _local_env(root, fake_agent):
     }
     env.pop("AGENTDECK_API", None)
     env.pop("AGENTDECK_ATTACH_HOST", None)
+    # Local-runtime PTY assertions own their terminal.  If pytest itself is
+    # running inside AgentDeck's tmux session, inheriting TMUX makes the CLI
+    # deliberately open a display-popup instead of attaching to the fixture's
+    # private socket; a raw PTY is not a tmux client and display-popup exits 1.
+    # The popup behavior remains covered by attachmentInWorkspace unit tests.
+    env.pop("TMUX", None)
     return env
 
 
