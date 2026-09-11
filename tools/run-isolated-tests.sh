@@ -239,6 +239,11 @@ env_args=(
   --clearenv
   --setenv PATH /opt/test-bin:/opt/venv/bin:/opt/node/bin:/usr/local/go/bin:/usr/bin:/bin
   --setenv HOME /tmp/home
+  # The namespace UID is nobody (65534), whose passwd shell is nologin on
+  # Debian.  tmux uses SHELL when it creates panes; tests must exercise the
+  # command under a usable headless shell without changing production launch
+  # behavior.
+  --setenv SHELL /bin/bash
   --setenv USER nobody
   --setenv LOGNAME nobody
   --setenv XDG_CONFIG_HOME /tmp/home/.config
