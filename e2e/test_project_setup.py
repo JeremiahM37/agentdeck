@@ -8,8 +8,24 @@ from test_interactive_worktree import setup
 from test_terminal_dashboard import Dashboard
 
 
+@pytest.fixture
+def routed_page(browser):
+    """A page whose request-fault tests are not bypassed by the app SW.
+
+    Playwright page routes do not observe requests handled by a service
+    worker. This test intentionally installs a PATCH route after the first
+    navigation, so block the worker for this page only; the normal ``page``
+    fixture continues to cover the installed PWA path.
+    """
+    context = browser.new_context(service_workers="block")
+    page = context.new_page()
+    yield page
+    context.close()
+
+
 @pytest.mark.parametrize('width',[390,1440])
-def test_web_project_setup_save_retry_and_launch(page,real_terminal,width):
+def test_web_project_setup_save_retry_and_launch(routed_page,real_terminal,width):
+    page=routed_page
     t=real_terminal;project,git=setup(t);errors=[]
     page.on('pageerror',lambda e:errors.append(str(e)))
     page.set_viewport_size({'width':width,'height':900})
@@ -20,10 +36,15 @@ def test_web_project_setup_save_retry_and_launch(page,real_terminal,width):
     command='printf ready > prepared; echo SETUP_FINISHED'
     field.fill(command)
     endpoint=f'**/api/projects/{project["id"]}'
-    page.route(endpoint,lambda r:r.fulfill(status=503,content_type='application/json',body='{"detail":"Temporary save failure"}'))
+    intercepted=[]
+    def fail_save(route):
+        intercepted.append(route.request.method)
+        route.fulfill(status=503,content_type='application/json',body='{"detail":"Temporary save failure"}')
+    page.route(endpoint,fail_save)
     page.get_by_role('button',name='Save setup command').click()
     expect(page.locator('.project-setup-status')).to_have_text('Temporary save failure')
     expect(field).to_have_value(command)
+    assert intercepted==['PATCH'],intercepted
     page.unroute(endpoint)
     page.get_by_role('button',name='Save setup command').click()
     expect(page.locator('.project-setup-status')).to_contain_text('Saved')
