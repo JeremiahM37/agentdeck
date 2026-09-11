@@ -48,7 +48,7 @@ Because both views attach to the same tmux session, the inserted path appears
 in your terminal too. A native terminal drop alone may only insert a LOCAL filename.
 
 Manual connection (any SSH terminal):
-   ssh -t agentdeck /usr/local/bin/agentdeck attach session SESSION_ID
+   ssh -t agentdeck /usr/local/bin/agentdeck --hosted-attach attach session SESSION_ID
 Copy the exact command from the Desktop panel; tasks use attempt IDs.
 
 The browser's Split shell starts an independent persistent shell in the same

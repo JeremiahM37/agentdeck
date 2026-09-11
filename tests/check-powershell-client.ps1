@@ -26,7 +26,7 @@ $handler = [scriptblock]::Create($desktopHandler)
 function Get-Command { param($Name) if ($Name -ne 'ssh.exe') { throw 'Must use the default console host' }; [pscustomobject]@{Source='ssh.exe'} }
 function Start-Process { param($FilePath,$ArgumentList) $script:started=@{FilePath=$FilePath;Arguments=$ArgumentList} }
 & $handler -Uri 'agentdeck://attach/session/42'
-if ($started.FilePath -ne 'ssh.exe' -or ($started.Arguments -join '|') -ne '-t|agentdeck|/usr/local/bin/agentdeck|attach|session|42') { throw 'Wrong default-terminal launch' }
+if ($started.FilePath -ne 'ssh.exe' -or ($started.Arguments -join '|') -ne '-t|agentdeck|/usr/local/bin/agentdeck|--hosted-attach|attach|session|42') { throw 'Wrong default-terminal launch' }
 $script:started=$null
 $rejected=$false
 try { & $handler -Uri 'agentdeck://attach/session/42?command=bad' } catch { $rejected=$true }

@@ -15,13 +15,20 @@ def run_installer(tmp_path, *args, extra_path=()):
     home.mkdir(exist_ok=True)
     path = [str(p) for p in extra_path]
     path.extend(p for p in (shutil.which("git"), shutil.which("tmux"), "/usr/bin", "/bin") if p)
-    env = {**os.environ, "HOME": str(home), "PATH": os.pathsep.join(path)}
+    env = {
+        **os.environ,
+        "HOME": str(home),
+        "PATH": os.pathsep.join(path),
+        "XDG_BIN_HOME": str(home / ".local/bin"),
+        "XDG_STATE_HOME": str(home / ".state"),
+    }
     return subprocess.run(
         ["bash", str(INSTALLER), *map(str, args)],
         env=env,
         text=True,
         capture_output=True,
         check=False,
+        cwd=tmp_path,
     ), home
 
 
@@ -64,7 +71,25 @@ def test_reinstall_updates_an_existing_local_command(tmp_path):
     assert (prefix / "agentdeck").is_file()
     assert not (prefix / "agentdeck-local").exists()
     assert subprocess.run([prefix / "agentdeck", "version"], text=True, capture_output=True, check=True).stdout.strip() == "local-test-2"
-    assert list((home / ".local/state/agentdeck/local/backups").rglob("agentdeck"))
+    assert list((home / ".state/agentdeck/local/backups").rglob("agentdeck"))
+
+
+def test_external_replacement_invalidates_managed_marker(tmp_path):
+    binary = tmp_path / "agentdeck"
+    fake_binary(binary)
+    prefix = tmp_path / "bin"
+
+    result, _ = run_installer(tmp_path, "--binary", binary, "--prefix", prefix)
+    assert result.returncode == 0, result.stderr
+    remote = prefix / "agentdeck"
+    remote.write_text("#!/bin/sh\necho external remote\n")
+    remote.chmod(0o755)
+
+    result, _ = run_installer(tmp_path, "--binary", binary, "--prefix", prefix)
+
+    assert result.returncode == 0, result.stderr
+    assert (prefix / "agentdeck-local").is_file()
+    assert remote.read_text() == "#!/bin/sh\necho external remote\n"
 
 
 def test_source_build_works_when_called_outside_checkout(tmp_path):

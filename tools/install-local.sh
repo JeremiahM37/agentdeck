@@ -50,6 +50,17 @@ case "$(uname -s)" in
     ;;
 esac
 
+file_hash() {
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum "$1" | awk '{print $1}'
+  elif command -v shasum >/dev/null 2>&1; then
+    shasum -a 256 "$1" | awk '{print $1}'
+  else
+    echo 'A SHA-256 utility (sha256sum or shasum) is required.' >&2
+    return 1
+  fi
+}
+
 for prerequisite in git tmux python3; do
   command -v "$prerequisite" >/dev/null || {
     echo "Missing prerequisite: $prerequisite (install it before local AgentDeck)." >&2
@@ -106,9 +117,13 @@ mkdir -p -- "$prefix"
 if [[ -z $name ]]; then
   name=agentdeck
   managed_marker="${XDG_STATE_HOME:-${HOME:?HOME is required}/.local/state}/agentdeck/local/installed/$name"
-  if [[ -e "$prefix/$name" || -L "$prefix/$name" ]] && {
-    [[ ! -f $managed_marker ]] || [[ $(cat -- "$managed_marker") != "$prefix/$name" ]]
-  }; then
+  managed=0
+  if [[ -f "$prefix/$name" && -f "$managed_marker" ]]; then
+    marker_path=$(sed -n '1p' "$managed_marker")
+    marker_hash=$(sed -n '2p' "$managed_marker")
+    [[ $marker_path == "$prefix/$name" && $marker_hash == "$(file_hash "$prefix/$name")" ]] && managed=1
+  fi
+  if [[ -e "$prefix/$name" || -L "$prefix/$name" ]] && (( ! managed )); then
     name=agentdeck-local
   fi
 fi
@@ -126,7 +141,7 @@ install -m 755 "$candidate" "$staged_destination"
 mv -f -- "$staged_destination" "$destination"
 mkdir -p -- "$state_root/installed"
 marker_tmp="$state_root/installed/.${name}.tmp.$$"
-printf '%s\n' "$destination" > "$marker_tmp"
+printf '%s\n%s\n' "$destination" "$(file_hash "$destination")" > "$marker_tmp"
 mv -f -- "$marker_tmp" "$state_root/installed/$name"
 echo "Installed $destination"
 echo "Run: $name local"

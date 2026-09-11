@@ -99,9 +99,9 @@ It is a client of the HTTP API, so point it at a running control plane — local
 remote. Register with Claude Code:
 
 ```bash
-claude mcp add agentdeck /usr/local/bin/agentdeck mcp
+claude mcp add agentdeck --env AGENTDECK_API=http://localhost:9110 -- /usr/local/bin/agentdeck mcp
 # non-default host, or a token-protected instance:
-#   AGENTDECK_API=http://aiserver:9110 AGENTDECK_AUTH_TOKEN=… agentdeck mcp
+#   claude mcp add agentdeck --env AGENTDECK_API=http://aiserver:9110 --env AGENTDECK_AUTH_TOKEN=… -- /usr/local/bin/agentdeck mcp
 ```
 
 ## Deploy for real

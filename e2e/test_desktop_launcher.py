@@ -27,7 +27,7 @@ def test_uses_desktop_default_or_installed_terminal(tmp_path,installed,expected,
     subprocess.run(['/bin/bash',str(SCRIPT),'agentdeck://attach/session/42'],env=env,check=True)
     data=json.loads(receipt.read_text())
     assert data['terminal']==expected
-    assert data['args']==prefix+['env','TERM=xterm-256color','ssh','-t','-o','StrictHostKeyChecking=yes','agentdeck','/usr/local/bin/agentdeck','attach','session','42']
+    assert data['args']==prefix+['env','TERM=xterm-256color','ssh','-t','-o','StrictHostKeyChecking=yes','agentdeck','/usr/local/bin/agentdeck','--hosted-attach','attach','session','42']
 
 @pytest.mark.parametrize('uri',['agentdeck://attach/session/42?cmd=evil','agentdeck://attach/session/1;echo bad','agentdeck://attach/session/0','agentdeck://attach/unknown/12'])
 def test_rejects_invalid_links_before_launch(tmp_path,uri):
