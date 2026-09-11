@@ -19,6 +19,9 @@ import (
 const clientHelp = `AgentDeck — web and terminal control
 
   agentdeck                         Open the dashboard in an interactive terminal
+  agentdeck local                   Start/use a private local runtime, then open the dashboard
+  agentdeck local status            Show local runtime status without starting it
+  agentdeck local stop              Stop the local runtime (active tasks are refused)
   agentdeck serve                   Start the control-plane server
   agentdeck console                 Live terminal dashboard (also: tui)
   agentdeck console --plain         Line-oriented menu for pipes / accessibility
@@ -51,20 +54,34 @@ AGENTDECK_API sets the server URL (default http://127.0.0.1:9110).
 AGENTDECK_AUTH_TOKEN supplies bearer authentication.
 AGENTDECK_ATTACH_HOST sets an SSH alias for native attachment to a remote server.
 All web operations use this same API. See docs/terminal-client.md for the catalog.
+With no AGENTDECK_API, client commands use the private local runtime automatically.
+agentdeck local wraps the existing AgentDeck commands; it does not launch local claude.
 `
 
 func clientCommand(cfg *config.Config, command string, args []string) error {
+	return clientCommandAt(cfg, command, args, env("AGENTDECK_API", "http://127.0.0.1:"+strconv.Itoa(cfg.Port)), cfg.AuthToken, false)
+}
+
+func clientCommandAt(cfg *config.Config, command string, args []string, base, token string, local bool) error {
 	if command == "help" || command == "--help" || command == "-h" || len(args) == 1 && (args[0] == "--help" || args[0] == "-h") {
 		fmt.Print(clientHelp)
 		return nil
 	}
-	c := console.New(env("AGENTDECK_API", "http://127.0.0.1:"+strconv.Itoa(cfg.Port)), cfg.AuthToken)
+	c := console.New(base, token)
 	var data []byte
 	var err error
 	switch command {
 	case "console", "tui":
 		attachClient := func(kind, id string) error {
-			argv, e := attachmentCommand(cfg, []string{kind, id})
+			var argv []string
+			var e error
+			if local {
+				localCfg := *cfg
+				localCfg.AuthToken = token
+				argv, e = attachmentCommandAt(&localCfg, []string{kind, id}, base, "")
+			} else {
+				argv, e = attachmentCommand(cfg, []string{kind, id})
+			}
 			if e != nil {
 				return e
 			}
