@@ -89,6 +89,8 @@ def _local_env(root, fake_agent):
         "XDG_CONFIG_HOME": str(root / "config"),
         "XDG_CACHE_HOME": str(root / "cache"),
         "TMUX_TMPDIR": str(tmux_tmp),
+        # This fixture owns a fresh PTY, not the invoking agent's tmux client.
+        "TMUX": "",
         "AGENTDECK_CLAUDE_BIN": str(fake_agent),
         "AGENTDECK_MOCK": "0",
         "AGENTDECK_SESSION_POLL": "3600",
