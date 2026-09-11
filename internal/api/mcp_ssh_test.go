@@ -175,7 +175,11 @@ func TestInteractiveMCPManagerLaunchLifecycle(t *testing.T) {
 				assertLifecycleEnvironment(t, freshCapture, agent, home)
 				assertSkillLaunch(t, freshCapture, repo, skillDir)
 				assertFreshArgs(t, agent, freshCapture.args)
-				assertProjectFiles(t, agent, repo, home, before, foreign, instruction, targetExecutor)
+				var freshMCPPath string
+				if agent == "claude" && len(freshCapture.args) > 1 {
+					freshMCPPath = freshCapture.args[1]
+				}
+				assertProjectFiles(t, agent, repo, home, before, foreign, instruction, targetExecutor, freshMCPPath)
 
 				conversations := fmt.Sprintf("/api/sessions/%d/conversations", fresh.id())
 				var listing obj
@@ -206,7 +210,11 @@ func TestInteractiveMCPManagerLaunchLifecycle(t *testing.T) {
 				assertContinuationArgs(t, agent, resumeCapture.args, cid, false)
 				killLifecycleSession(t, h, resumed)
 
-				assertProjectFiles(t, agent, repo, home, before, foreign, instruction, targetExecutor)
+				var resumeMCPPath string
+				if agent == "claude" && len(resumeCapture.args) > 1 {
+					resumeMCPPath = resumeCapture.args[1]
+				}
+				assertProjectFiles(t, agent, repo, home, before, foreign, instruction, targetExecutor, resumeMCPPath)
 			})
 		}
 	}
@@ -488,7 +496,7 @@ func snapshotFiles(t *testing.T, paths []string) []fileSnapshot {
 	return out
 }
 
-func assertProjectFiles(t *testing.T, agent, repo, home string, before []fileSnapshot, foreign, instruction []byte, ex executor.Executor) {
+func assertProjectFiles(t *testing.T, agent, repo, home string, before []fileSnapshot, foreign, instruction []byte, ex executor.Executor, mcpPath string) {
 	t.Helper()
 	if got, err := os.ReadFile(filepath.Join(repo, ".agentdeck", "mcp.json")); err != nil || string(got) != string(foreign) {
 		t.Fatalf("foreign MCP config changed: %q %v", got, err)
@@ -514,30 +522,22 @@ func assertProjectFiles(t *testing.T, agent, repo, home string, before []fileSna
 		}
 	}
 	if agent == "claude" {
-		stateRoot := os.Getenv("XDG_STATE_HOME")
-		if stateRoot == "" {
-			stateRoot = filepath.Join(home, ".local", "state")
-		}
-		stateRoot = filepath.Join(stateRoot, "agentdeck", "mcp")
-		result, err := ex.Run(context.Background(), "find "+shellQuoteForTest(stateRoot)+" -type f -name mcp.json -printf '%m %p\\n'", executor.RunOpts{Timeout: 20})
-		if err != nil || !result.OK() || strings.TrimSpace(result.Stdout) == "" {
+		if mcpPath == "" {
 			t.Fatal("Claude launch did not publish a private MCP runtime")
 		}
-		for _, line := range strings.Split(strings.TrimSpace(result.Stdout), "\n") {
-			parts := strings.SplitN(line, " ", 2)
-			if len(parts) != 2 || parts[0] != "600" {
-				t.Fatalf("Claude MCP runtime is not private: %q", line)
-			}
-			var payload map[string]any
-			data, readErr := ex.Run(context.Background(), "cat "+shellQuoteForTest(parts[1]), executor.RunOpts{Timeout: 20})
-			want := `{"mcpServers":{"ops_tools":{"args":["-m","ops"],"command":"python3"}}}`
-			if readErr != nil || !data.OK() || strings.TrimSpace(data.Stdout) != want || json.Unmarshal([]byte(data.Stdout), &payload) != nil || payload["mcpServers"] == nil {
-				t.Fatalf("Claude MCP runtime %s is invalid: %v", parts[1], readErr)
-			}
-			parentResult, parentErr := ex.Run(context.Background(), "stat -c %a "+shellQuoteForTest(filepath.Dir(parts[1])), executor.RunOpts{Timeout: 20})
-			if parentErr != nil || !parentResult.OK() || strings.TrimSpace(parentResult.Stdout) != "700" {
-				t.Fatalf("Claude MCP runtime parent %s is not private: %q (%v)", filepath.Dir(parts[1]), strings.TrimSpace(parentResult.Stdout), parentErr)
-			}
+		modeResult, modeErr := ex.Run(context.Background(), "stat -c %a "+shellQuoteForTest(mcpPath), executor.RunOpts{Timeout: 20})
+		if modeErr != nil || !modeResult.OK() || strings.TrimSpace(modeResult.Stdout) != "600" {
+			t.Fatalf("Claude MCP runtime is not private: %s (%q, %v)", mcpPath, strings.TrimSpace(modeResult.Stdout), modeErr)
+		}
+		var payload map[string]any
+		data, readErr := ex.Run(context.Background(), "cat "+shellQuoteForTest(mcpPath), executor.RunOpts{Timeout: 20})
+		want := `{"mcpServers":{"ops_tools":{"args":["-m","ops"],"command":"python3"}}}`
+		if readErr != nil || !data.OK() || strings.TrimSpace(data.Stdout) != want || json.Unmarshal([]byte(data.Stdout), &payload) != nil || payload["mcpServers"] == nil {
+			t.Fatalf("Claude MCP runtime %s is invalid: %v (stdout=%q stderr=%q)", mcpPath, readErr, data.Stdout, data.Stderr)
+		}
+		parentResult, parentErr := ex.Run(context.Background(), "stat -c %a "+shellQuoteForTest(filepath.Dir(mcpPath)), executor.RunOpts{Timeout: 20})
+		if parentErr != nil || !parentResult.OK() || strings.TrimSpace(parentResult.Stdout) != "700" {
+			t.Fatalf("Claude MCP runtime parent %s is not private: %q (%v)", filepath.Dir(mcpPath), strings.TrimSpace(parentResult.Stdout), parentErr)
 		}
 	}
 	_ = home
