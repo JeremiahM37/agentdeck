@@ -109,7 +109,7 @@ if command -v tmux >/dev/null 2>&1; then
       [[ "$pane_pid" =~ ^[0-9]+$ && -r "/proc/$pane_pid/stat" ]] || continue
       pane_starttime=$(awk '{print $22}' "/proc/$pane_pid/stat")
       [[ -n "$pane_starttime" ]] && baseline_panes["$pane_pid"]="$pane_starttime"
-    done < <(runuser -u "$service_user" -- env -u TMUX HOME="$service_home" tmux list-panes -t "=$tmux_name" -F '#{pane_pid}' 2>/dev/null || true)
+    done < <(runuser -u "$service_user" -- env -u TMUX -u TMUX_TMPDIR HOME="$service_home" tmux list-panes -t "=$tmux_name" -F '#{pane_pid}' 2>/dev/null || true)
   done < <(python3 - "$db" <<'PY'
 import sqlite3, sys
 db = sqlite3.connect("file:" + sys.argv[1] + "?mode=ro", uri=True)
@@ -125,7 +125,7 @@ PY
   )
 fi
 
-runuser -u "$service_user" -- env -u TMUX HOME="$service_home" AGENTDECK_DB="$db" "$binary" recovery-checkpoint export "$checkpoint"
+runuser -u "$service_user" -- env -u TMUX -u TMUX_TMPDIR HOME="$service_home" AGENTDECK_DB="$db" "$binary" recovery-checkpoint export "$checkpoint"
 
 current_main_pid=$(systemctl show "$unit" -p MainPID --value)
 current_main_starttime=""
@@ -188,5 +188,24 @@ KillMode=process
 Environment=AGENTDECK_CHECKPOINT=$checkpoint
 EOF
 systemctl daemon-reload
+post_main_pid=$(systemctl show "$unit" -p MainPID --value)
+post_main_starttime=""
+if [[ "$post_main_pid" =~ ^[0-9]+$ && -r "/proc/$post_main_pid/stat" ]]; then
+  post_main_starttime=$(awk '{print $22}' "/proc/$post_main_pid/stat")
+fi
+if [[ "$post_main_pid" != "$baseline_main_pid" || "$post_main_starttime" != "$baseline_main_starttime" ]]; then
+  echo "agentdeck service process changed during installation; review $backup before restarting" >&2
+  exit 1
+fi
+for pane_pid in "${!baseline_panes[@]}"; do
+  post_pane_starttime=""
+  if [[ -r "/proc/$pane_pid/stat" ]]; then
+    post_pane_starttime=$(awk '{print $22}' "/proc/$pane_pid/stat")
+  fi
+  if [[ "$post_pane_starttime" != "${baseline_panes[$pane_pid]}" ]]; then
+    echo "AgentDeck pane process $pane_pid changed during installation; review $backup before restarting" >&2
+    exit 1
+  fi
+done
 echo "prepared; checkpoint captured and binary installed; service was not restarted"
-echo "refresh checkpoint before the first manual restart if sessions changed: runuser -u $service_user -- env -u TMUX HOME=$service_home AGENTDECK_DB=$db $live recovery-checkpoint export $checkpoint"
+echo "refresh checkpoint before the first manual restart if sessions changed: runuser -u $service_user -- env -u TMUX -u TMUX_TMPDIR HOME=$service_home AGENTDECK_DB=$db $live recovery-checkpoint export $checkpoint"
