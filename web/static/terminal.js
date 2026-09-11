@@ -92,6 +92,34 @@ function act(fn) {
       .then(() => fn(...args))
       .catch((e) => notice(e.message, true));
 }
+function copyWithExecCommand(text, restoreFocus) {
+  const previous = document.activeElement;
+  const textarea = document.createElement("textarea");
+  textarea.value = text;
+  textarea.setAttribute("readonly", "");
+  textarea.style.position = "fixed";
+  textarea.style.opacity = "0";
+  document.body.append(textarea);
+  textarea.select();
+  let copied = false;
+  try {
+    copied = document.execCommand("copy");
+  } finally {
+    textarea.remove();
+    if (restoreFocus) restoreFocus();
+    else if (previous instanceof HTMLElement) previous.focus({ preventScroll: true });
+  }
+  if (!copied) throw Error("Clipboard access is unavailable. Use your browser's Copy command.");
+}
+async function copyClipboard(text, restoreFocus) {
+  if (navigator.clipboard?.writeText) {
+    try {
+      await navigator.clipboard.writeText(text);
+      return;
+    } catch {}
+  }
+  copyWithExecCommand(text, restoreFocus);
+}
 function quote(path) {
   return "'" + path.replaceAll("'", "'\\''") + "'";
 }
@@ -163,6 +191,7 @@ class Pane {
     el.addEventListener("pointerdown", () => select(this));
     el.addEventListener("focusin", () => select(this));
     const frozen = el.querySelector(".frozen");
+    this.frozen = frozen;
     frozen.addEventListener("scroll", () => {
       if (this.readingRetainedHistory && frozen.scrollHeight - frozen.clientHeight - frozen.scrollTop <= 2)
         this.leaveRetainedHistory();
@@ -177,9 +206,13 @@ class Pane {
         act(showHistory)();
         return false;
       }
-      if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.code === "KeyC") {
+      const copyShortcut =
+        (e.ctrlKey || e.metaKey) && e.shiftKey && e.code === "KeyC";
+      const selectedCopy =
+        (e.ctrlKey || e.metaKey) && !e.shiftKey && e.code === "KeyC" && this.selectedText();
+      if (copyShortcut || selectedCopy) {
         e.preventDefault();
-        act(() => navigator.clipboard.writeText(this.term.getSelection()))();
+        act(() => copyClipboard(this.selectedText(), () => this.term.focus()))();
         return false;
       }
       return true;
@@ -315,6 +348,12 @@ class Pane {
     this.term.paste(s);
     this.term.focus();
   }
+  selectedText() {
+    const selection = window.getSelection();
+    if (selection?.toString() && this.frozen.contains(selection.anchorNode))
+      return selection.toString();
+    return this.term.getSelection();
+  }
   async readRetainedHistory(lines) {
     if (this.loadingHistory || this.paused || this.readingRetainedHistory || this.stopped || Date.now() - (this.lastHistoryRead || 0) < 1000) return;
     const revision = this.historyRevision;
@@ -384,6 +423,20 @@ class Pane {
     this.term.dispose();
   }
 }
+document.addEventListener("keydown", (e) => {
+  const copyShortcut =
+    (e.ctrlKey || e.metaKey) && e.shiftKey && e.code === "KeyC";
+  const selectedCopy =
+    (e.ctrlKey || e.metaKey) && !e.shiftKey && e.code === "KeyC";
+  if (!(copyShortcut || selectedCopy)) return;
+  const selection = window.getSelection();
+  const text = selection?.toString();
+  const pane = selection?.anchorNode && panes.find((p) => p.frozen.contains(selection.anchorNode));
+  if (!pane || !text) return;
+  e.preventDefault();
+  e.stopImmediatePropagation();
+  act(() => copyClipboard(text, () => pane.term.focus()))();
+}, true);
 // Mobile keyboards, font loading and returning from a background tab can all
 // change cell geometry without a normal window resize.
 const fitPanes = () => panes.forEach((p) => p.scheduleFit());
