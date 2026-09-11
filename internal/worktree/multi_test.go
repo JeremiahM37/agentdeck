@@ -280,6 +280,104 @@ func TestMultiWorkspaceLegacyReceiptGuardsLiveProcessGroups(t *testing.T) {
 	}
 }
 
+func TestMultiWorkspaceLockProbeOverlapRetriesWithoutOverlapping(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git unavailable")
+	}
+	root := t.TempDir()
+	repo := filepath.Join(root, "repo")
+	if err := os.Mkdir(repo, 0700); err != nil {
+		t.Fatal(err)
+	}
+	for _, args := range [][]string{
+		{"init", "-q"},
+		{"-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", "commit", "--allow-empty", "-qm", "base"},
+	} {
+		if out, err := exec.Command("git", append([]string{"-C", repo}, args...)...).CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %s", args, out)
+		}
+	}
+	makePlan := func(id int64) *Interactive {
+		t.Helper()
+		plan, err := PlanMultiWorkspace([]RepositorySource{{Name: "repo", Repo: repo}}, id, InteractiveOptions{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := RunInteractive(context.Background(), executor.NewLocal(), "create", plan); err != nil {
+			t.Fatal(err)
+		}
+		return plan
+	}
+	removeWhileHolding := func(plan *Interactive, hold time.Duration) (error, time.Duration) {
+		t.Helper()
+		file, err := os.OpenFile(filepath.Join(plan.Path, ".agentdeck-lock"), os.O_RDWR, 0600)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := syscall.Flock(int(file.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+			file.Close()
+			t.Fatal(err)
+		}
+		started := time.Now()
+		done := make(chan error, 1)
+		go func() {
+			done <- RunInteractive(context.Background(), executor.NewLocal(), "remove", plan)
+		}()
+		time.Sleep(hold)
+		if err := syscall.Flock(int(file.Fd()), syscall.LOCK_UN); err != nil {
+			file.Close()
+			t.Fatal(err)
+		}
+		file.Close()
+		return <-done, time.Since(started)
+	}
+
+	short := makePlan(93)
+	err, elapsed := removeWhileHolding(short, 180*time.Millisecond)
+	if err != nil {
+		t.Fatalf("transient status probe lock prevented cleanup: %v", err)
+	}
+	if elapsed < 150*time.Millisecond {
+		t.Fatalf("remove did not overlap the held lock: elapsed %s", elapsed)
+	}
+
+	long := makePlan(94)
+	lockPath := filepath.Join(long.Path, ".agentdeck-lock")
+	file, err := os.OpenFile(lockPath, os.O_RDWR, 0600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := syscall.Flock(int(file.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+		file.Close()
+		t.Fatal(err)
+	}
+	started := time.Now()
+	done := make(chan error, 1)
+	go func() { done <- RunInteractive(context.Background(), executor.NewLocal(), "remove", long) }()
+	select {
+	case err = <-done:
+		if err == nil || !strings.Contains(err.Error(), "operation is still running") {
+			syscall.Flock(int(file.Fd()), syscall.LOCK_UN)
+			file.Close()
+			t.Fatalf("long-held operation was not rejected: %v", err)
+		}
+	case <-time.After(600 * time.Millisecond):
+		syscall.Flock(int(file.Fd()), syscall.LOCK_UN)
+		file.Close()
+		t.Fatal("lock retry exceeded its bound")
+	}
+	if elapsed := time.Since(started); elapsed < 200*time.Millisecond {
+		t.Fatalf("long-held lock was rejected too quickly: %s", elapsed)
+	}
+	if err := syscall.Flock(int(file.Fd()), syscall.LOCK_UN); err != nil {
+		t.Fatal(err)
+	}
+	file.Close()
+	if err := RunInteractive(context.Background(), executor.NewLocal(), "remove", long); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestMultiWorkspacePlansSeparateOwnedRepositoriesAndBases(t *testing.T) {
 	sources := []RepositorySource{{Name: "../API", Repo: "/repos/backend", Base: "main"}, {Name: "API", Repo: "/repos/frontend", Base: "develop"}, {Name: "資料", Repo: "/repos/library"}}
 	p, err := PlanMultiWorkspace(sources, 8, InteractiveOptions{Branch: "feature/shared"})
