@@ -336,7 +336,7 @@ func (m *Manager) Launch(ctx context.Context, o LaunchOpts) (*store.Session, err
 				return nil, fmt.Errorf("worktree source must be an existing Git working directory")
 			}
 			options := *o.Worktree
-			if target.Kind == "local" {
+			if target.Kind == "local" && m.WorktreeNamespace != "" {
 				options.Namespace = m.WorktreeNamespace
 				options.Workroot = target.Workroot
 			}
@@ -357,7 +357,7 @@ func (m *Manager) Launch(ctx context.Context, o LaunchOpts) (*store.Session, err
 		}
 		if len(workspaceSources) > 0 {
 			options := *o.Worktree
-			if target.Kind == "local" {
+			if target.Kind == "local" && m.WorktreeNamespace != "" {
 				options.Namespace = m.WorktreeNamespace
 				options.Workroot = target.Workroot
 			}
