@@ -20,7 +20,9 @@ The API supports:
 - `POST /api/sessions` with `profile_id` to launch with that definition.
 
 A definition contains `name`, `agent`, `command`, `model`, and `env_json` (a JSON
-object encoded as a string, consistent with project environment settings).
+object encoded as a string, consistent with project environment settings). Use
+the profile's environment for provider URLs and credentials; the selected agent
+runner remains the executable that starts the session.
 Names are unique without regard to ASCII case. Deleted IDs are never reused,
 so a stale selector cannot silently launch a replacement definition.
 

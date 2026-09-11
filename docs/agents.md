@@ -14,6 +14,19 @@ you pick.
 
 ## Choosing one
 
+The web Settings → **Agents** page is the place to add a runner. **Add agent**
+offers OpenCode, Aider and a custom runner starter, then keeps the command,
+model flag, provider endpoint and environment together. The endpoint is written
+to the named environment variable (for example `OPENAI_BASE_URL`) so every
+runner receives it through the same contract. The same editor is available
+in the terminal dashboard from **All actions → Manage agent runners** or the
+`Q` shortcut. A target is chosen when the session or task is launched.
+
+The command is the runner boundary. A provider URL or model name configures that
+command; it does not make an API endpoint executable. Keep provider credentials
+in the target environment. Existing masked values are retained by the editor
+unless you replace them.
+
 Set a project's default and every task inherits it:
 
 ```bash
@@ -22,6 +35,17 @@ curl -X PATCH .../api/projects/3 -d '{"default_agent":"codex"}'
 
 In the PWA, the **Agent** toggle in the new-task sheet picks per task, starting
 from the project default. A task's explicit `agent` always wins.
+
+For scripts, `agentdeck agent list` shows the registry and
+`agentdeck agent save @agents.json` updates it. The JSON form is useful for
+repeatable deployments; Settings and the TUI expose the required command fields
+without requiring JSON for ordinary setup.
+
+An agent is interactive-only unless its definition also has a `task` object.
+Enable background tasks in the editor to set a separate one-shot command,
+arguments, prompt template (`{prompt}`, `{prompt_file}`, or `stdin`), plain/JSONL
+output, and permission flag mappings. This keeps a CLI's interactive and batch
+invocations explicit; a session command is never guessed as a task command.
 
 The toggle reshapes the form, because the options are not interchangeable:
 gated approvals and the Claude model aliases (`fable`/`opus`/`sonnet`/`haiku`)

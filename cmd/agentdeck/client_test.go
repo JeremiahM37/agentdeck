@@ -1,12 +1,14 @@
 package main
 
 import (
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"reflect"
 	"testing"
 
 	"github.com/JeremiahM37/agentdeck/internal/config"
+	"github.com/JeremiahM37/agentdeck/internal/console"
 )
 
 func TestAttachmentResolvesOnServerAndRejectsShellInput(t *testing.T) {
@@ -28,6 +30,38 @@ func TestAttachmentResolvesOnServerAndRejectsShellInput(t *testing.T) {
 	t.Setenv("AGENTDECK_API", "https://remote.example")
 	if _, e := attachmentCommand(cfg, []string{"session", "17"}); e == nil {
 		t.Fatal("executed remote filesystem paths locally")
+	}
+}
+
+func TestAgentCLIListsAndSavesRegistry(t *testing.T) {
+	var methods []string
+	var saved string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		methods = append(methods, r.Method+" "+r.URL.Path)
+		if r.Method == "PUT" {
+			body, _ := io.ReadAll(r.Body)
+			saved = string(body)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`[{"name":"custom","command":"runner"}]`))
+	}))
+	defer srv.Close()
+	c := console.New(srv.URL, "")
+	if _, err := agentCommand(c, []string{"list"}); err != nil {
+		t.Fatal(err)
+	}
+	definition := `[{"name":"custom","command":"runner","env":{"OPENAI_BASE_URL":"http://127.0.0.1:11434/v1"}}]`
+	if _, err := agentCommand(c, []string{"save", definition}); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(methods, []string{"GET /api/agents", "PUT /api/agents"}) {
+		t.Fatalf("requests: %v", methods)
+	}
+	if saved != definition {
+		t.Fatalf("saved %q", saved)
+	}
+	if _, err := agentCommand(c, []string{"save", "not-json"}); err == nil {
+		t.Fatal("accepted invalid registry JSON")
 	}
 }
 func TestLocalAttachmentUsesConfiguredAPIAndToken(t *testing.T) {

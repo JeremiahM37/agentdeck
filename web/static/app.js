@@ -8,6 +8,7 @@ import { openArchiveHistory } from "/archive-history.js";
 import { openNativeHistory } from "/native-history.js";
 import { openNativeSearch } from "/native-search.js";
 import { openLaunchProfiles } from "/launch-profiles.js";
+import { renderAgentSettings } from "/agent-settings.js";
 import { openReview } from "/review.js";
 import { TerminalTabs } from "/terminal-tabs.js";
 import { actionMenu } from "/ui-menu.js";
@@ -29,7 +30,7 @@ const state = {
   mobileColPinned: false, // ...and whether the user chose it themselves
   showAllDone: false,     // phone: finished lists are capped until asked
   diffWrap: localStorage.getItem("adk-diffwrap") === "1",
-  sessionFilter: "", sessionGrouping: sessionStorage.getItem("adk-session-grouping") || "none", archivedSessions: [], showArchivedSessions: false, showEndedSessions: false, endedSessions: [], settingsSection: sessionStorage.getItem('adk-settings-section') || "machines",
+  sessionFilter: "", sessionGrouping: sessionStorage.getItem("adk-session-grouping") || "none", archivedSessions: [], showArchivedSessions: false, showEndedSessions: false, endedSessions: [], settingsSection: sessionStorage.getItem('adk-settings-section') || "machines", agents: [],
 };
 
 // Rotating a phone or dragging a desktop window across the breakpoint has to
@@ -166,8 +167,8 @@ async function pollWorkspaceSetups() {
   } finally { setupPollBusy=false; }
 }
 async function refreshMeta() {
-  [state.projects, state.targets, state.models] = await Promise.all([
-    api("/projects"), api("/targets"), api("/models").catch(() => ({}))]);
+  [state.projects, state.targets, state.models, state.agents] = await Promise.all([
+    api("/projects"), api("/targets"), api("/models").catch(() => ({})), api("/agents").catch(() => [])]);
   if (state.tab === "targets") renderTargets();
 }
 
@@ -978,6 +979,7 @@ function renderNewSession(sheet) {
   function syncModelList() {
     const box = $("#ns-model");
     const list = (state.models || {})[agentBox.value];
+    const spec = agentSpecs.find((a) => a.name === agentBox.value);
     $("#adk-models").innerHTML = (list || [])
       .map((m) => `<option>${esc(m)}</option>`).join("");
     box.placeholder = list === undefined
@@ -985,7 +987,9 @@ function renderNewSession(sheet) {
       : list.length ? "default — or type any model name"
       : "type the model name";
     if(chosenProfile()?.model) box.placeholder = chosenProfile().model + " — or override";
-    box.disabled = list === undefined;
+    // A custom runner may accept models even when it has no catalog command.
+    // Keep the field editable whenever its definition declares a model flag.
+    box.disabled = list === undefined && !spec?.model_flag;
   }
   function syncAgentHint(specs) {
     const a = specs.find((x) => x.name === agentBox.value);
@@ -1214,15 +1218,18 @@ async function renderTargets() {
     <div class="settings-nav" role="tablist" aria-label="Settings sections">
       <button data-settings="machines" role="tab">Targets</button><button data-settings="projects" role="tab">Projects</button>
       <button data-settings="notifications" role="tab">Notifications</button><button data-settings="about" role="tab">Usage &amp; about</button>
+      <button data-settings="agents" role="tab">Agents</button>
     </div>
     <section data-settings-panel="machines" class="settings-grid" role="tabpanel"></section>
     <section data-settings-panel="projects" role="tabpanel"></section>
     <section data-settings-panel="notifications" role="tabpanel"></section>
-    <section data-settings-panel="about" class="settings-grid" role="tabpanel"></section></div>`;
+    <section data-settings-panel="about" class="settings-grid" role="tabpanel"></section>
+    <section data-settings-panel="agents" role="tabpanel"></section></div>`;
   const page = $('.settings-page', main);
   const list = $('[data-settings-panel="machines"]', page);
   const projectPanel = $('[data-settings-panel="projects"]', page);
   const aboutPanel = $('[data-settings-panel="about"]', page);
+  const agentsPanel = $('[data-settings-panel="agents"]', page);
   const chooseSection = (section) => {
     state.settingsSection = section;
     sessionStorage.setItem('adk-settings-section', section);
@@ -1326,6 +1333,10 @@ async function renderTargets() {
     catch (e) { toast(e.message, true); }
   };
   $('[data-settings-panel="notifications"]',page).appendChild(foot);
+  renderAgentSettings(agentsPanel, {api, onChange: async (next) => {
+    state.agents = next || [];
+    // The next task/session/routine sheet should use the just-saved registry.
+  }});
 }
 
 /** One project's capability, stated from the server's RESOLVED view.
@@ -1845,14 +1856,19 @@ function renderRoutines(sheet) {
   // the agent set is the operator's, and the model list is whatever that agent
   // actually reports — same source as the session sheet
   const agentBox = $("#rt-agent", sheet);
+  let routineAgentSpecs = [];
   const syncModels = () => {
     const list = (state.models || {})[agentBox.value] || [];
+    const spec = routineAgentSpecs.find((a) => a.name === agentBox.value);
     $("#adk-models", sheet).innerHTML = list.map((m) => `<option>${esc(m)}</option>`).join("");
-    $("#rt-model", sheet).disabled = !(state.models || {})[agentBox.value];
+    $("#rt-model", sheet).disabled = !(state.models || {})[agentBox.value] && !spec?.model_flag;
   };
   api("/agents").then((specs) => {
+    // Scheduled runs need an explicit one-shot adapter. Keep interactive-only
+    // custom CLIs available to sessions while excluding them here.
+    routineAgentSpecs = specs.filter((a) => a.builtin || a.task);
     agentBox.innerHTML = `<option value="">the project's default</option>` +
-      specs.map((a) => `<option value="${esc(a.name)}">${esc(a.name)}</option>`).join("");
+      routineAgentSpecs.map((a) => `<option value="${esc(a.name)}">${esc(a.name)}${a.builtin ? "" : " (custom)"}</option>`).join("");
     agentBox.onchange = syncModels;
     syncModels();
   }).catch(() => { agentBox.innerHTML = '<option value="">default</option>'; });
@@ -2427,11 +2443,7 @@ function renderNewTask(sheet) {
       <option value="bypassPermissions">Bypass — sandboxed targets only</option>
     </select>
     <label class="f">Agent</label>
-    <div class="seg f" id="f-agent" data-value="claude">
-      <button type="button" data-agent="claude" class="on">Claude Code</button>
-      <button type="button" data-agent="codex">Codex</button>
-      <button type="button" data-agent="gemini">Gemini</button>
-    </div>
+    <div class="seg f" id="f-agent" data-value="claude" aria-label="Task runner"></div>
     <div class="subhint" id="f-agent-hint"></div>
     <label class="f">Model</label>
     <input class="f" id="f-model" list="adk-models" placeholder="default" autocomplete="off">
@@ -2460,6 +2472,20 @@ function renderNewTask(sheet) {
   // aliases, so switching agents has to reshape the rest of the form — and say
   // so, rather than letting a dispatch fail later for reasons that look random.
   const agentBox = $("#f-agent");
+  const allAgentSpecs = state.agents.length ? state.agents : [
+    {name:"claude", builtin:true}, {name:"codex", builtin:true}, {name:"gemini", builtin:true}];
+  // Built-ins retain their existing task adapters. A custom runner enters this
+  // selector only after it declares a separate one-shot `task` definition.
+  const taskAgentSpecs = allAgentSpecs.filter(a => a.builtin || a.task);
+  const paintTaskAgents = specs => {
+    agentBox.replaceChildren(...specs.map(a => {
+      const button = document.createElement("button"); button.type = "button";
+      button.dataset.agent = a.name; button.textContent = a.name + (a.builtin ? "" : " (custom)");
+      button.onclick = () => { agentBox.dataset.value = a.name; syncAgent(); };
+      return button;
+    }));
+  };
+  paintTaskAgents(taskAgentSpecs);
   const syncAgent = () => {
     const agent = agentBox.dataset.value;
     $$("button", agentBox).forEach((b) => b.classList.toggle("on", b.dataset.agent === agent));
@@ -2485,9 +2511,7 @@ function renderNewTask(sheet) {
         + `AGENTDECK_${agent.toUpperCase()}_BIN if it lives outside the service PATH`
       : "";
   };
-  $$("button", agentBox).forEach((b) => {
-    b.onclick = () => { agentBox.dataset.value = b.dataset.agent; syncAgent(); };
-  });
+  if (!taskAgentSpecs.some(a => a.name === agentBox.dataset.value)) agentBox.dataset.value = taskAgentSpecs[0]?.name || "";
   // what the agent will actually be able to do, before you spend a dispatch on it
   const syncCapability = () => {
     const el = $("#f-cap-hint");
@@ -2516,6 +2540,9 @@ function renderNewTask(sheet) {
   agentBox.dataset.value = initialProj?.default_agent || "claude";
   if (initialProj?.default_permission_mode) $("#f-perm").value = initialProj.default_permission_mode;
   syncAgent();
+  // State normally has the registry from boot. This retry keeps a task sheet
+  // useful when it was opened before metadata finished loading.
+  if (!state.agents.length) api("/agents").then(specs => { if (specs?.length) { state.agents = specs; const capable = specs.filter(a => a.builtin || a.task); paintTaskAgents(capable); if (!capable.some(a => a.name === agentBox.dataset.value)) agentBox.dataset.value = capable[0]?.name || ""; syncAgent(); } }).catch(() => {});
   api("/templates").then((tpls) => {
     const sel = $("#f-template");
     tpls.forEach((t, i) => {
@@ -2683,7 +2710,7 @@ const commandPalette = new CommandPalette({
       command('discover', 'Find running agents', () => sheet('discover'), 'Track existing tmux sessions', 'adopt restore untracked'),
       command('routines', 'Routines', () => sheet('routines'), 'Saved jobs and active runs', 'schedule takeover'),
       ...[['board','Task board'],['sessions','Sessions'],['terminals','Open terminals'],['deck','Deck'],['approvals','Approvals']].map(([tab,title]) => command(`nav-${tab}`,title,()=>switchTab(tab),'','navigate view','Navigate')),
-      ...[['machines','Targets','ssh remote local machines'],['projects','Projects','repositories workspaces'],['notifications','Notifications','alerts push'],['about','Usage and about','settings version costs']].map(([section,title,words]) => command(`settings-${section}`,title,()=>settings(section),'Settings',words,'Navigate')),
+      ...[['machines','Targets','ssh remote local machines'],['projects','Projects','repositories workspaces'],['notifications','Notifications','alerts push'],['about','Usage and about','settings version costs'],['agents','Agents','agent runners commands custom providers models']].map(([section,title,words]) => command(`settings-${section}`,title,()=>settings(section),'Settings',words,'Navigate')),
       ...state.sessions.map(s => command(`session-${s.id}`,s.name || `Session ${s.id}`,()=>attachSession(s),[s.status,s.agent,s.group_path,s.project_name,s.target_name,s.workdir].filter(Boolean).join(' · '),'attach terminal '+(s.workspace?.branch||''),'Sessions')),
       ...state.tasks.map(t => command(`task-${t.id}`,t.title || `Task ${t.id}`,()=>openTaskSheet(t.id),[t.status,t.project_name].filter(Boolean).join(' · '),`task ${t.id}`,'Tasks')),
       ...state.projects.map(p => command(`project-${p.id}`,`Edit project: ${p.name}`,()=>openProjectEditor(p),p.repo_path,'repository workspace configuration','Projects')),

@@ -4,7 +4,7 @@ export function openLaunchProfiles({api, onChange = () => {}}) {
   dialog.className = 'launch-profiles';
   dialog.setAttribute('aria-label', 'Launch profiles');
   dialog.innerHTML = `<header><h2>Launch profiles</h2><button type="button" class="lp-close">Close</button></header>
-    <p>Reusable settings for new sessions. Existing sessions keep the settings they started with.</p>
+    <p>Reusable settings for new sessions. Existing sessions keep the settings they started with. Add or edit runner commands in Settings → Agents.</p>
     <div class="lp-picker"><label>Saved profile<select class="lp-select" aria-label="Saved profile"><option value="">New profile</option></select></label><button type="button" class="lp-new">New profile</button></div>
     <form><label>Name<input class="lp-name" required maxlength="120" autocomplete="off"></label>
     <label>Agent<select class="lp-agent" aria-label="Agent" required></select></label>

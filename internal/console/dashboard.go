@@ -729,6 +729,8 @@ func (m *dashboard) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, m.refresh()
 		case "P":
 			return m, m.manageProfilesForm()
+		case "Q":
+			return m, m.manageAgentsForm()
 		case "p":
 			m.detailKey = ""
 			m.previewFocus = !m.previewFocus
@@ -1065,6 +1067,7 @@ const dashboardHelp = ` Keyboard shortcuts
  g             Group by project/target/name   w  Needs attention only
  n             New item         e        Rename   u Upload context
  P             Launch profiles
+	Q             Agent runners (add custom CLIs)
  m             All actions      f        Find and track running agents
  h             Full history     v        Review task diff
  F             Search saved conversation text across targets

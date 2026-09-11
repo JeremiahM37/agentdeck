@@ -16,6 +16,7 @@ launches with no arguments and no terminal still start the server.
 | Tab / p, PgUp/PgDn | Focus and scroll the preview |
 | n / e / m | Create / rename / all actions |
 | P | Manage named launch profiles |
+| Q | Manage agent runners (add custom CLIs) |
 | h / v / u | Read retained history / review a task diff / upload context |
 | f | Find running agents and add one to tracking by name |
 | 7 / 8 / 9 | Settings / usage / full API |
@@ -61,6 +62,8 @@ separate desktop URI installers enable opening an attachment from the web UI.
 
 ```sh
 agentdeck api GET /launch-profiles
+agentdeck agent list
+agentdeck agent save @agents.json
 agentdeck api POST /sessions '{"name":"Work","profile_id":7,"scratch":true}'
 agentdeck api GET /sessions
 agentdeck api POST /sessions '{"name":"Scratch","agent":"codex","scratch":true}'
@@ -74,6 +77,12 @@ agentdeck files session 4
 agentdeck download session 4 reports/result.txt ./result.txt
 agentdeck attach session 4
 ```
+
+`agentdeck agent save` accepts the runner fields shown in Settings → Agents:
+`name`, required `command`, optional `args`, `model_flag`, provider endpoint
+environment, `prompt_arg`, `resume_args`, `yolo_args`, and `env`. The command
+starts the runner; provider URLs and models configure that runner through its
+environment contract.
 
 Uploads print the stored remote path. They do not submit a message: mention the
 path in your prompt, or paste it in the attached terminal. Upload also accepts

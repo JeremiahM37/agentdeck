@@ -70,6 +70,8 @@ func (m *dashboard) choose(a dashboardAction) tea.Cmd {
 		return m.workspaceExtensionAction("recover")
 	case "launch-profiles":
 		return m.manageProfilesForm()
+	case "agents":
+		return m.manageAgentsForm()
 	case "toggle-group":
 		m.toggleGroup()
 		return nil
@@ -124,12 +126,13 @@ func (m *dashboard) choose(a dashboardAction) tea.Cmd {
 func (m *dashboard) actions() []dashboardAction {
 	actions := m.rowActions()
 	profile := dashboardAction{Label: "Manage launch profiles", Operation: "launch-profiles"}
+	agents := dashboardAction{Label: "Manage agent runners", Operation: "agents"}
 	if len(actions) == 0 {
 		return []dashboardAction{profile}
 	}
 	// Keep attachment first and destructive actions last.
 	last := actions[len(actions)-1]
-	return append(actions[:len(actions)-1], profile, last)
+	return append(actions[:len(actions)-1], agents, profile, last)
 }
 func (m *dashboard) rowActions() []dashboardAction {
 	if m.selectedGroup() != nil {
@@ -338,7 +341,7 @@ func formBody(fields []field) (map[string]any, error) {
 				return nil, fmt.Errorf("Choose a project")
 			}
 			out[f.Key] = []int64{n}
-		case f.Key == "multi_repo" || f.Key == "isolated" || f.Key == "resume" || f.Key == "brief" || f.Key == "yolo" || f.Key == "enabled" || f.Key == "dispatch" || f.Key == "strict_mcp":
+		case f.Key == "multi_repo" || f.Key == "isolated" || f.Key == "resume" || f.Key == "brief" || f.Key == "yolo" || f.Key == "enabled" || f.Key == "dispatch" || f.Key == "strict_mcp" || f.Key == "prompt_arg" || f.Key == "task_enabled":
 			out[f.Key] = v == "true"
 		default:
 			out[f.Key] = v
@@ -419,7 +422,11 @@ func (m *dashboard) newForm() tea.Cmd {
 	projects := options(m.projects, "Scratch / no project")
 	targets := options(m.targets, "Server default")
 	agents := []choice{}
+	taskCapable := kind == "tasks" || kind == "routines"
 	for _, a := range m.agents {
+		if taskCapable && a["builtin"] != true && a["task"] == nil {
+			continue
+		}
 		value := str(a["id"])
 		if value == "" {
 			value = str(a["name"])

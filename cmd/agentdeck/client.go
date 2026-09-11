@@ -27,6 +27,8 @@ const clientHelp = `AgentDeck — web and terminal control
   agentdeck upload KIND ID FILE     Add a local file as agent context
   agentdeck files KIND ID [PATH]    Browse files on the agent's machine
   agentdeck download KIND ID REMOTE LOCAL
+  agentdeck agent list
+  agentdeck agent save JSON|@file|-
   agentdeck skill list PROJECT [--agent claude|codex]
   agentdeck skill attached PROJECT [--agent claude|codex]
   agentdeck skill attach PROJECT SKILL_ID [--agent claude|codex]
@@ -42,6 +44,8 @@ Examples:
   agentdeck api PATCH /routines/3 '{"enabled":false}'
   agentdeck api POST /sessions/4/send '{"text":"Run the tests"}'
   agentdeck upload session 4 ./requirements.pdf
+  agentdeck agent list
+  agentdeck agent save @agents.json
 
 AGENTDECK_API sets the server URL (default http://127.0.0.1:9110).
 AGENTDECK_AUTH_TOKEN supplies bearer authentication.
@@ -101,6 +105,8 @@ func clientCommand(cfg *config.Config, command string, args []string) error {
 		data, err = c.Request(strings.ToUpper(args[0]), args[1], body, "application/json")
 	case "skill":
 		data, err = skillCommand(c, args)
+	case "agent":
+		data, err = agentCommand(c, args)
 	case "upload":
 		if len(args) != 3 {
 			return fmt.Errorf("usage: agentdeck upload KIND ID FILE")
@@ -141,6 +147,42 @@ func clientCommand(cfg *config.Config, command string, args []string) error {
 		}
 	}
 	return err
+}
+
+// agentCommand makes the runner registry discoverable without requiring users
+// to hand craft an API request. A save replaces the custom definitions exactly
+// as the Settings → Agents editor does; JSON can be read from a file or stdin.
+func agentCommand(c *console.Client, args []string) ([]byte, error) {
+	if len(args) < 1 || len(args) > 2 {
+		return nil, fmt.Errorf("usage: agentdeck agent list | save JSON|@file|-")
+	}
+	switch args[0] {
+	case "list":
+		if len(args) != 1 {
+			return nil, fmt.Errorf("usage: agentdeck agent list")
+		}
+		return c.Request("GET", "/agents", nil, "application/json")
+	case "save":
+		if len(args) != 2 {
+			return nil, fmt.Errorf("usage: agentdeck agent save JSON|@file|-")
+		}
+		b := []byte(args[1])
+		var err error
+		if args[1] == "-" {
+			b, err = io.ReadAll(os.Stdin)
+		} else if strings.HasPrefix(args[1], "@") {
+			b, err = os.ReadFile(args[1][1:])
+		}
+		if err != nil {
+			return nil, err
+		}
+		if !json.Valid(b) {
+			return nil, fmt.Errorf("agent definitions are not valid JSON")
+		}
+		return c.Request("PUT", "/agents", bytes.NewReader(b), "application/json")
+	default:
+		return nil, fmt.Errorf("unknown agent operation %q (use list or save)", args[0])
+	}
 }
 
 func skillCommand(c *console.Client, args []string) ([]byte, error) {
