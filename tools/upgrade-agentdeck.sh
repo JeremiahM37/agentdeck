@@ -83,6 +83,7 @@ if (( ! apply )); then
   echo "dry-run: no files, database, daemon state, or service state changed"
   exit 0
 fi
+[[ "$(id -u)" == 0 ]] || { echo "--apply must run as root; use the dry run without --apply as the service user" >&2; exit 1; }
 
 install -d -m 700 -o "$service_user" -g "$service_group" "$backup"
 # SQLite's online backup API gives us a consistent source copy while the live
