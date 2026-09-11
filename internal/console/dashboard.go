@@ -91,6 +91,10 @@ type rowsMsg struct {
 	rows       []row
 	err        error
 }
+type recentMsg struct {
+	rows []row
+	err  error
+}
 type refsMsg struct {
 	projects, targets, agents, profiles []row
 	err                                 error
@@ -136,6 +140,11 @@ type dashboard struct {
 	pending                             *dashboardAction
 	busy                                bool
 	projects, targets, agents, profiles []row
+	recentRows                          []row
+	recentOpen                          bool
+	recentSelected                      int
+	recentPending                       row
+	attachAfterRefresh                  bool
 }
 
 // RunDashboard uses a full-screen renderer that owns raw mode, resizing and the
@@ -500,10 +509,24 @@ func (m *dashboard) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.ensureSelection()
 					m.updatePreview()
 					m.focusSessionID = ""
+					if m.attachAfterRefresh {
+						m.attachAfterRefresh = false
+						return m, m.attachSelected(false)
+					}
 					break
 				}
 			}
 		}
+		return m, nil
+	case recentMsg:
+		m.busy = false
+		if v.err != nil {
+			m.notice = "Recently closed: " + clean(v.err.Error())
+			return m, nil
+		}
+		m.recentRows = v.rows
+		m.recentSelected = 0
+		m.recentOpen = true
 		return m, nil
 	case refsMsg:
 		m.projects = v.projects
@@ -517,6 +540,13 @@ func (m *dashboard) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case resultMsg:
 		m.busy = false
 		if v.err != nil {
+			if v.label == "Resume recently closed" && m.recentPending != nil {
+				if httpErr, ok := v.err.(*HTTPError); ok && (httpErr.Status == 404 || httpErr.Status == 409) {
+					r := m.recentPending
+					m.recentPending = nil
+					return m, m.recentHistory(r)
+				}
+			}
 			m.notice = clean(v.err.Error())
 			return m, nil
 		}
@@ -538,6 +568,15 @@ func (m *dashboard) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.form = nil
 		m.pending = nil
+		if v.label == "Resume recently closed" || v.label == "Restore tracking" {
+			m.recentPending = nil
+			m.recentOpen = false
+			var resumed row
+			if json.Unmarshal(v.data, &resumed) == nil && id(resumed) != "" {
+				m.focusSessionID = id(resumed)
+				m.attachAfterRefresh = true
+			}
+		}
 		m.notice = v.label + " completed"
 		if v.label == "Add repository" {
 			m.notice = "Repository addition started; the original terminal stays available"
@@ -655,6 +694,21 @@ func (m *dashboard) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, nil
 		}
+		if m.recentOpen {
+			switch v.String() {
+			case "esc", "backspace", "q", "C":
+				m.recentOpen = false
+			case "up", "k":
+				m.recentSelected = max(0, m.recentSelected-1)
+			case "down", "j":
+				m.recentSelected = min(len(m.recentRows)-1, m.recentSelected+1)
+			case "enter", "a":
+				return m, m.resumeRecentSelected()
+			case "h", "H":
+				return m, m.recentHistorySelected()
+			}
+			return m, nil
+		}
 		switch v.String() {
 		case "q":
 			return m, tea.Quit
@@ -664,6 +718,8 @@ func (m *dashboard) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, m.nativeSearchForm()
 		case "H":
 			return m, m.savedConversations()
+		case "C":
+			return m, m.loadRecentSessions()
 		case "O":
 			return m, m.olderNative()
 		case "?":
@@ -949,6 +1005,8 @@ func (m *dashboard) View() string {
 			lines = append(lines, s)
 		}
 		body = strings.Join(lines, "\n")
+	case m.recentOpen:
+		body = m.recentView(bodyHeight)
 	default:
 		list := m.listView(bodyHeight)
 		previewTitle := "Live preview"
@@ -1089,6 +1147,7 @@ const dashboardHelp = ` Keyboard shortcuts
  P             Launch profiles
 	Q             Agent runners (add custom CLIs)
  m             All actions      f        Find and track running agents
+ C             Recently closed (sessions)
  h             Full history     v        Review task diff
  F             Search saved conversation text across targets
  H             Saved conversations / fork   O Earlier saved messages

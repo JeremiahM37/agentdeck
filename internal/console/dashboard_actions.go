@@ -70,6 +70,8 @@ func (m *dashboard) choose(a dashboardAction) tea.Cmd {
 		return nil
 	}
 	switch a.Operation {
+	case "recent-sessions":
+		return m.loadRecentSessions()
 	case "extend-workspace":
 		return m.extendWorkspaceForm()
 	case "cancel-extension":
@@ -136,10 +138,16 @@ func (m *dashboard) actions() []dashboardAction {
 	profile := dashboardAction{Label: "Manage launch profiles", Operation: "launch-profiles"}
 	agents := dashboardAction{Label: "Manage agent runners", Operation: "agents"}
 	if len(actions) == 0 {
+		if sections[m.section] == "sessions" {
+			return []dashboardAction{profile, {Label: "Recently closed", Operation: "recent-sessions"}}
+		}
 		return []dashboardAction{profile}
 	}
 	// Keep attachment first and destructive actions last.
 	last := actions[len(actions)-1]
+	if sections[m.section] == "sessions" {
+		return append(actions[:len(actions)-1], agents, profile, dashboardAction{Label: "Recently closed", Operation: "recent-sessions"}, last)
+	}
 	return append(actions[:len(actions)-1], agents, profile, last)
 }
 func (m *dashboard) rowActions() []dashboardAction {

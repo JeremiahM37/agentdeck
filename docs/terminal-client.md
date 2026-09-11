@@ -167,6 +167,16 @@ checkout mutation.
 
 ## Saved native conversations and forks
 
+The Sessions view also has **Recently closed**. It fetches the latest ten
+server records each time it opens, so ended sessions remain available after the
+live list is empty. The terminal dashboard opens the same list with `C` or
+Actions → Recently closed; `Esc` or Backspace returns to the live list. A record
+with an exact durable native binding offers **Resume** and continues that
+conversation after refreshing the session list. Released adopted terminals
+offer **Restore tracking**, which resumes monitoring the existing terminal
+without launching another agent. Other records offer **Choose history**, which
+opens the existing explicit native history picker.
+
 On a Claude or Codex session, press `H` (or Actions → Saved conversations / fork)
 to choose a saved conversation from that workspace on its target. Read it in the
 preview, use `O` for the preceding page, or choose **Fork** in the picker. The

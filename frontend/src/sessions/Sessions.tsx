@@ -5,7 +5,7 @@ import type {
   SessionView,
   Target,
 } from "../types";
-import type { RequestOptions } from "../api";
+import { ApiError, type RequestOptions } from "../api";
 import { Discover, Handoff, NewSession } from "./SessionDialogs";
 import { Conversation } from "./Conversation";
 import { NativeHistory, NativeSearch } from "./SavedConversations";
@@ -13,6 +13,7 @@ import { Modal } from "./Modal";
 import { WorkspaceExtension } from "./WorkspaceExtension";
 import { SessionCard } from "./SessionCard";
 import { SessionGroups, type GroupMode } from "./SessionGroups";
+import { RecentlyClosed, type RecentSession } from "./RecentlyClosed";
 import "./sessions.css";
 export interface SessionsApi {
   sessions(options?: {
@@ -93,6 +94,7 @@ export function Sessions({
       note: string;
     }>(),
     [search, setSearch] = useState(false),
+    [recentOpen, setRecentOpen] = useState(false),
     [errors, setErrors] = useState<Record<number, string>>({}),
     [clock, setClock] = useState(Date.now());
   const generation = useRef(0),
@@ -212,7 +214,23 @@ export function Sessions({
           a.idle_seconds - b.idle_seconds,
       );
   }, [rows, scope, query]);
-  async function attach(session: SessionView) {
+  async function attach(session: SessionView, waitForSetup = false) {
+    if (waitForSetup && session.setup_state === "creating") {
+      // Resume returns before the successor's launch/setup worker has marked
+      // the row ready. Wait for that durable state before asking ttyd to attach.
+      for (let attempt = 0; attempt < 40; attempt += 1) {
+        await new Promise((resolve) => window.setTimeout(resolve, 250));
+        try {
+          session = await api.request<SessionView>(
+            `/sessions/${session.id}`,
+          );
+        } catch (error) {
+          onNotice(String(error), true);
+          return;
+        }
+        if (session.setup_state !== "creating") break;
+      }
+    }
     if (session.setup_state === "failed") {
       onNotice(
         session.setup_error ||
@@ -227,21 +245,65 @@ export function Sessions({
       );
       return;
     }
-    try {
-      const result = await api.request<{ url: string }>(
-        `/sessions/${session.id}/terminal`,
-        { method: "POST" },
-      );
-      onOpenTerminal(result.url, session.name);
-    } catch (error) {
-      onNotice(String(error) + " — attach manually", true);
-      prompt("Attach with:", `tmux attach -t ${session.tmux_session}`);
+    let lastError: unknown;
+    // A resumed launch is returned as `starting`; its tmux socket can take a
+    // moment to appear after the API has committed the new row. Retry only the
+    // proxy's transient 503 while keeping permanent errors visible.
+    for (let attempt = 0; attempt < 20; attempt += 1) {
+      try {
+        const result = await api.request<{ url: string }>(
+          `/sessions/${session.id}/terminal`,
+          { method: "POST" },
+        );
+        onOpenTerminal(result.url, session.name);
+        return;
+      } catch (error) {
+        lastError = error;
+        if (!(error instanceof ApiError) || error.status !== 503 || attempt === 19)
+          break;
+        await new Promise((resolve) => window.setTimeout(resolve, 250));
+      }
     }
+    onNotice(String(lastError) + " — attach manually", true);
+    prompt("Attach with:", `tmux attach -t ${session.tmux_session}`);
   }
   const refreshAll = async () => {
     await load();
     onMetadataRefresh?.();
   };
+  async function restoreRecent(session: RecentSession) {
+    try {
+      const restored = await api.request<SessionView>(
+        `/sessions/${session.id}/restore`,
+        { method: "POST", body: {} },
+      );
+      setRecentOpen(false);
+      await refreshAll();
+      await attach(restored, true);
+      onNotice(`Tracking restored for ${restored.name || session.name}`);
+    } catch (error) {
+      onNotice(String(error), true);
+    }
+  }
+  async function resumeRecent(session: RecentSession) {
+    try {
+      const resumed = await api.request<SessionView>(
+        `/sessions/${session.id}/resume-recent`,
+        { method: "POST", body: { name: session.name } },
+      );
+      setRecentOpen(false);
+      await refreshAll();
+      await attach(resumed, true);
+      onNotice(`Resumed ${resumed.name || session.name}`);
+    } catch (error) {
+      const status =
+        typeof error === "object" && error !== null && "status" in error
+          ? error.status
+          : undefined;
+      if (status === 404 || status === 409) setHistory(session);
+      else onNotice(String(error), true);
+    }
+  }
   function render(session: SessionView) {
     const elapsed = Math.max(0, (clock - updated.current) / 1000),
       display = {
@@ -308,6 +370,14 @@ export function Sessions({
         >
           ⌕ Find running agents
         </button>
+        <button
+          className="b"
+          id="sess-recent"
+          aria-expanded={recentOpen}
+          onClick={() => setRecentOpen((open) => !open)}
+        >
+          Recently closed
+        </button>
         <button className="b ok" id="sess-new" onClick={() => setSheet("new")}>
           + New session
         </button>
@@ -353,6 +423,16 @@ export function Sessions({
           <option value="archived">Archived sessions</option>
         </select>
       </label>
+      {recentOpen && (
+        <RecentlyClosed
+          api={api}
+          onNotice={onNotice}
+          refreshVersion={refreshVersion}
+          onRestore={restoreRecent}
+          onResume={resumeRecent}
+          onHistory={(session) => setHistory(session)}
+        />
+      )}
       <div id="sesslist">
         {shown.length ? (
           <SessionGroups
