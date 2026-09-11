@@ -365,6 +365,27 @@ func (s *Server) previewBrief(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	brief, recalled := s.projectBriefWithMemory(r.Context(), proj)
+	if provider, ok := s.Memory.(memory.ProjectProvider); ok {
+		result, lookupErr := provider.AutomaticProject(r.Context(), proj.Name, proj.MemoryTopic, "", nil)
+		recalled.Status, recalled.Message = "empty", "No relevant memory found in the configured project scope."
+		if lookupErr != nil {
+			recalled.Status, recalled.Message = "unavailable", "Memory unavailable; work can continue."
+			brief = recalled.Message + "\n" + brief
+		} else if result.Context != "" {
+			recalled.Status, recalled.Message = "ready", "Project-scoped memory loaded."
+			brief = result.Context + "\n" + brief
+		}
+		if grimoire, ok := s.Memory.(*memory.Grimoire); ok {
+			mode := grimoire.ContextScope(proj.Name).Mode
+			if mode == "manual" || mode == "off" {
+				recalled.Status, recalled.Message = "disabled", "Automatic memory is disabled for this project."
+			}
+		}
+		if proj.MemoryStatus == "unavailable" {
+			recalled.Status, recalled.Message = "unavailable", "Project memory setup failed; retry POST /api/projects/{id}/memory."
+		}
+		brief = memory.ProjectHint(s.Memory, proj.Name, proj.MemoryTopic) + brief
+	}
 	writeJSON(w, 200, map[string]any{
 		"project": proj.Name, "brief": brief, "chars": len(brief), "memory": recalled,
 		"docs": s.repoDocs(r.Context(), proj),
@@ -859,11 +880,15 @@ func (s *Server) resolvePromotionTarget(ctx context.Context, sess *store.Session
 	if name == "" {
 		name = projectNameFromPath(repo)
 	}
-	return s.DB.InsertProject(&store.Project{
+	project, err := s.DB.InsertProject(&store.Project{
 		Name: name, TargetID: sess.TargetID, RepoPath: repo,
 		DefaultBaseBranch: s.repoBranch(ctx, sess.TargetID, repo),
 		DefaultAgent:      sess.Agent, KeepWorktrees: 3,
 	})
+	if err == nil {
+		s.provisionProjectMemory(ctx, project)
+	}
+	return project, err
 }
 
 // repoBranch asks the repository what branch it is actually on.

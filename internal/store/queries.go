@@ -1,6 +1,7 @@
 package store
 
 import (
+	"crypto/rand"
 	"database/sql"
 	"errors"
 	"fmt"
@@ -78,7 +79,7 @@ const projectCols = `p.id, p.name, p.target_id, p.repo_path, p.default_base_bran
 	p.workroot_override, p.policy_json, p.verify_cmd, p.keep_worktrees, p.review_gate,
 	p.env_json, p.context_json, p.mcp_json, p.strict_mcp, p.permissions_json,
 	p.setup_cmd, p.gate_matcher, p.default_agent, p.capability_profile, p.default_permission_mode,
-	p.skill_sources_json,
+	p.skill_sources_json, p.memory_topic, p.memory_status,
 	p.created_at`
 
 func scanProject(s interface{ Scan(...any) error }, withTarget bool) (*Project, error) {
@@ -87,7 +88,7 @@ func scanProject(s interface{ Scan(...any) error }, withTarget bool) (*Project, 
 		&p.WorkrootOverride, &p.PolicyJSON, &p.VerifyCmd, &p.KeepWorktrees,
 		&p.ReviewGate, &p.EnvJSON, &p.ContextJSON, &p.MCPJSON, &p.StrictMCP,
 		&p.PermissionsJSON, &p.SetupCmd, &p.GateMatcher, &p.DefaultAgent, &p.CapabilityProfile,
-		&p.DefaultPermissionMode, &p.SkillSourcesJSON, &p.CreatedAt}
+		&p.DefaultPermissionMode, &p.SkillSourcesJSON, &p.MemoryTopic, &p.MemoryStatus, &p.CreatedAt}
 	if withTarget {
 		dest = append(dest, &p.TargetName, &p.TargetKind)
 	}
@@ -145,17 +146,25 @@ func (db *DB) ProjectForAttempt(attemptID int64) (*Project, error) {
 
 // InsertProject writes a new project and returns it with its assigned id.
 func (db *DB) InsertProject(p *Project) (*Project, error) {
+	if p.MemoryTopic == "" {
+		identity := make([]byte, 16)
+		if _, err := rand.Read(identity); err != nil {
+			return nil, err
+		}
+		p.MemoryTopic = fmt.Sprintf("agentdeck-%x", identity)
+		p.MemoryStatus = "pending"
+	}
 	res, err := db.Exec(`INSERT INTO projects(name, target_id, repo_path,
 		default_base_branch, workroot_override, policy_json, verify_cmd, keep_worktrees,
 		review_gate, env_json, context_json, mcp_json, strict_mcp, permissions_json,
 		setup_cmd, gate_matcher, default_agent, capability_profile, default_permission_mode,
-		skill_sources_json, created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		skill_sources_json, memory_topic, memory_status, created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 		p.Name, p.TargetID, p.RepoPath, nz(p.DefaultBaseBranch, "main"),
 		p.WorkrootOverride, nz(p.PolicyJSON, "{}"), p.VerifyCmd, p.KeepWorktrees,
 		p.ReviewGate, nz(p.EnvJSON, "{}"), nz(p.ContextJSON, "[]"), nz(p.MCPJSON, "{}"),
 		p.StrictMCP, nz(p.PermissionsJSON, "{}"), p.SetupCmd, p.GateMatcher,
 		nz(p.DefaultAgent, "claude"), nz(p.CapabilityProfile, "restricted"),
-		p.DefaultPermissionMode, nz(p.SkillSourcesJSON, "[]"), Now())
+		p.DefaultPermissionMode, nz(p.SkillSourcesJSON, "[]"), p.MemoryTopic, p.MemoryStatus, Now())
 	if err != nil {
 		return nil, err
 	}

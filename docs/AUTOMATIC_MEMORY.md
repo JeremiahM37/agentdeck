@@ -1,5 +1,28 @@
 # Automatic project memory
 
+## New projects get their own durable location
+
+Creating, importing, or promoting a project allocates a random, persistent
+`memory_topic` in AgentDeck's database. With automatic Grimoire memory enabled,
+AgentDeck creates `memory/<memory_topic>.md` in the vault. Renaming the project
+does not move its memory; similarly named projects cannot collide. The project
+response exposes `memory_topic` and `memory_status` (`ready`, `unavailable`, or
+`disabled`). A network failure does not discard the project or pretend that
+setup succeeded: retry `POST /api/projects/{id}/memory` when Grimoire is back.
+Retries never overwrite an existing note. Deleting a project retains its memory.
+
+New projects read their own managed note by default. Explicit per-project paths
+add other references alongside it. Existing projects keep their configured or
+legacy paths; no bulk migration is performed. Manual/off policy performs no
+provisioning or automatic reads. New launch/task prompts include a short memory
+destination hint, and requested session handoffs write to that same topic with
+topic-scoped reconciliation. Memory writes still require an explicit agent or
+handoff action; ordinary prompts are not recorded automatically.
+
+The default 2,400-byte retrieval ceiling does not include the short, once-per-
+launch/task destination hint. Preview a project's brief to inspect context and
+setup/lookup status before launching.
+
 AgentDeck remains useful without Grimoire. When `AGENTDECK_GRIMOIRE_URL` is
 configured, the optional provider can supply project knowledge automatically
 without delegating that decision to the agent.

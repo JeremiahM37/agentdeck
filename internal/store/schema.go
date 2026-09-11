@@ -254,6 +254,8 @@ var migrations = []string{
 	"ALTER TABLE projects ADD COLUMN capability_profile TEXT DEFAULT 'restricted'",
 	"ALTER TABLE projects ADD COLUMN default_permission_mode TEXT DEFAULT ''",
 	"ALTER TABLE projects ADD COLUMN skill_sources_json TEXT DEFAULT '[]'",
+	"ALTER TABLE projects ADD COLUMN memory_topic TEXT NOT NULL DEFAULT ''",
+	"ALTER TABLE projects ADD COLUMN memory_status TEXT NOT NULL DEFAULT ''",
 	"ALTER TABLE skill_materializations ADD COLUMN state TEXT NOT NULL DEFAULT 'pending'",
 	"ALTER TABLE tasks ADD COLUMN parent_task_id INTEGER",
 	"ALTER TABLE tasks ADD COLUMN created_by TEXT DEFAULT 'user'",

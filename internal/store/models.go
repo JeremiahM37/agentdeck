@@ -55,6 +55,8 @@ type Project struct {
 	CapabilityProfile     string  `json:"capability_profile"`
 	DefaultPermissionMode string  `json:"default_permission_mode"`
 	SkillSourcesJSON      string  `json:"skill_sources_json"`
+	MemoryTopic           string  `json:"memory_topic"`
+	MemoryStatus          string  `json:"memory_status"`
 	CreatedAt             float64 `json:"created_at"`
 
 	// joined for the projects list — the UI names a project's target inline

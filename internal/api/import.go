@@ -230,6 +230,7 @@ func (s *Server) importProjects(w http.ResponseWriter, r *http.Request) {
 			res.Skipped = append(res.Skipped, c)
 			continue
 		}
+		s.provisionProjectMemory(r.Context(), proj)
 		s.Bus.Publish("board", "project", proj)
 		res.Imported = append(res.Imported, proj)
 	}

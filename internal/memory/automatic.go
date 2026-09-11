@@ -19,12 +19,18 @@ type ContextScope struct {
 }
 
 type ContextResult struct {
-	Context string   `json:"context"`
-	Keys    []string `json:"keys"`
+	Context     string   `json:"context"`
+	Keys        []string `json:"keys"`
+	Unavailable bool     `json:"-"`
 }
 
 type AutomaticProvider interface {
 	Automatic(context.Context, string, string, []string) (ContextResult, error)
+}
+
+type ProjectProvider interface {
+	AutomaticProject(context.Context, string, string, string, []string) (ContextResult, error)
+	Provision(context.Context, string, string) (string, error)
 }
 
 var projectSeparators = regexp.MustCompile(`[^a-z0-9]+`)
@@ -79,7 +85,18 @@ func (g *Grimoire) ContextScope(project string) ContextScope {
 }
 
 func (g *Grimoire) Automatic(ctx context.Context, project, query string, excluded []string) (ContextResult, error) {
+	return g.AutomaticProject(ctx, project, "", query, excluded)
+}
+
+func (g *Grimoire) AutomaticProject(ctx context.Context, project, topic, query string, excluded []string) (ContextResult, error) {
 	scope := g.ContextScope(project)
+	if topic != "" && scope.Mode == "scoped" {
+		if _, configured := g.ContextProjects[project]; !configured {
+			scope.Paths = []string{"memory/" + topic + ".md"}
+		} else {
+			scope.Paths = append(append([]string(nil), scope.Paths...), "memory/"+topic+".md")
+		}
+	}
 	if scope.Mode == "manual" || scope.Mode == "off" {
 		return ContextResult{}, nil
 	}
@@ -120,12 +137,20 @@ func (g *Grimoire) Automatic(ctx context.Context, project, query string, exclude
 	return result, nil
 }
 
-func Automatic(ctx context.Context, provider Provider, project, query string, excluded []string) ContextResult {
+func Automatic(ctx context.Context, provider Provider, project, query string, excluded []string, topics ...string) ContextResult {
+	if scoped, ok := provider.(ProjectProvider); ok && len(topics) > 0 {
+		result, err := scoped.AutomaticProject(ctx, project, topics[0], query, excluded)
+		if err == nil {
+			return result
+		}
+		return ContextResult{Unavailable: true}
+	}
 	if automatic, ok := provider.(AutomaticProvider); ok {
 		result, err := automatic.Automatic(ctx, project, query, excluded)
 		if err == nil {
 			return result
 		}
+		return ContextResult{Unavailable: true}
 	}
 	return ContextResult{}
 }

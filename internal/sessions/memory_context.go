@@ -39,7 +39,7 @@ func (m *Manager) automaticContext(ctx context.Context, session *store.Session, 
 	if len(excluded) > 256 {
 		excluded = excluded[:256]
 	}
-	result := memory.Automatic(ctx, m.Memory, project.Name, query, excluded)
+	result := memory.Automatic(ctx, m.Memory, project.Name, query, excluded, project.MemoryTopic)
 	return result
 }
 

@@ -45,6 +45,7 @@ type Fact struct {
 // and a memory store otherwise never learns.
 type Entry struct {
 	Project  string
+	Topic    string
 	Session  string
 	Agent    string
 	Category string
@@ -305,9 +306,14 @@ func (g *Grimoire) recallFacts(ctx context.Context, project string, limit int) (
 
 // Remember stores a fact with agentdeck's operational provenance attached.
 func (g *Grimoire) Remember(ctx context.Context, e Entry) error {
+	topic := e.Topic
+	if topic == "" {
+		topic = e.Project
+	}
 	body, _ := json.Marshal(map[string]any{
 		"text":     e.Text,
-		"topic":    e.Project,
+		"topic":    topic,
+		"scope":    "topic",
 		"agent":    "agentdeck",
 		"session":  e.Session,
 		"category": e.Category,

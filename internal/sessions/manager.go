@@ -280,6 +280,14 @@ func (m *Manager) launch(ctx context.Context, o LaunchOpts) (*store.Session, err
 		spec.Args = append(spec.Args, shellq.Quote(arg))
 	}
 	recalled := m.automaticContext(ctx, sess, "")
+	if recalled.Unavailable {
+		o.Prime = "Memory unavailable. Continue using the repository and saved handoffs.\n" + o.Prime
+	}
+	if sess.ProjectID != nil {
+		if project, err := m.DB.Project(*sess.ProjectID); err == nil {
+			o.Prime = memory.ProjectHint(m.Memory, project.Name, project.MemoryTopic) + o.Prime
+		}
+	}
 	if recalled.Context != "" {
 		o.Prime = recalled.Context + "\n" + o.Prime
 	}

@@ -16,6 +16,10 @@ func scopedMemoryServer(t *testing.T) (*httptest.Server, *atomic.Int64) {
 	t.Helper()
 	calls := &atomic.Int64{}
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if request.Method == "POST" && request.URL.Path == "/api/notes" {
+			writer.WriteHeader(http.StatusCreated)
+			return
+		}
 		if request.URL.Path != "/api/memory/context" {
 			t.Errorf("automatic flow reached unscoped endpoint: %s", request.URL.Path)
 			http.NotFound(writer, request)
@@ -27,7 +31,7 @@ func scopedMemoryServer(t *testing.T) (*httptest.Server, *atomic.Int64) {
 			t.Errorf("bad scope: %v", query)
 		}
 		paths := query["path"]
-		if len(paths) != 1 || paths[0] != "teams/kestrel/" {
+		if len(paths) != 2 || paths[0] != "teams/kestrel/" || !strings.HasPrefix(paths[1], "memory/agentdeck-") {
 			t.Errorf("wrong assigned project: %v", paths)
 		}
 		if query.Get("exclude") != "" {

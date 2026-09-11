@@ -178,8 +178,14 @@ func (m *Manager) runHandoff(ctx context.Context, sess *store.Session, o Handoff
 		m.DB.InsertNote(*sess.ProjectID, "Session handoff: "+clipRunes(wrap, 900), nil)
 	}
 	if m.Memory != nil && m.Memory.Available(ctx) {
+		topic := ""
+		if sess.ProjectID != nil {
+			if project, err := m.DB.Project(*sess.ProjectID); err == nil {
+				topic = project.MemoryTopic
+			}
+		}
 		if err := m.Memory.Remember(ctx, memory.Entry{
-			Project: projectName, Session: sess.Name, Agent: sess.Agent,
+			Project: projectName, Topic: topic, Session: sess.Name, Agent: sess.Agent,
 			Category: "handoff", Text: wrap,
 		}); err != nil {
 			m.Log.Warn("memory provider rejected the wrap", "err", err)

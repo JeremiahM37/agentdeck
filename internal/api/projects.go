@@ -118,6 +118,7 @@ func (s *Server) createProject(w http.ResponseWriter, r *http.Request) {
 		respondErr(w, err)
 		return
 	}
+	s.provisionProjectMemory(r.Context(), out)
 	writeJSON(w, 201, out)
 }
 
