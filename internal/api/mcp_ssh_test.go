@@ -223,7 +223,7 @@ func insertLifecycleTarget(t *testing.T, h *harness, kind, tmuxDir string) *stor
 	}
 	prefix := ""
 	if tmuxDir != "" {
-		prefix = "mkdir -m 700 -p " + shellQuoteForTest(tmuxDir) + " && env TMUX_TMPDIR=" + shellQuoteForTest(tmuxDir) + " sh -c"
+		prefix = "mkdir -m 700 -p " + shellQuoteForTest(tmuxDir) + " && env SHELL=/bin/bash TMUX_TMPDIR=" + shellQuoteForTest(tmuxDir) + " sh -c"
 	}
 	sshFixture := testutil.NewSSHFixture(t)
 	target, err := h.App.DB.InsertTarget(&store.Target{

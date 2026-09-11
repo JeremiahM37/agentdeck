@@ -45,7 +45,7 @@ func newRemoteAcceptanceRig(t *testing.T, h *harness) *remoteAcceptanceRig {
 			t.Fatal(err)
 		}
 	}
-	prefix := fmt.Sprintf("env HOME=%s TMUX=%s TMUX_TMPDIR=%s GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=safe.directory GIT_CONFIG_VALUE_0=%s sh -c",
+	prefix := fmt.Sprintf("env HOME=%s SHELL=/bin/bash TMUX=%s TMUX_TMPDIR=%s GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=safe.directory GIT_CONFIG_VALUE_0=%s sh -c",
 		executor.ShellQuote(r.home), executor.ShellQuote(""), executor.ShellQuote(r.tmuxDir), executor.ShellQuote("*"))
 	target, err := h.App.DB.InsertTarget(&store.Target{
 		Name: "loopback SSH acceptance", Kind: "ssh", Host: "127.0.0.1", User: "test", Port: sshFixture.Port,
