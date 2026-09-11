@@ -56,9 +56,10 @@ management runs on the server. `agentdeck upload` stages local files over SCP.
 The native Windows launcher requires OpenSSH, with your existing host/key setup.
 
 For a terminal workspace that runs entirely on the current computer, use the
-[standalone local installer](local.md) instead. It installs `agentdeck-local`
-and does not need a control-plane URL or SSH server; the remote installer above
-continues to install the `agentdeck` client.
+[standalone local installer](local.md) instead. It installs `agentdeck` (or
+`agentdeck-local` when the remote client already owns that name) and does not
+need a control-plane URL or SSH server; the remote installer above continues to
+install the `agentdeck` client.
 
 This client works in your existing terminal. The
 separate desktop URI installers enable opening an attachment from the web UI.

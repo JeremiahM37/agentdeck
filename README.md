@@ -91,7 +91,7 @@ standalone local command. It needs no hosted server, SSH alias, or Grimoire:
 git clone https://github.com/JeremiahM37/agentdeck.git
 cd agentdeck
 bash tools/install-local.sh
-agentdeck-local local claude
+agentdeck local
 ```
 
 See [Standalone local AgentDeck](docs/local.md) for Linux, macOS, and WSL

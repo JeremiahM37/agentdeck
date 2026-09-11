@@ -7,7 +7,7 @@ For a terminal-only setup on the same machine as the agent, use the
 git clone https://github.com/JeremiahM37/agentdeck.git
 cd agentdeck
 bash tools/install-local.sh
-agentdeck-local local claude
+agentdeck local
 ```
 
 The rest of this page describes the hosted control-plane setup, where one

@@ -26,7 +26,7 @@ def run_installer(tmp_path, *args, extra_path=()):
 
 
 def fake_binary(path):
-    path.write_text("#!/bin/sh\n[ \"$1\" = version ] && echo local-test-1\n")
+    path.write_text("#!/bin/sh\ncase \"$1\" in version) echo local-test-1;; local) exit 0;; esac\n")
     path.chmod(0o755)
 
 
@@ -52,7 +52,7 @@ def test_source_build_works_when_called_outside_checkout(tmp_path):
     fake_go.write_text(
         "#!/bin/sh\n"
         "while [ $# -gt 0 ]; do [ \"$1\" = -o ] && { out=$2; shift 2; continue; }; shift; done\n"
-        "printf '#!/bin/sh\\n[ \"$1\" = version ] && echo source-test-1\\n' > \"$out\"\n"
+        "printf '#!/bin/sh\\ncase \"$1\" in version) echo source-test-1;; local) exit 0;; esac\\n' > \"$out\"\n"
         "chmod +x \"$out\"\n"
     )
     fake_go.chmod(0o755)
@@ -62,7 +62,7 @@ def test_source_build_works_when_called_outside_checkout(tmp_path):
     result, _ = run_installer(tmp_path, "--source", source, "--prefix", prefix, extra_path=(tmp_path,))
 
     assert result.returncode == 0, result.stderr
-    installed = prefix / "agentdeck-local"
+    installed = prefix / "agentdeck"
     assert installed.is_file() and os.access(installed, os.X_OK)
     assert subprocess.run([installed, "version"], text=True, capture_output=True, check=True).stdout.strip() == "source-test-1"
 
