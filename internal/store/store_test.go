@@ -1,11 +1,44 @@
 package store
 
 import (
+	"context"
 	"database/sql"
 	"os"
 	"path/filepath"
 	"testing"
 )
+
+func TestPromoteNewProjectAndBindIsAtomicAndBootSafe(t *testing.T) {
+	db, err := Open(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	target, err := db.InsertTarget(&Target{Name: "promotion", Kind: "local"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sess, err := db.InsertSession(&Session{TargetID: target.ID, Name: "shell", Agent: "shell", Workdir: "/old", TmuxSession: "adk-shell", BootID: "", TrackingIdentity: "track"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	p, err := db.PromoteNewProjectAndBind(context.Background(), &Project{Name: "p", TargetID: target.ID, RepoPath: "/new", DefaultAgent: "claude"}, sess.ID, "adk-shell", sess.BootID, "boot-new", "track", "cid", "cfg")
+	if err != nil {
+		t.Fatal(err)
+	}
+	row, _ := db.Session(sess.ID)
+	if row.ProjectID == nil || *row.ProjectID != p.ID || row.BootID != "boot-new" {
+		t.Fatalf("binding=%+v", row)
+	}
+	if _, err := db.PromoteNewProjectAndBind(context.Background(), &Project{Name: "stale", TargetID: target.ID, RepoPath: "/x", DefaultAgent: "codex"}, sess.ID, "adk-shell", "boot-new", "other", "track", "cid2", "cfg"); err == nil {
+		t.Fatal("stale promotion succeeded")
+	}
+	projects, _ := db.Projects()
+	for _, item := range projects {
+		if item.Name == "stale" {
+			t.Fatal("stale project was committed")
+		}
+	}
+}
 
 // earlySchema is the shape the Python service created, before sessions, wraps,
 // capability profiles, command prefixes and the rest. Reproduced here rather
