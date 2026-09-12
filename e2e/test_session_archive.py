@@ -4,6 +4,23 @@ import pytest
 from playwright.sync_api import expect
 from test_terminal_workspace import real_terminal
 from test_terminal_dashboard import Dashboard
+
+
+def choose_console_action(d, label):
+    """Move to a visible action by its rendered selection highlight."""
+    for _ in range(40):
+        for y, line in enumerate(d.screen.display):
+            if label not in line:
+                continue
+            cells = d.screen.buffer[y]
+            start = line.index(label)
+            end = start + len(label)
+            if any(getattr(cells[x], 'bg', '') not in ('', 'default', 'black')
+                   for x in range(start, min(end, len(cells)))):
+                d.send('\r')
+                return
+        d.send('\x1b[B')
+    raise AssertionError(f"Action {label!r} was not selectable:\n{d.text}")
 from test_session_restore import request
 from test_session_groups import patch
 
@@ -95,11 +112,9 @@ def test_console_archive_view_output_and_unarchive(real_terminal):
     t=real_terminal;seed(t);d=Dashboard(t)
     try:
         d.wait('Real terminal');d.send('m');d.wait('Actions')
-        for _ in range(13):d.send('\x1b[B')
-        d.send('\r');d.wait('Stop and archive?');d.send('n');assert not gone(t)
+        choose_console_action(d,'Stop and archive');d.wait('Stop and archive?');d.send('n');assert not gone(t)
         d.send('m');d.wait('Actions')
-        for _ in range(13):d.send('\x1b[B')
-        d.send('\r');d.wait('Stop and archive?');d.send('y');d.wait('Stop and archive completed')
+        choose_console_action(d,'Stop and archive');d.wait('Stop and archive?');d.send('y');d.wait('Stop and archive completed')
         d.send('A');d.wait('archive');d.wait('Real terminal');d.send('m');d.wait('Unarchive record')
         d.send('\x1b[B\r');d.wait('ARCHIVE HISTORY PROOF')
         d.send('m');d.wait('Unarchive record');d.send('\r');d.wait('Unarchive record completed');assert gone(t)
