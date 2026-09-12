@@ -9,6 +9,7 @@ launches with no arguments and no terminal still start the server.
 | --- | --- |
 | ↑/↓ or j/k | Select a session, task, routine, project, target or approval |
 | Enter | Attach; Ctrl-b then d returns to the same selection |
+| S | Choose a machine and open a blank persistent shell |
 | / | Fuzzy search names, projects, targets, agent names and paths |
 | @ / ! / # / & at start of search | Waiting / running / idle / failed |
 | 1–6, ←/→ | Switch sections |
@@ -33,6 +34,13 @@ routine takeover, follow-up, diff review, completion and cancellation.
 output selects it automatically, so scripts keep working. The JSON API commands
 below are unchanged. The TUI polls the existing API; it does not run another
 agent collector or maintain a second session database.
+
+Use `agentdeck shell [MACHINE]` when you want to work directly in a machine's
+shell. With no machine argument, an interactive client shows a searchable
+picker; scripts should pass the target name or numeric ID. The shell is tracked
+as a durable session and starts the target user's interactive shell in a fresh
+AgentDeck scratch directory. It does not select a project, agent, model, launch
+profile, memory, or worktree.
 
 ## Install on another Linux machine
 
@@ -75,6 +83,7 @@ agentdeck agent save @agents.json
 agentdeck api POST /sessions '{"name":"Work","profile_id":7,"scratch":true}'
 agentdeck api GET /sessions
 agentdeck api POST /sessions '{"name":"Scratch","agent":"codex","scratch":true}'
+agentdeck shell AIServer
 agentdeck api POST /tasks/12/takeover '{}'
 agentdeck api PATCH /routines/3 '{"enabled":false}'
 agentdeck api POST /sessions/4/send '{"text":"Run the tests"}'
@@ -125,6 +134,7 @@ and Full API accepts the remainder without opening a browser.
 | Resource | Operations |
 | --- | --- |
 | `/sessions` | GET list, POST create; GET/PATCH/DELETE `/{id}` |
+| `/shells` | POST create a tracked blank shell on a target (`target_id` or `machine`) |
 | `/sessions/discover`, `/sessions/adopt` | GET running agents, POST track |
 | `/sessions/{id}/send`, `/handoff`, `/promote` | POST message/key, handoff, associate project |
 | `/sessions/{id}/reader`, `/wraps` | GET conversation, handoff records |

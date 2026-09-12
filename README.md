@@ -263,6 +263,13 @@ shows shortcuts. Use `agentdeck console --plain` for the line-oriented menu.
 Press **Ctrl+B**, then **D** to detach and return to the menu without stopping
 the session. Skip the menus with `agentdeck attach session ID`.
 
+For a fast command prompt, run `agentdeck shell [MACHINE]`. It chooses a
+configured machine (with a searchable picker when omitted), creates a tracked
+blank persistent shell, and attaches immediately. There is no project, agent,
+or model setup; run any commands or model CLI in the shell. Ctrl+B then D
+detaches without stopping it. The dashboard provides the same action with `S`
+or Actions → Open blank shell.
+
 Remote CLI attachments automatically use a portable `xterm-256color` terminal
 type for SSH, so a server without your terminal emulator's terminfo can still
 attach. This applies to both the menu and direct command; no manual `TERM`

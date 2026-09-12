@@ -58,6 +58,10 @@ func attachAt(cfg *config.Config, args []string, base, attachHost string) error 
 	if err != nil {
 		return err
 	}
+	return runAttachment(argv)
+}
+
+func runAttachment(argv []string) error {
 	argv = attachmentInWorkspace(argv, os.Getenv("TMUX"))
 	binary, err := exec.LookPath(argv[0])
 	if err != nil {

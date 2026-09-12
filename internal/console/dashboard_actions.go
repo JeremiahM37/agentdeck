@@ -95,6 +95,8 @@ func (m *dashboard) choose(a dashboardAction) tea.Cmd {
 		return m.attachSelected(false)
 	case "shell":
 		return m.attachSelected(true)
+	case "blank-shell":
+		return m.newShellForm()
 	case "group":
 		return m.groupForm()
 	case "mcp":
@@ -137,16 +139,17 @@ func (m *dashboard) actions() []dashboardAction {
 	actions := m.rowActions()
 	profile := dashboardAction{Label: "Manage launch profiles", Operation: "launch-profiles"}
 	agents := dashboardAction{Label: "Manage agent runners", Operation: "agents"}
+	blankShell := dashboardAction{Label: "Open blank shell", Operation: "blank-shell"}
 	if len(actions) == 0 {
 		if sections[m.section] == "sessions" {
-			return []dashboardAction{profile, {Label: "Recently closed", Operation: "recent-sessions"}}
+			return []dashboardAction{blankShell, profile, {Label: "Recently closed", Operation: "recent-sessions"}}
 		}
 		return []dashboardAction{profile}
 	}
 	// Keep attachment first and destructive actions last.
 	last := actions[len(actions)-1]
 	if sections[m.section] == "sessions" {
-		return append(actions[:len(actions)-1], agents, profile, dashboardAction{Label: "Recently closed", Operation: "recent-sessions"}, last)
+		return append(actions[:len(actions)-1], agents, profile, blankShell, dashboardAction{Label: "Recently closed", Operation: "recent-sessions"}, last)
 	}
 	return append(actions[:len(actions)-1], agents, profile, last)
 }
@@ -331,11 +334,12 @@ func (m *dashboard) updateForm(msg tea.KeyMsg) tea.Cmd {
 		return nil
 	}
 	current := &f.fields[f.index]
+	noun := optionNoun(*current)
 	if len(current.Options) > 0 && current.Searchable {
 		if msg.String() == "ctrl+u" {
 			current.OptionFilter = ""
 			current.OptionCursor = optionIndex(*current, current.Value, current.OptionFilter)
-			m.notice = "Project filter cleared."
+			m.notice = strings.Title(noun) + " filter cleared."
 			return nil
 		}
 		if msg.String() == "backspace" {
@@ -363,11 +367,11 @@ func (m *dashboard) updateForm(msg tea.KeyMsg) tea.Cmd {
 		return nil
 	case "ctrl+s":
 		if len(current.Options) > 0 && current.Searchable && current.OptionFilter != "" && len(filteredChoices(*current)) == 0 {
-			m.notice = "No matching projects. Clear the filter with Ctrl-u or Backspace."
+			m.notice = "No matching " + noun + ". Clear the filter with Ctrl-u or Backspace."
 			return nil
 		}
 		if current.Searchable && !commitOptionSelection(current) {
-			m.notice = "No matching projects. Clear the filter with Ctrl-u or Backspace."
+			m.notice = "No matching " + noun + ". Clear the filter with Ctrl-u or Backspace."
 			return nil
 		}
 		if current.Key == "project_id" || current.Key == "project_ids" {
@@ -382,7 +386,7 @@ func (m *dashboard) updateForm(msg tea.KeyMsg) tea.Cmd {
 		return f.submit(body)
 	case "tab", "shift+tab":
 		if msg.String() == "tab" && current.Searchable && !commitOptionSelection(current) {
-			m.notice = "No matching projects. Clear the filter with Ctrl-u or Backspace."
+			m.notice = "No matching " + noun + ". Clear the filter with Ctrl-u or Backspace."
 			return nil
 		}
 		if msg.String() == "tab" && (current.Key == "project_id" || current.Key == "project_ids") {
@@ -398,10 +402,19 @@ func (m *dashboard) updateForm(msg tea.KeyMsg) tea.Cmd {
 	case "enter":
 		if current.Searchable {
 			if !commitOptionSelection(current) {
-				m.notice = "No matching projects. Clear the filter with Ctrl-u or Backspace."
+				m.notice = "No matching " + noun + ". Clear the filter with Ctrl-u or Backspace."
 				return nil
 			}
 			m.syncProjectTarget()
+			if f.title == "Blank persistent shell" {
+				m.saveField()
+				body, err := formBody(f.fields)
+				if err != nil {
+					m.notice = err.Error()
+					return nil
+				}
+				return f.submit(body)
+			}
 			f.index = nextVisibleField(f.fields, f.index, 1)
 			return m.focusField()
 		}
@@ -521,7 +534,7 @@ func (m *dashboard) formView() string {
 			lines = append(lines, muted.Render(clip(fmt.Sprintf(" Filter: %q · %d matches · Selected: %s", current.OptionFilter, len(options), selected), m.width-4)))
 			lines = append(lines, muted.Render(" Type to filter · Ctrl-u clears · Backspace erases"))
 			if len(options) == 0 {
-				lines = append(lines, muted.Render(" No matching projects · Ctrl-u clears · Backspace removes"))
+				lines = append(lines, muted.Render(" No matching "+optionNoun(current)+" · Ctrl-u clears · Backspace removes"))
 				return strings.Join(lines, "\n")
 			}
 		}
@@ -574,6 +587,13 @@ func filteredChoices(f field) []choice {
 		}
 	}
 	return filtered
+}
+
+func optionNoun(f field) string {
+	if f.Key == "target_id" {
+		return "machines"
+	}
+	return "projects"
 }
 
 func commitOptionSelection(f *field) bool {
@@ -689,6 +709,19 @@ func (m *dashboard) newForm() tea.Cmd {
 		return m.request("Create "+strings.TrimSuffix(kind, "s"), "POST", "/"+kind, body, false)
 	})
 }
+
+func (m *dashboard) newShellForm() tea.Cmd {
+	if len(m.targets) == 0 {
+		m.notice = "No machines are configured. Add a target first."
+		return nil
+	}
+	target := optionField("target_id", "Machine", "", options(m.targets, ""), true)
+	target.Searchable = true
+	return m.openForm("Blank persistent shell", []field{target}, func(body map[string]any) tea.Cmd {
+		return m.request("Create blank shell", "POST", "/shells", body, false)
+	})
+}
+
 func (m *dashboard) renameForm() tea.Cmd {
 	r := m.current()
 	if r == nil {

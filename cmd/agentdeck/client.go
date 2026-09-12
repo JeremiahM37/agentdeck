@@ -25,6 +25,7 @@ const clientHelp = `AgentDeck — web and terminal control
   agentdeck serve                   Start the control-plane server
   agentdeck console                 Live terminal dashboard (also: tui)
   agentdeck console --plain         Line-oriented menu for pipes / accessibility
+  agentdeck shell [MACHINE]         Enter a blank persistent shell on a machine
   agentdeck attach KIND ID          Join tmux (Ctrl-b d returns to console)
   agentdeck api METHOD /path [JSON|@file|-]
   agentdeck upload KIND ID FILE     Add a local file as agent context
@@ -71,6 +72,8 @@ func clientCommandAt(cfg *config.Config, command string, args []string, base, to
 	var data []byte
 	var err error
 	switch command {
+	case "shell":
+		return shellCommandAt(cfg, args, base, token, local)
 	case "console", "tui":
 		attachClient := func(kind, id string) error {
 			var argv []string

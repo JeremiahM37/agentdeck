@@ -10,8 +10,8 @@ import (
 func TestLaunchProfilesAvailableWithoutSessions(t *testing.T) {
 	m := sampleDashboard()
 	m.rows, m.visible = nil, nil
-	if actions := m.actions(); len(actions) != 2 || actions[0].Operation != "launch-profiles" || actions[1].Operation != "recent-sessions" {
-		t.Fatal("empty session dashboards should keep profile and recently closed actions")
+	if actions := m.actions(); len(actions) != 3 || actions[0].Operation != "blank-shell" || actions[1].Operation != "launch-profiles" || actions[2].Operation != "recent-sessions" {
+		t.Fatal("empty session dashboards should keep blank shell, profile and recently closed actions")
 	}
 	m.Update(key("P"))
 	if m.form == nil || m.form.fields[0].Value != "new" {

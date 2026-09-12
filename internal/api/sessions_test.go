@@ -66,6 +66,44 @@ func TestSessionLaunchesAndReportsItsOwnState(t *testing.T) {
 	}
 }
 
+func TestQuickShellCreatesBlankTrackedSession(t *testing.T) {
+	h := newHarness(t)
+	targets := h.getList("/api/targets")
+	if len(targets) == 0 {
+		t.Fatal("harness has no target")
+	}
+	sess := h.post("/api/shells", obj{"target_id": targets[0].id()}, 201)
+	if sess.str("agent") != "shell" || sess.str("model") != "" {
+		t.Fatalf("quick shell must not select an agent or model: %v", sess)
+	}
+	if sess.num("project_id") != 0 || sess.str("workdir") == "" || sess.str("tmux_session") == "" {
+		t.Fatalf("quick shell should have only a scratch directory and tmux session: %v", sess)
+	}
+	if sess.str("status") != "idle" {
+		t.Fatalf("quick shell should be ready immediately: %v", sess)
+	}
+	if !strings.Contains(h.launchCmd(), "\"${SHELL:-/bin/sh}\" -i") {
+		t.Fatalf("quick shell must invoke the target user's interactive shell: %s", h.launchCmd())
+	}
+	if strings.Contains(h.launchCmd(), "claude") || strings.Contains(h.launchCmd(), "codex") {
+		t.Fatalf("quick shell unexpectedly launched an agent: %s", h.launchCmd())
+	}
+}
+
+func TestQuickShellRejectsAmbiguousTargetSelection(t *testing.T) {
+	h := newHarness(t)
+	other, err := h.App.DB.InsertTarget(&store.Target{Name: "another machine", Kind: "local"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if other.ID == 0 {
+		t.Fatal("target was not persisted")
+	}
+	if code := h.status("POST", "/api/shells", obj{"target_id": 999999, "machine": "local"}); code != 400 {
+		t.Fatalf("conflicting shell selectors: got %d, want 400", code)
+	}
+}
+
 func TestSessionProjectTargetMismatchIsRejected(t *testing.T) {
 	h := newHarness(t)
 	projectID := h.seededProjectID()

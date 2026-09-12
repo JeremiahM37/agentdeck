@@ -69,8 +69,15 @@ func (m *Manager) poll(ctx context.Context, onlyTarget *int64) {
 	// identity checkpoint as a fresh launch.
 	m.startCheckpointsForLiveRows(live)
 	byTarget := map[int64][]*store.Session{}
+	now := store.Now()
 	for _, s := range live {
 		if onlyTarget != nil && s.TargetID != *onlyTarget {
+			continue
+		}
+		// A shell is inserted before its target-side tmux command so it remains
+		// trackable if the command or DB update fails. Do not let the first poll
+		// race that short launch window and report a false death.
+		if s.Agent == "shell" && s.Status == StatusStarting && now-s.CreatedAt < 45 {
 			continue
 		}
 		if s.SetupState == "creating" {

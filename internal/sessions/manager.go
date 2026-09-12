@@ -140,6 +140,84 @@ func (m *Manager) Launch(ctx context.Context, o LaunchOpts) (*store.Session, err
 	return m.launch(ctx, o)
 }
 
+// LaunchShell creates a tracked, agent-free shell room on a target.
+//
+// This deliberately does not pass through launch profiles, agent setup,
+// project memory, or worktree allocation. The room is a target-side scratch
+// directory so it is available on local, SSH, and pct targets alike, while the
+// tmux session and database row keep it resumable after a terminal detaches.
+func (m *Manager) LaunchShell(ctx context.Context, targetID int64) (*store.Session, error) {
+	target, err := m.DB.Target(targetID)
+	if err != nil {
+		return nil, err
+	}
+	ex, err := m.Reg.For(target)
+	if err != nil {
+		return nil, err
+	}
+	bootID, _ := ProbeBootID(ctx, ex)
+	workdir, err := m.makeScratch(ctx, ex, "shell")
+	if err != nil {
+		return nil, err
+	}
+	// Reserve the record only after target-side preparation has completed. The
+	// lifecycle lock is deliberately not held across SSH/PCT/local executor I/O.
+	m.lifecycleMu.Lock()
+	sess, err := m.DB.InsertSession(&store.Session{
+		TargetID: targetID, Name: "Shell · " + target.Name, Agent: "shell",
+		Workdir: workdir, Status: StatusStarting, Origin: "agentdeck", BootID: bootID,
+	})
+	if err != nil {
+		m.lifecycleMu.Unlock()
+		return nil, err
+	}
+	tmuxName := fmt.Sprintf("adk-s%d", sess.ID)
+	if err := m.DB.Update("sessions", sess.ID, map[string]any{"tmux_session": tmuxName}); err != nil {
+		m.lifecycleMu.Unlock()
+		return nil, err
+	}
+	sess.TmuxSession = tmuxName
+	m.lifecycleMu.Unlock()
+	// Pass the target user's configured shell explicitly. Without the command,
+	// a target's tmux default-command could start an agent or another program.
+	command := "tmux new-session -d -s " + shellq.Quote(tmuxName) + " -c " + shellq.Quote(workdir) + " -- \"${SHELL:-/bin/sh}\" -i"
+	r, err := ex.Run(ctx, command, executor.RunOpts{Timeout: 30})
+	if err != nil {
+		m.end(sess.ID, StatusDead)
+		return nil, err
+	}
+	if !r.OK() {
+		m.end(sess.ID, StatusDead)
+		return nil, executor.Errf("shell launch failed: %s", strings.TrimSpace(r.Stderr))
+	}
+	m.lifecycleMu.Lock()
+	current, currentErr := m.DB.Session(sess.ID)
+	if currentErr == nil && current.EndedAt != nil {
+		m.lifecycleMu.Unlock()
+		// Release is deliberately non-destructive: leave a shell running when
+		// tracking was stopped while the target launch was in flight. A dead row
+		// means an explicit stop won the race, so clean up only our exact name.
+		if current.Status == StatusDead {
+			_, _ = ex.Run(ctx, "tmux kill-session -t "+shellq.Quote("="+tmuxName), executor.RunOpts{Timeout: 20})
+		}
+		return current, nil
+	}
+	if err := m.DB.Update("sessions", sess.ID, map[string]any{"status": StatusIdle, "ended_at": nil}); err != nil {
+		m.lifecycleMu.Unlock()
+		// Keep the starting row and tmux_session intact so the launched shell is
+		// still visible and can be inspected/reconciled after a transient DB error.
+		return nil, err
+	}
+	m.lifecycleMu.Unlock()
+	fresh, err := m.DB.Session(sess.ID)
+	if err != nil {
+		return sess, nil
+	}
+	m.publish(fresh)
+	m.Log.Info("shell launched", "session", fresh.ID, "target", target.Name, "workdir", workdir)
+	return fresh, nil
+}
+
 // launch is the unlocked implementation. Recovery calls it while it already
 // owns lifecycleMu after atomically claiming the stale row.
 func (m *Manager) launch(ctx context.Context, o LaunchOpts) (*store.Session, error) {

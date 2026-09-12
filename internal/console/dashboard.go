@@ -578,6 +578,26 @@ func (m *dashboard) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 		m.notice = v.label + " completed"
+		if v.label == "Create blank shell" {
+			var created row
+			if json.Unmarshal(v.data, &created) == nil && id(created) != "" {
+				// The action is global, so its result may arrive while another
+				// section, archive view, or filtered session list is visible.
+				// Return to the live Sessions list before the auto-attach pass.
+				m.section = 0
+				m.rows = nil
+				m.visible = nil
+				m.selected = 0
+				m.offset = 0
+				m.query.SetValue("")
+				m.attention = false
+				m.ended = false
+				m.archived = false
+				m.focusSessionID = id(created)
+				m.attachAfterRefresh = true
+				m.notice = "Blank shell created; attaching"
+			}
+		}
 		if v.label == "Add repository" {
 			m.notice = "Repository addition started; the original terminal stays available"
 		}
@@ -819,6 +839,8 @@ func (m *dashboard) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, m.attachSelected(false)
 		case "s":
 			return m, m.attachSelected(true)
+		case "S":
+			return m, m.newShellForm()
 		case "m":
 			m.menu = true
 			m.menuIndex = 0
@@ -1047,9 +1069,12 @@ func (m *dashboard) View() string {
 	if m.busy {
 		status = "Working… " + status
 	}
-	keys := " Enter attach · / filter · F text search · n new · m actions · ? help · q quit"
+	keys := " Enter attach · S blank shell · / filter · F text search · n new · m actions · ? help · q quit"
 	if m.selectedGroup() != nil {
 		keys = " Enter fold · [ parent · ] expand · / search · ? help · q quit"
+	}
+	if m.width < 100 && m.selectedGroup() == nil {
+		keys = " Enter attach · S shell · / filter · n new · m actions · ? help · q quit"
 	}
 	if m.width < 80 {
 		keys = " Enter attach · / find · ? help · q quit"
@@ -1144,6 +1169,7 @@ const dashboardHelp = ` Keyboard shortcuts
  Space/Enter   Fold selected group   [ Collapse parent   ] Expand group
  g             Group by project/target/name   w  Needs attention only
  n             New item         e        Rename   u Upload context
+ S             Blank persistent shell on a selected machine
  P             Launch profiles
 	Q             Agent runners (add custom CLIs)
  m             All actions      f        Find and track running agents
