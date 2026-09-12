@@ -113,6 +113,8 @@ def native_identity(agent, workspace, home, name, expected, discovery=False):
         if len(candidates) > 1 or len(evidence) > 1: return dict(state='ambiguous')
         if not candidates: return unknown
         cid = next(iter(candidates))
-        return dict(state='identified', id=cid, evidence=evidence.get(cid, {}))
+        if discovery:
+            return dict(state='identified', id=cid, evidence=evidence.get(cid, {}))
+        return dict(state='identified', id=cid)
     except (OSError, ValueError, TypeError, IndexError, subprocess.SubprocessError):
         return unknown
