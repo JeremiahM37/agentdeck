@@ -101,14 +101,18 @@ func promoteCommand(c *console.Client, args []string) error {
 		return nil
 	}
 	_, err = c.JSON("POST", "/sessions/"+url.PathEscape(sessionID)+"/promote", body)
-	if he, ok := err.(*console.HTTPError); ok && he.Status == 404 {
-		return fmt.Errorf("conversation promotion is unavailable on the running server; restart or update AgentDeck, then try again")
-	}
 	if err != nil {
-		return fmt.Errorf("conversation promotion failed: %w", err)
+		return promoteError(err)
 	}
 	fmt.Fprintf(os.Stdout, "Conversation promoted. Session %s, terminal, and native history remain in place.\n", sessionID)
 	return nil
+}
+
+func promoteError(err error) error {
+	if he, ok := err.(*console.HTTPError); ok && he.Status == 404 {
+		return fmt.Errorf("conversation promotion is unavailable on the running server; restart or update AgentDeck, then try again")
+	}
+	return fmt.Errorf("conversation promotion failed: %w", err)
 }
 
 const clientHelp = `AgentDeck — web and terminal control

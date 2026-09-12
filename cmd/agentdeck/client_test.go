@@ -1,15 +1,27 @@
 package main
 
 import (
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/JeremiahM37/agentdeck/internal/config"
 	"github.com/JeremiahM37/agentdeck/internal/console"
 )
+
+func TestPromoteErrorExplainsOlderRunningServer(t *testing.T) {
+	err := promoteError(&console.HTTPError{Status: 404, Detail: "404 page not found"})
+	if err == nil || !strings.Contains(err.Error(), "restart or update AgentDeck") {
+		t.Fatalf("unhelpful promotion error: %v", err)
+	}
+	if got := promoteError(errors.New("connection refused")).Error(); !strings.Contains(got, "connection refused") {
+		t.Fatalf("masked non-404 error: %v", got)
+	}
+}
 
 func TestAttachmentResolvesOnServerAndRejectsShellInput(t *testing.T) {
 	cfg := &config.Config{}
