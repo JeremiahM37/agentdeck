@@ -870,6 +870,17 @@ func (s *Server) promoteSession(w http.ResponseWriter, r *http.Request) {
 	var project *store.Project
 	var err error
 	atomicBound := false
+	if in.Expected != nil && in.ProjectID != nil {
+		candidate, e := s.DB.Project(*in.ProjectID)
+		if e != nil {
+			httpError(w, 404, "no such project")
+			return
+		}
+		if candidate.TargetID != sess.TargetID || cleanPromotionPath(candidate.RepoPath) != cleanPromotionPath(sess.Workdir) {
+			httpError(w, 409, "existing project must be on the same target and exact working directory")
+			return
+		}
+	}
 	if in.Expected != nil && in.ProjectID == nil {
 		if projects, e := s.DB.Projects(); e == nil {
 			for _, p := range projects {
@@ -891,6 +902,10 @@ func (s *Server) promoteSession(w http.ResponseWriter, r *http.Request) {
 		project, err = s.resolvePromotionTarget(r.Context(), sess, in)
 	}
 	if err != nil {
+		if strings.Contains(err.Error(), "stale") {
+			httpError(w, 409, "%s", err)
+			return
+		}
 		respondErr(w, err)
 		return
 	}
@@ -916,6 +931,10 @@ func (s *Server) promoteSession(w http.ResponseWriter, r *http.Request) {
 			updateErr = s.DB.Update("sessions", sess.ID, fields)
 		}
 		if updateErr != nil {
+			if strings.Contains(updateErr.Error(), "stale") {
+				httpError(w, 409, "%s", updateErr)
+				return
+			}
 			respondErr(w, updateErr)
 			return
 		}

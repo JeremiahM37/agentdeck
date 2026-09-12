@@ -20,6 +20,7 @@ type promotionIdentity struct {
 	RootStart        string `json:"root_start"`
 	PaneID           string `json:"pane_id"`
 	NativeHome       string `json:"native_home"`
+	BootID           string `json:"boot_id"`
 	TargetID         int64  `json:"target_id"`
 	TmuxSession      string `json:"tmux_session"`
 	TrackingIdentity string `json:"tracking_identity"`
@@ -57,7 +58,7 @@ func (s *Server) resolvePromotionIdentity(r *http.Request, row *store.Session) (
 		}
 		evidence, e := sessions.CaptureNativeEvidence(r.Context(), ex, agent, row.Workdir, home, row.TmuxSession, row.TrackingIdentity, true)
 		if e == nil {
-			found = append(found, promotionIdentity{Agent: agent, CID: evidence.ID, PID: evidence.PID, ProcStart: evidence.ProcStart, Workspace: evidence.Workspace, RootPID: evidence.RootPID, RootStart: evidence.RootStart, PaneID: evidence.PaneID, NativeHome: evidence.NativeHome, TargetID: row.TargetID, TmuxSession: row.TmuxSession, TrackingIdentity: row.TrackingIdentity})
+			found = append(found, promotionIdentity{Agent: agent, CID: evidence.ID, PID: evidence.PID, ProcStart: evidence.ProcStart, Workspace: evidence.Workspace, RootPID: evidence.RootPID, RootStart: evidence.RootStart, PaneID: evidence.PaneID, NativeHome: evidence.NativeHome, BootID: evidence.BootID, TargetID: row.TargetID, TmuxSession: row.TmuxSession, TrackingIdentity: row.TrackingIdentity})
 		} else if strings.Contains(e.Error(), "ambiguous") {
 			ambiguous = e
 		}
