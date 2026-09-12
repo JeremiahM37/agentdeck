@@ -825,6 +825,10 @@ func (s *Server) promoteSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if in.Expected != nil {
+		if in.Wrap {
+			httpError(w, 422, "native promotion cannot wrap the live conversation")
+			return
+		}
 		got, err := s.resolvePromotionIdentity(r, sess)
 		if err != nil {
 			httpError(w, 409, "%s", err)
@@ -841,9 +845,11 @@ func (s *Server) promoteSession(w http.ResponseWriter, r *http.Request) {
 		// Preserve the native CLI's explicit home for future history/recovery.
 		// The value is a path only; no environment contents are copied.
 		if spec, ok := sessions.Find(s.agentSpecs(), got.Agent); ok {
-			if spec.Env == nil {
-				spec.Env = map[string]string{}
+			env := make(map[string]string, len(spec.Env)+1)
+			for k, v := range spec.Env {
+				env[k] = v
 			}
+			spec.Env = env
 			if got.Agent == "claude" {
 				spec.Env["CLAUDE_CONFIG_DIR"] = in.Expected.NativeHome
 			} else {
@@ -852,28 +858,52 @@ func (s *Server) promoteSession(w http.ResponseWriter, r *http.Request) {
 			cfg, _ := json.Marshal(sessions.LaunchConfiguration{Version: 1, Spec: spec})
 			sess.LaunchConfigJSON = string(cfg)
 		}
+		if in.RepoPath != "" && cleanPromotionPath(in.RepoPath) != cleanPromotionPath(sess.Workdir) {
+			httpError(w, 422, "repo_path must equal the verified native working directory")
+			return
+		}
 		// The detected CLI owns the continuation, even though the quick-shell
 		// row itself is intentionally recorded as agent=shell.
 		in.Name = strings.TrimSpace(in.Name)
 	}
 
-	project, err := s.resolvePromotionTarget(r.Context(), sess, in)
+	var project *store.Project
+	var err error
+	atomicBound := false
+	if in.Expected != nil && in.ProjectID == nil {
+		name := strings.TrimSpace(in.Name)
+		if name == "" {
+			name = projectNameFromPath(sess.Workdir)
+		}
+		project, err = s.DB.PromoteNewProjectAndBind(r.Context(), &store.Project{Name: name, TargetID: sess.TargetID, RepoPath: sess.Workdir, DefaultBaseBranch: s.repoBranch(r.Context(), sess.TargetID, sess.Workdir), DefaultAgent: sess.Agent, KeepWorktrees: 3}, sess.ID, sess.TmuxSession, in.Expected.BootID, sess.TrackingIdentity, in.Expected.CID, sess.LaunchConfigJSON)
+		if err == nil {
+			s.provisionProjectMemory(r.Context(), project)
+		}
+		atomicBound = err == nil
+	} else {
+		project, err = s.resolvePromotionTarget(r.Context(), sess, in)
+	}
 	if err != nil {
 		respondErr(w, err)
 		return
 	}
-	fields := map[string]any{"project_id": project.ID}
 	if in.Expected != nil {
-		fields["workdir"] = sess.Workdir
-		fields["agent"] = sess.Agent
-		fields["native_recovery_cid"] = in.Expected.CID
-		if sess.LaunchConfigJSON != "" {
-			fields["launch_config_json"] = sess.LaunchConfigJSON
-		}
+		s.Sessions.RestartNativeCheckpoint(sess.ID, sess.Agent, sess.Workdir, in.Expected.NativeHome, sess.TmuxSession)
 	}
-	if err := s.DB.Update("sessions", sess.ID, fields); err != nil {
-		respondErr(w, err)
-		return
+	if !atomicBound {
+		fields := map[string]any{"project_id": project.ID}
+		if in.Expected != nil && in.ProjectID != nil {
+			fields["workdir"] = sess.Workdir
+			fields["agent"] = sess.Agent
+			fields["native_recovery_cid"] = in.Expected.CID
+			if sess.LaunchConfigJSON != "" {
+				fields["launch_config_json"] = sess.LaunchConfigJSON
+			}
+		}
+		if err := s.DB.Update("sessions", sess.ID, fields); err != nil {
+			respondErr(w, err)
+			return
+		}
 	}
 	// the work so far is worth keeping even if the wrap fails, so this is
 	// deliberately after the link and its error is reported rather than fatal

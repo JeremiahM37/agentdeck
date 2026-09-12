@@ -99,6 +99,13 @@ func (m *Manager) stopNativeCheckpoint(sessionID int64) {
 	m.checkpointMu.Unlock()
 }
 
+// RestartNativeCheckpoint changes only AgentDeck's read-only observer after a
+// promotion; the user's existing process and tmux terminal remain untouched.
+func (m *Manager) RestartNativeCheckpoint(sessionID int64, agent, workdir, home, tmux string) {
+	m.stopNativeCheckpoint(sessionID)
+	m.startNativeCheckpoint(sessionID, agent, workdir, home, tmux)
+}
+
 func (m *Manager) runNativeCheckpoint(ctx context.Context, sessionID int64, agent, workdir, home, tmux string) {
 	// Capture immediately: a process can disappear during the old 30-second
 	// blind window. Subsequent captures allow a native CLI to move to a new
