@@ -555,6 +555,12 @@ func (m *dashboard) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case resultMsg:
 		m.busy = false
 		if v.err != nil {
+			if v.label == "Create blank shell" {
+				if he, ok := v.err.(*HTTPError); ok && he.Status == 404 {
+					m.notice = "Quick shell is unavailable on the running server; restart or update AgentDeck, then try again."
+					return m, nil
+				}
+			}
 			if v.label == "Promote conversation" {
 				if he, ok := v.err.(*HTTPError); ok && he.Status == 404 {
 					m.notice = "Conversation promotion is unavailable on the running server; restart or update AgentDeck, then try again."

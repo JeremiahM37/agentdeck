@@ -1,6 +1,7 @@
 package console
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/charmbracelet/bubbles/textinput"
@@ -46,5 +47,13 @@ func TestBlankShellResultReturnsToLiveSessionsForAttachment(t *testing.T) {
 	m.Update(resultMsg{label: "Create blank shell", data: []byte(`{"id":42}`)})
 	if m.section != 0 || m.query.Value() != "" || m.ended || m.archived || m.attention || !m.attachAfterRefresh || m.focusSessionID != "42" {
 		t.Fatalf("blank shell result did not reset dashboard for attachment: section=%d query=%q ended=%v archived=%v attention=%v focus=%q attach=%v", m.section, m.query.Value(), m.ended, m.archived, m.attention, m.focusSessionID, m.attachAfterRefresh)
+	}
+}
+
+func TestBlankShell404ExplainsStaleRunningServer(t *testing.T) {
+	m := sampleDashboard()
+	m.Update(resultMsg{label: "Create blank shell", err: &HTTPError{Status: 404, Detail: "404 page not found"}})
+	if !strings.Contains(m.notice, "restart or update AgentDeck") {
+		t.Fatalf("unhelpful stale-server notice: %q", m.notice)
 	}
 }

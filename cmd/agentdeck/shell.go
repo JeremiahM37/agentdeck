@@ -57,7 +57,7 @@ func shellCommandAt(cfg *config.Config, args []string, base, token string, local
 	body, _ := json.Marshal(map[string]string{"machine": selected.Name})
 	data, err := c.Request("POST", "/shells", bytes.NewReader(body), "application/json")
 	if err != nil {
-		return err
+		return shellEndpointError(err)
 	}
 	var sess struct {
 		ID int64 `json:"id"`
@@ -74,6 +74,13 @@ func shellCommandAt(cfg *config.Config, args []string, base, token string, local
 		return err
 	}
 	return runAttachment(argv)
+}
+
+func shellEndpointError(err error) error {
+	if he, ok := err.(*console.HTTPError); ok && he.Status == 404 {
+		return fmt.Errorf("quick shell is unavailable on the running server; restart or update AgentDeck, then try again")
+	}
+	return err
 }
 
 func listShellTargets(c *console.Client) ([]shellTarget, error) {

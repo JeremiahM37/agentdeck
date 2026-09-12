@@ -23,6 +23,17 @@ func TestPromoteErrorExplainsOlderRunningServer(t *testing.T) {
 	}
 }
 
+func TestShellErrorExplainsOlderRunningServer(t *testing.T) {
+	err := shellEndpointError(&console.HTTPError{Status: 404, Detail: "404 page not found"})
+	if err == nil || !strings.Contains(err.Error(), "quick shell is unavailable") || !strings.Contains(err.Error(), "restart or update AgentDeck") {
+		t.Fatalf("unhelpful shell error: %v", err)
+	}
+	original := errors.New("target refused connection")
+	if shellEndpointError(original) != original {
+		t.Fatal("masked non-404 shell error")
+	}
+}
+
 func TestAttachmentResolvesOnServerAndRejectsShellInput(t *testing.T) {
 	cfg := &config.Config{}
 	t.Setenv("AGENTDECK_ATTACH_HOST", "my-server")
