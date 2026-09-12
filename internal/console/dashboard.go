@@ -108,6 +108,10 @@ type resultMsg struct {
 	key     string
 }
 type attachedMsg struct{ err error }
+type promotionPreviewMsg struct {
+	data []byte
+	err  error
+}
 type dashboard struct {
 	focusSessionID                      string
 	client                              *Client
@@ -461,6 +465,17 @@ func (m *dashboard) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch v := msg.(type) {
 	case nativeSearchForkMsg:
 		return m, m.receiveNativeSearchFork(v)
+	case promotionPreviewMsg:
+		m.busy = false
+		if v.err != nil {
+			if he, ok := v.err.(*HTTPError); ok && he.Status == 404 {
+				m.notice = "Conversation promotion is unavailable on the running server; restart or update AgentDeck, then try again."
+			} else {
+				m.notice = clean(v.err.Error())
+			}
+			return m, nil
+		}
+		return m, m.promotionPreviewForm(v.data)
 	case nativeSearchMsg:
 		return m, m.receiveNativeSearch(v)
 	case nativeSearchReadMsg:
@@ -540,6 +555,12 @@ func (m *dashboard) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case resultMsg:
 		m.busy = false
 		if v.err != nil {
+			if v.label == "Promote conversation" {
+				if he, ok := v.err.(*HTTPError); ok && he.Status == 404 {
+					m.notice = "Conversation promotion is unavailable on the running server; restart or update AgentDeck, then try again."
+					return m, nil
+				}
+			}
 			if v.label == "Resume recently closed" && m.recentPending != nil {
 				if httpErr, ok := v.err.(*HTTPError); ok && (httpErr.Status == 404 || httpErr.Status == 409) {
 					r := m.recentPending

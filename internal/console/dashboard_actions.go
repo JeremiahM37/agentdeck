@@ -129,6 +129,8 @@ func (m *dashboard) choose(a dashboardAction) tea.Cmd {
 		return m.messageAction("Commit task changes", "/tasks/"+id(m.current())+"/commit", "message")
 	case "handoff":
 		return m.request("Request handoff", "POST", "/sessions/"+id(m.current())+"/handoff", map[string]any{}, false)
+	case "promote-conversation":
+		return m.loadPromotionPreview()
 	}
 	if a.Method == "GET" {
 		return m.readResource(a.Label, a.Path)
@@ -198,6 +200,9 @@ func (m *dashboard) rowActions() []dashboardAction {
 			return append(actions, workspaceActions(r, path)...)
 		}
 		actions = []dashboardAction{op("Attach", "attach"), op("Companion shell", "shell"), op("Send message", "send"), op("Upload context file", "upload"), op("Review changes", "review"), op("Read history", "history"), op("Saved conversations", "saved-history"), op("Browse files", "files"), op("Rename", "rename"), op("Move / edit session", "edit"), op("Move to group", "group"), op("Request handoff", "handoff"), read("Handoff summaries", "/wraps")}
+		if r["project_id"] == nil && (str(r["agent"]) == "shell" || str(r["agent"]) == "claude" || str(r["agent"]) == "codex") {
+			actions = append(actions, op("Promote conversation", "promote-conversation"))
+		}
 		actions = append(actions, workspaceActions(r, path)...)
 		actions = append(actions, archive)
 		actions = append(actions, dashboardAction{Label: "Interrupt agent", Method: "POST", Path: path + "/send", Body: map[string]any{"key": "C-c"}, Warning: "Send Ctrl-c to this session's current command?"})
@@ -753,6 +758,70 @@ func (m *dashboard) sendForm() tea.Cmd {
 		path += "/messages"
 	}
 	return m.messageAction("Send message", path, "text")
+}
+
+func (m *dashboard) loadPromotionPreview() tea.Cmd {
+	r := m.current()
+	if r == nil || sections[m.section] != "sessions" || m.busy {
+		return nil
+	}
+	m.busy = true
+	c, path := m.client, "/sessions/"+id(r)+"/promote/preview"
+	return func() tea.Msg {
+		data, err := c.JSON("GET", path, nil)
+		return promotionPreviewMsg{data: data, err: err}
+	}
+}
+
+// promotionPreviewForm only offers projects proven compatible by the server.
+// The expected identity is sent back with the mutation so the backend can
+// reject a changed process, directory, terminal, or native conversation.
+func (m *dashboard) promotionPreviewForm(data []byte) tea.Cmd {
+	var preview struct {
+		Identity struct {
+			Agent            string `json:"agent"`
+			CID              string `json:"cid"`
+			Workspace        string `json:"workdir"`
+			TmuxSession      string `json:"tmux_session"`
+			ProcStart        string `json:"proc_start"`
+			TrackingIdentity string `json:"tracking_identity"`
+			PID              int    `json:"pid"`
+			TargetID         int64  `json:"target_id"`
+		} `json:"identity"`
+		Existing    []row           `json:"existing_projects"`
+		SessionID   int64           `json:"session_id"`
+		IdentityRaw json.RawMessage `json:"identity"`
+	}
+	if err := json.Unmarshal(data, &preview); err != nil {
+		m.notice = "Promotion preview: " + err.Error()
+		return nil
+	}
+	if preview.Identity.Agent == "" || preview.Identity.CID == "" || preview.Identity.Workspace == "" {
+		m.notice = "Promotion preview did not contain an exact native conversation binding."
+		return nil
+	}
+	choices := []choice{{"New project", ""}}
+	choices = append(choices, options(preview.Existing, "")...)
+	fields := []field{optionField("project_id", "Existing project", "", choices, false), {Key: "name", Label: "Project name (new project)"}}
+	sessionID := fmt.Sprint(preview.SessionID)
+	if preview.SessionID == 0 {
+		sessionID = id(m.current())
+	}
+	return m.openForm("Promote conversation", fields, func(body map[string]any) tea.Cmd {
+		projectID := strings.TrimSpace(str(body["project_id"]))
+		if projectID != "" {
+			delete(body, "name")
+		} else if strings.TrimSpace(str(body["name"])) == "" {
+			m.notice = "Enter a name for the new project, or choose an existing project."
+			return nil
+		}
+		body["expected_identity"] = preview.IdentityRaw
+		warning := fmt.Sprintf("Bind this exact running conversation?\n  Agent: %s (PID %d)\n  Directory: %s\n  Terminal: %s\n  Conversation: %s\nThe terminal, session ID, and native history stay in place.", preview.Identity.Agent, preview.Identity.PID, preview.Identity.Workspace, preview.Identity.TmuxSession, preview.Identity.CID)
+		m.pending = &dashboardAction{Label: "Promote conversation", Method: "POST", Path: "/sessions/" + sessionID + "/promote", Body: body, Warning: warning}
+		m.form = nil
+		m.notice = "Review the exact agent, directory, and terminal, then press y to confirm."
+		return nil
+	})
 }
 func (m *dashboard) uploadForm() tea.Cmd {
 	r := m.current()

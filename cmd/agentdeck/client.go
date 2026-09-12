@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"bytes"
 	"encoding/json"
 	"fmt"
@@ -16,6 +17,100 @@ import (
 	"github.com/JeremiahM37/agentdeck/internal/console"
 )
 
+func promoteCommand(c *console.Client, args []string) error {
+	if len(args) != 1 {
+		return fmt.Errorf("usage: agentdeck promote SESSION-ID")
+	}
+	sessionID := args[0]
+	if _, err := strconv.ParseInt(sessionID, 10, 64); err != nil {
+		return fmt.Errorf("session ID must be a number")
+	}
+	sessionData, err := c.JSON("GET", "/sessions/"+url.PathEscape(sessionID), nil)
+	if err != nil {
+		return err
+	}
+	var session map[string]any
+	if err := json.Unmarshal(sessionData, &session); err != nil {
+		return fmt.Errorf("read session: %w", err)
+	}
+	previewData, err := c.JSON("GET", "/sessions/"+url.PathEscape(sessionID)+"/promote/preview", nil)
+	if he, ok := err.(*console.HTTPError); ok && he.Status == 404 {
+		return fmt.Errorf("conversation promotion is unavailable on the running server; restart or update AgentDeck, then try again")
+	}
+	if err != nil {
+		return err
+	}
+	var preview struct {
+		Identity map[string]any   `json:"identity"`
+		Existing []map[string]any `json:"existing_projects"`
+	}
+	if err := json.Unmarshal(previewData, &preview); err != nil {
+		return fmt.Errorf("read promotion preview: %w", err)
+	}
+	projects := preview.Existing
+	in := bufio.NewReader(os.Stdin)
+	ask := func(label, def string) (string, error) {
+		if def != "" {
+			fmt.Fprintf(os.Stdout, "%s [%s]: ", label, def)
+		} else {
+			fmt.Fprintf(os.Stdout, "%s: ", label)
+		}
+		line, readErr := in.ReadString('\n')
+		if readErr != nil {
+			return "", readErr
+		}
+		line = strings.TrimSpace(line)
+		if line == "" {
+			line = def
+		}
+		return line, nil
+	}
+	fmt.Fprintf(os.Stdout, "Detected session %s\n  Agent: %s\n  Directory: %s\n  Terminal: %s\n  Conversation: %s\n  Status: %s\n\n", sessionID, preview.Identity["agent"], preview.Identity["workdir"], preview.Identity["tmux_session"], preview.Identity["cid"], session["status"])
+	fmt.Fprintln(os.Stdout, "Choose an existing compatible project, or n for a new project.")
+	for i, p := range projects {
+		fmt.Fprintf(os.Stdout, "  %d) %s (%s)\n", i+1, fmt.Sprint(p["name"]), fmt.Sprint(p["repo_path"]))
+	}
+	choice, err := ask("Project", "n")
+	if err != nil {
+		return err
+	}
+	body := map[string]any{}
+	if strings.EqualFold(choice, "n") || strings.EqualFold(choice, "new") {
+		name, err := ask("New project name", "")
+		if err != nil {
+			return err
+		}
+		if strings.TrimSpace(name) == "" {
+			return fmt.Errorf("project name is required")
+		}
+		body["name"] = name
+	} else {
+		n, parseErr := strconv.Atoi(choice)
+		if parseErr != nil || n < 1 || n > len(projects) {
+			return fmt.Errorf("choose n or a project number from the list")
+		}
+		body["project_id"] = int64(projects[n-1]["id"].(float64))
+	}
+	body["expected_identity"] = preview.Identity
+	confirm, err := ask("Bind this exact agent, directory, terminal, and native history? (yes/no)", "no")
+	if err != nil {
+		return err
+	}
+	if !strings.EqualFold(confirm, "yes") {
+		fmt.Fprintln(os.Stdout, "Promotion cancelled; the running terminal was left untouched.")
+		return nil
+	}
+	_, err = c.JSON("POST", "/sessions/"+url.PathEscape(sessionID)+"/promote", body)
+	if he, ok := err.(*console.HTTPError); ok && he.Status == 404 {
+		return fmt.Errorf("conversation promotion is unavailable on the running server; restart or update AgentDeck, then try again")
+	}
+	if err != nil {
+		return fmt.Errorf("conversation promotion failed: %w", err)
+	}
+	fmt.Fprintf(os.Stdout, "Conversation promoted. Session %s, terminal, and native history remain in place.\n", sessionID)
+	return nil
+}
+
 const clientHelp = `AgentDeck — web and terminal control
 
   agentdeck                         Open the dashboard in an interactive terminal
@@ -27,6 +122,7 @@ const clientHelp = `AgentDeck — web and terminal control
   agentdeck console --plain         Line-oriented menu for pipes / accessibility
   agentdeck shell [MACHINE]         Enter a blank persistent shell on a machine
   agentdeck attach KIND ID          Join tmux (Ctrl-b d returns to console)
+  agentdeck promote SESSION-ID      Bind a running conversation to a project
   agentdeck api METHOD /path [JSON|@file|-]
   agentdeck upload KIND ID FILE     Add a local file as agent context
   agentdeck files KIND ID [PATH]    Browse files on the agent's machine
@@ -74,6 +170,8 @@ func clientCommandAt(cfg *config.Config, command string, args []string, base, to
 	switch command {
 	case "shell":
 		return shellCommandAt(cfg, args, base, token, local)
+	case "promote":
+		return promoteCommand(c, args)
 	case "console", "tui":
 		attachClient := func(kind, id string) error {
 			var argv []string

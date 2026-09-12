@@ -30,6 +30,12 @@ API error. Tab changes fields, arrows choose options, Ctrl-s submits, Esc cancel
 Task creation can dispatch into an isolated worktree; Tasks → Actions also offers
 routine takeover, follow-up, diff review, completion and cancellation.
 
+For a live unassigned native session, open Actions → Promote conversation. The
+preview proves the exact agent, process, directory, terminal, and conversation
+before offering compatible existing projects or a new project name. The final
+confirmation keeps the same session, terminal, and native history. The same
+flow is available from a terminal with `agentdeck promote SESSION-ID`.
+
 `agentdeck console --plain` retains the line-oriented menu. Redirected input or
 output selects it automatically, so scripts keep working. The JSON API commands
 below are unchanged. The TUI polls the existing API; it does not run another
@@ -93,6 +99,7 @@ agentdeck upload session 4 ./requirements.pdf
 agentdeck files session 4
 agentdeck download session 4 reports/result.txt ./result.txt
 agentdeck attach session 4
+agentdeck promote 4
 ```
 
 `agentdeck agent save` accepts the runner fields shown in Settings → Agents:
@@ -136,7 +143,7 @@ and Full API accepts the remainder without opening a browser.
 | `/sessions` | GET list, POST create; GET/PATCH/DELETE `/{id}` |
 | `/shells` | POST create a tracked blank shell on a target (`target_id` or `machine`) |
 | `/sessions/discover`, `/sessions/adopt` | GET running agents, POST track |
-| `/sessions/{id}/send`, `/handoff`, `/promote` | POST message/key, handoff, associate project |
+| `/sessions/{id}/send`, `/handoff`, `/promote` | POST message/key, handoff, associate project (promotion requires the exact preview identity) |
 | `/sessions/{id}/reader`, `/wraps` | GET conversation, handoff records |
 | `/tasks` | GET list, POST create; GET/PATCH/DELETE `/{id}` |
 | `/tasks/{id}/dispatch`, `/takeover`, `/followup`, `/complete`, `/cancel`, `/commit`, `/cleanup` | POST actions |

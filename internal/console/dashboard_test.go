@@ -21,6 +21,22 @@ func sampleDashboard() *dashboard {
 	return m
 }
 
+func TestSessionActionsExposeConversationPromotionForUnassignedNativeCandidate(t *testing.T) {
+	m := newDashboard(New("http://unused", ""), nil)
+	m.section = 0
+	m.rows = []row{{"id": float64(42), "name": "Shell", "agent": "shell", "status": "running", "workdir": "/tmp/work", "tmux_session": "adk-shell"}}
+	m.filter()
+	found := false
+	for _, action := range m.rowActions() {
+		if action.Label == "Promote conversation" && action.Operation == "promote-conversation" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("unassigned live shell has no Promote conversation action")
+	}
+}
+
 func TestReadableInteractiveDetailsUseLabelsAndRetainUnknownFields(t *testing.T) {
 	got := readable(map[string]any{
 		"status":         "running",
