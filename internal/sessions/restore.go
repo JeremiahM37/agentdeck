@@ -43,6 +43,39 @@ func captureTrackingIdentity(ctx context.Context, ex executor.Executor, name str
 	return value
 }
 
+// EnsureTrackingIdentity labels an existing live terminal once. It only sets a
+// tmux option and persists the observed marker; it never restarts the process.
+func (m *Manager) EnsureTrackingIdentity(ctx context.Context, id int64) (string, error) {
+	row, err := m.DB.Session(id)
+	if err != nil {
+		return "", err
+	}
+	target, err := m.DB.Target(row.TargetID)
+	if err != nil {
+		return "", err
+	}
+	ex, err := m.Reg.For(target)
+	if err != nil {
+		return "", err
+	}
+	identity := captureTrackingIdentity(ctx, ex, row.TmuxSession)
+	if identity == "" {
+		return "", fmt.Errorf("could not establish terminal identity")
+	}
+	res, err := m.DB.Exec(`UPDATE sessions SET tracking_identity=? WHERE id=? AND ended_at IS NULL AND tracking_identity=''`, identity, id)
+	if err != nil {
+		return "", err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		row, err = m.DB.Session(id)
+		if err != nil || row.TrackingIdentity == "" {
+			return "", fmt.Errorf("terminal identity changed while promoting")
+		}
+		return row.TrackingIdentity, nil
+	}
+	return identity, nil
+}
+
 // Restore resumes monitoring the original adopted tmux session. It never
 // launches an agent, recreates tmux or guesses a native conversation ID.
 func (m *Manager) Restore(ctx context.Context, id int64) (*store.Session, error) {

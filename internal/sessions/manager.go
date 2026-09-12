@@ -190,6 +190,11 @@ func (m *Manager) LaunchShell(ctx context.Context, targetID int64) (*store.Sessi
 		m.end(sess.ID, StatusDead)
 		return nil, executor.Errf("shell launch failed: %s", strings.TrimSpace(r.Stderr))
 	}
+	// Mark the already-running shell so later native promotion can prove this
+	// exact terminal without restarting or adopting a different pane.
+	if identity := captureTrackingIdentity(ctx, ex, tmuxName); identity != "" {
+		_ = m.DB.Update("sessions", sess.ID, map[string]any{"tracking_identity": identity})
+	}
 	m.lifecycleMu.Lock()
 	current, currentErr := m.DB.Session(sess.ID)
 	if currentErr == nil && current.EndedAt != nil {

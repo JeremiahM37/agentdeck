@@ -825,6 +825,15 @@ func (s *Server) promoteSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if in.Expected != nil {
+		if in.Expected.TrackingIdentity == "" {
+			identity, e := s.Sessions.EnsureTrackingIdentity(r.Context(), sess.ID)
+			if e != nil {
+				httpError(w, 409, "%s", e)
+				return
+			}
+			in.Expected.TrackingIdentity = identity
+			sess.TrackingIdentity = identity
+		}
 		if in.Wrap {
 			httpError(w, 422, "native promotion cannot wrap the live conversation")
 			return
