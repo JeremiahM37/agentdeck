@@ -799,6 +799,9 @@ type promoteIn struct {
 	// so the new project starts with a record of what happened in the scratch
 	// session rather than an empty history.
 	Wrap bool `json:"wrap"`
+	// Expected is returned by the read-only preview. Native promotion rechecks
+	// every field immediately before linking the unchanged live session.
+	Expected *promotionIdentity `json:"expected_identity"`
 }
 
 // promoteSession turns work that started in a blank room into a project.
@@ -821,14 +824,54 @@ func (s *Server) promoteSession(w http.ResponseWriter, r *http.Request) {
 		httpError(w, 409, "this session already belongs to a project")
 		return
 	}
+	if in.Expected != nil {
+		got, err := s.resolvePromotionIdentity(r, sess)
+		if err != nil {
+			httpError(w, 409, "%s", err)
+			return
+		}
+		if got != *in.Expected || got.TargetID != sess.TargetID || got.TmuxSession != sess.TmuxSession || got.TrackingIdentity != sess.TrackingIdentity {
+			httpError(w, 409, "the terminal's native process or conversation changed; refresh the promotion preview")
+			return
+		}
+		// A quick shell may have cd'd since it was created. The verified native
+		// process cwd is the project directory that promotion adopts.
+		sess.Workdir = got.Workspace
+		sess.Agent = got.Agent
+		// Preserve the native CLI's explicit home for future history/recovery.
+		// The value is a path only; no environment contents are copied.
+		if spec, ok := sessions.Find(s.agentSpecs(), got.Agent); ok {
+			if spec.Env == nil {
+				spec.Env = map[string]string{}
+			}
+			if got.Agent == "claude" {
+				spec.Env["CLAUDE_CONFIG_DIR"] = in.Expected.NativeHome
+			} else {
+				spec.Env["CODEX_HOME"] = in.Expected.NativeHome
+			}
+			cfg, _ := json.Marshal(sessions.LaunchConfiguration{Version: 1, Spec: spec})
+			sess.LaunchConfigJSON = string(cfg)
+		}
+		// The detected CLI owns the continuation, even though the quick-shell
+		// row itself is intentionally recorded as agent=shell.
+		in.Name = strings.TrimSpace(in.Name)
+	}
 
 	project, err := s.resolvePromotionTarget(r.Context(), sess, in)
 	if err != nil {
 		respondErr(w, err)
 		return
 	}
-	if err := s.DB.Update("sessions", sess.ID, map[string]any{
-		"project_id": project.ID}); err != nil {
+	fields := map[string]any{"project_id": project.ID}
+	if in.Expected != nil {
+		fields["workdir"] = sess.Workdir
+		fields["agent"] = sess.Agent
+		fields["native_recovery_cid"] = in.Expected.CID
+		if sess.LaunchConfigJSON != "" {
+			fields["launch_config_json"] = sess.LaunchConfigJSON
+		}
+	}
+	if err := s.DB.Update("sessions", sess.ID, fields); err != nil {
 		respondErr(w, err)
 		return
 	}
@@ -861,6 +904,9 @@ func (s *Server) resolvePromotionTarget(ctx context.Context, sess *store.Session
 		if err != nil {
 			return nil, store.ErrNotFound
 		}
+		if in.Expected != nil && (proj.TargetID != sess.TargetID || cleanPromotionPath(proj.RepoPath) != cleanPromotionPath(sess.Workdir)) {
+			return nil, executor.Errf("existing project must be on the same target and exact working directory")
+		}
 		return proj, nil
 	}
 	repo := strings.TrimRight(firstNonEmptyStr(in.RepoPath, sess.Workdir), "/")
@@ -871,7 +917,7 @@ func (s *Server) resolvePromotionTarget(ctx context.Context, sess *store.Session
 	// must not leave two projects pointing at one repository
 	if existing, err := s.DB.Projects(); err == nil {
 		for _, p := range existing {
-			if strings.TrimRight(p.RepoPath, "/") == repo {
+			if p.TargetID == sess.TargetID && cleanPromotionPath(p.RepoPath) == cleanPromotionPath(repo) {
 				return p, nil
 			}
 		}
@@ -880,10 +926,14 @@ func (s *Server) resolvePromotionTarget(ctx context.Context, sess *store.Session
 	if name == "" {
 		name = projectNameFromPath(repo)
 	}
+	agent := sess.Agent
+	if in.Expected != nil {
+		agent = in.Expected.Agent
+	}
 	project, err := s.DB.InsertProject(&store.Project{
 		Name: name, TargetID: sess.TargetID, RepoPath: repo,
 		DefaultBaseBranch: s.repoBranch(ctx, sess.TargetID, repo),
-		DefaultAgent:      sess.Agent, KeepWorktrees: 3,
+		DefaultAgent:      agent, KeepWorktrees: 3,
 	})
 	if err == nil {
 		s.provisionProjectMemory(ctx, project)

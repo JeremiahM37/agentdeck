@@ -187,6 +187,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/sessions/{id}/handoff", s.handoffSession)
 	mux.HandleFunc("GET /api/sessions/{id}/wraps", s.sessionWraps)
 	mux.HandleFunc("POST /api/sessions/{id}/promote", s.promoteSession)
+	mux.HandleFunc("GET /api/sessions/{id}/promote/preview", s.previewPromotion)
 
 	// ---- terminal workspace ----
 	mux.HandleFunc("GET /terminal/{kind}/{id}", s.terminalPage)
