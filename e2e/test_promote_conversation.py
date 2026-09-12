@@ -9,11 +9,14 @@ import fcntl
 import pty
 import select
 import struct
+import sqlite3
 import subprocess
 import termios
 import time
 import uuid
 import urllib.request
+import urllib.error
+import pytest
 from pathlib import Path
 
 from conftest import _binary
@@ -48,7 +51,7 @@ def _read(master, token, timeout=20, output=b""):
     raise AssertionError("missing %r in fresh PTY output: %r" % (token, output[-4000:]))
 
 
-def _native_agent(t, agent="claude"):
+def _native_agent(t, agent="claude", marked=True):
     root = t["root"]
     # Use the product's quick-shell API, then cd into the tracked repository as
     # an operator would before starting Claude/Codex.
@@ -81,6 +84,14 @@ Path(cwd, 'native-ready').write_text(str(pid))
 while True: time.sleep(.05)
 """)
     row = t["api"]("/sessions/" + str(t["id"]))
+    if not marked:
+        # Exercise a preexisting legacy shell whose durable row and tmux pane
+        # have no marker; promotion must validate first, then establish one.
+        subprocess.run(["tmux", "set-option", "-u", "-t", "=" + row["tmux_session"] + ":",
+                        "@agentdeck-tracking-identity"], env=t["env"], check=True)
+        with sqlite3.connect(t["env"]["AGENTDECK_DB"]) as db:
+            db.execute("UPDATE sessions SET tracking_identity='' WHERE id=?", (t["id"],))
+            db.commit()
     # Start the native CLI as a child of the existing tracked blank shell.
     # Replacing the pane would change its lifecycle identity and is not the
     # operator flow this feature promises to preserve.
@@ -123,10 +134,22 @@ def _promote(t, session_id, input_text):
         os.close(master)
 
 
-def test_cli_promotes_live_native_conversation_in_place(real_terminal):
+def _json_request(t, method, path, body=None):
+    data = None if body is None else json.dumps(body).encode()
+    req = urllib.request.Request(t["url"] + "/api" + path, method=method,
+        data=data, headers={"Content-Type": "application/json"})
+    try:
+        with urllib.request.urlopen(req, timeout=20) as response:
+            return response.status, json.load(response)
+    except urllib.error.HTTPError as error:
+        return error.code, json.loads(error.read())
+
+
+@pytest.mark.parametrize("marked", [True, False], ids=["marked", "legacy-unmarked"])
+def test_cli_promotes_live_native_conversation_in_place(real_terminal, marked):
     t = real_terminal
     before_projects = {p["id"] for p in t["api"]("/projects")}
-    source = _native_agent(t)
+    source = _native_agent(t, marked=marked)
     old_pid = t["native_pid"]
     output, code = _promote(t, source["id"], "n\rConversation proof\ryes\r")
     assert code == 0, output
@@ -141,6 +164,21 @@ def test_cli_promotes_live_native_conversation_in_place(real_terminal):
     assert session["id"] == source["id"]
     history = t["api"]("/sessions/%d/conversations/%s" % (source["id"], t["native_cid"]))
     assert any("PROMOTION HISTORY PROOF" in json.dumps(m) for m in history["messages"])
+    # Promotion arms the native checkpoint observer for the now-agent session;
+    # a later compaction/fork identity is captured without restarting the CLI.
+    next_cid = "22222222-2222-4222-8222-222222222222"
+    record = t["native_home"] / "sessions" / (str(old_pid) + ".json")
+    native_record = json.loads(record.read_text())
+    native_record["sessionId"] = next_cid
+    record.write_text(json.dumps(native_record))
+    deadline = time.monotonic() + 12
+    while time.monotonic() < deadline:
+        with sqlite3.connect(t["env"]["AGENTDECK_DB"]) as db:
+            found = db.execute("SELECT native_recovery_cid FROM sessions WHERE id=?", (source["id"],)).fetchone()[0]
+        if found == next_cid:
+            break
+        time.sleep(.1)
+    assert found == next_cid
     # The tracked tmux terminal remains attachable after the CLI returns.
     subprocess.run(["tmux", "has-session", "-t", "=" + source["tmux_session"]],
                    env=t["env"], check=True)
@@ -183,3 +221,38 @@ def test_cli_cancellation_leaves_running_conversation_unmodified(real_terminal):
     assert row.get("project_id") is None
     assert {p["id"] for p in t["api"]("/projects")} == before_projects
     assert Path("/proc/%d" % t["native_pid"]).exists()
+
+
+def test_api_rejects_native_cid_switch_without_partial_project(real_terminal):
+    t = real_terminal
+    source = _native_agent(t)
+    status, preview = _json_request(t, "GET", "/sessions/%d/promote/preview" % source["id"])
+    assert status == 200
+    record = t["native_home"] / "sessions" / (str(t["native_pid"]) + ".json")
+    changed = json.loads(record.read_text())
+    changed["sessionId"] = "22222222-2222-4222-8222-222222222222"
+    record.write_text(json.dumps(changed))
+    before = t["api"]("/sessions/%d" % source["id"])
+    status, _ = _json_request(t, "POST", "/sessions/%d/promote" % source["id"],
+                              {"name": "must-not-exist", "expected_identity": preview["identity"]})
+    assert status == 409
+    after = t["api"]("/sessions/%d" % source["id"])
+    assert after.get("project_id") is None
+    assert after["id"] == before["id"] and after["tmux_session"] == before["tmux_session"]
+    assert not any(p["name"] == "must-not-exist" for p in t["api"]("/projects"))
+
+
+def test_api_rejects_existing_project_on_wrong_directory_without_mutation(real_terminal):
+    t = real_terminal
+    source = _native_agent(t)
+    project = t["api"]("/projects", {"name": "wrong-directory", "target_id": t["target_id"],
+                                      "repo_path": str(t["root"] / "elsewhere")})
+    status, preview = _json_request(t, "GET", "/sessions/%d/promote/preview" % source["id"])
+    assert status == 200
+    status, _ = _json_request(t, "POST", "/sessions/%d/promote" % source["id"],
+                              {"project_id": project["id"], "expected_identity": preview["identity"]})
+    assert status in (409, 422)
+    row = t["api"]("/sessions/%d" % source["id"])
+    assert row.get("project_id") is None
+    retained = next(p for p in t["api"]("/projects") if p["id"] == project["id"])
+    assert retained["repo_path"] == str(t["root"] / "elsewhere")

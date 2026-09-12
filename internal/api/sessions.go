@@ -826,16 +826,7 @@ func (s *Server) promoteSession(w http.ResponseWriter, r *http.Request) {
 	}
 	originalTracking := ""
 	if in.Expected != nil {
-		originalTracking = in.Expected.TrackingIdentity
-		if in.Expected.TrackingIdentity == "" {
-			identity, e := s.Sessions.EnsureTrackingIdentity(r.Context(), sess.ID)
-			if e != nil {
-				httpError(w, 409, "%s", e)
-				return
-			}
-			in.Expected.TrackingIdentity = identity
-			sess.TrackingIdentity = identity
-		}
+		originalTracking = sess.TrackingIdentity
 		if in.Wrap {
 			httpError(w, 422, "native promotion cannot wrap the live conversation")
 			return
@@ -848,6 +839,21 @@ func (s *Server) promoteSession(w http.ResponseWriter, r *http.Request) {
 		if got != *in.Expected || got.TargetID != sess.TargetID || got.TmuxSession != sess.TmuxSession || got.TrackingIdentity != sess.TrackingIdentity {
 			httpError(w, 409, "the terminal's native process or conversation changed; refresh the promotion preview")
 			return
+		}
+		if originalTracking == "" {
+			identity, e := s.Sessions.EnsureTrackingIdentity(r.Context(), sess)
+			if e != nil {
+				httpError(w, 409, "%s", e)
+				return
+			}
+			sess.TrackingIdentity = identity
+			got.TrackingIdentity = identity
+			confirmed, e := s.resolvePromotionIdentity(r, sess)
+			if e != nil || confirmed != got {
+				httpError(w, 409, "the terminal changed while establishing tracking; refresh the promotion preview")
+				return
+			}
+			in.Expected = &confirmed
 		}
 		// A quick shell may have cd'd since it was created. The verified native
 		// process cwd is the project directory that promotion adopts.
