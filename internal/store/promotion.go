@@ -30,7 +30,7 @@ func (db *DB) PromoteNewProjectAndBind(ctx context.Context, p *Project, sessionI
 	if err != nil {
 		return nil, err
 	}
-	result, err := tx.ExecContext(ctx, `UPDATE sessions SET project_id=?, workdir=?, agent=?, native_recovery_cid=?, launch_config_json=?, boot_id=? WHERE id=? AND target_id=? AND ended_at IS NULL AND (project_id IS NULL) AND tmux_session=? AND boot_id=? AND tracking_identity=?`, id, p.RepoPath, p.DefaultAgent, cid, launchConfig, boot, sessionID, p.TargetID, tmux, originalBoot, tracking)
+	result, err := tx.ExecContext(ctx, `UPDATE sessions SET project_id=?, workdir=?, agent=?, native_recovery_cid=?, launch_config_json=?, boot_id=? WHERE id=? AND target_id=? AND ended_at IS NULL AND archived_at IS NULL AND (project_id IS NULL) AND tmux_session=? AND boot_id=? AND tracking_identity=?`, id, p.RepoPath, p.DefaultAgent, cid, launchConfig, boot, sessionID, p.TargetID, tmux, originalBoot, tracking)
 	if err != nil {
 		return nil, err
 	}

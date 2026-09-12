@@ -21,6 +21,10 @@ func TestPromoteNewProjectAndBindIsAtomicAndBootSafe(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if err := db.Update("sessions", sess.ID, map[string]any{"tracking_identity": "track"}); err != nil {
+		t.Fatal(err)
+	}
+	sess, _ = db.Session(sess.ID)
 	p, err := db.PromoteNewProjectAndBind(context.Background(), &Project{Name: "p", TargetID: target.ID, RepoPath: "/new", DefaultAgent: "claude"}, sess.ID, "adk-shell", sess.BootID, "boot-new", "track", "cid", "cfg")
 	if err != nil {
 		t.Fatal(err)
