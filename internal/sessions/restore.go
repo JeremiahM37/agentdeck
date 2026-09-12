@@ -62,17 +62,6 @@ func (m *Manager) EnsureTrackingIdentity(ctx context.Context, id int64) (string,
 	if identity == "" {
 		return "", fmt.Errorf("could not establish terminal identity")
 	}
-	res, err := m.DB.Exec(`UPDATE sessions SET tracking_identity=? WHERE id=? AND ended_at IS NULL AND tracking_identity=''`, identity, id)
-	if err != nil {
-		return "", err
-	}
-	if n, _ := res.RowsAffected(); n == 0 {
-		row, err = m.DB.Session(id)
-		if err != nil || row.TrackingIdentity == "" {
-			return "", fmt.Errorf("terminal identity changed while promoting")
-		}
-		return row.TrackingIdentity, nil
-	}
 	return identity, nil
 }
 

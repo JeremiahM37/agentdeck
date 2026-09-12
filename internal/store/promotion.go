@@ -8,7 +8,7 @@ import (
 
 // PromoteNewProjectAndBind atomically creates a project and binds one exact
 // live session. A stale preview cannot leave an orphan project behind.
-func (db *DB) PromoteNewProjectAndBind(ctx context.Context, p *Project, sessionID int64, tmux, originalBoot, boot, tracking, cid, launchConfig string) (*Project, error) {
+func (db *DB) PromoteNewProjectAndBind(ctx context.Context, p *Project, sessionID int64, tmux, originalBoot, boot, originalTracking, newTracking, cid, launchConfig string) (*Project, error) {
 	if p.MemoryTopic == "" {
 		b := make([]byte, 16)
 		if _, err := rand.Read(b); err != nil {
@@ -30,7 +30,7 @@ func (db *DB) PromoteNewProjectAndBind(ctx context.Context, p *Project, sessionI
 	if err != nil {
 		return nil, err
 	}
-	result, err := tx.ExecContext(ctx, `UPDATE sessions SET project_id=?, workdir=?, agent=?, native_recovery_cid=?, launch_config_json=?, boot_id=? WHERE id=? AND target_id=? AND ended_at IS NULL AND archived_at IS NULL AND (project_id IS NULL) AND tmux_session=? AND boot_id=? AND tracking_identity=?`, id, p.RepoPath, p.DefaultAgent, cid, launchConfig, boot, sessionID, p.TargetID, tmux, originalBoot, tracking)
+	result, err := tx.ExecContext(ctx, `UPDATE sessions SET project_id=?, workdir=?, agent=?, native_recovery_cid=?, launch_config_json=?, boot_id=?, tracking_identity=? WHERE id=? AND target_id=? AND ended_at IS NULL AND archived_at IS NULL AND (project_id IS NULL) AND tmux_session=? AND boot_id=? AND tracking_identity=?`, id, p.RepoPath, p.DefaultAgent, cid, launchConfig, boot, newTracking, sessionID, p.TargetID, tmux, originalBoot, originalTracking)
 	if err != nil {
 		return nil, err
 	}

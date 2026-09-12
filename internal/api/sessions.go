@@ -824,7 +824,9 @@ func (s *Server) promoteSession(w http.ResponseWriter, r *http.Request) {
 		httpError(w, 409, "this session already belongs to a project")
 		return
 	}
+	originalTracking := ""
 	if in.Expected != nil {
+		originalTracking = in.Expected.TrackingIdentity
 		if in.Expected.TrackingIdentity == "" {
 			identity, e := s.Sessions.EnsureTrackingIdentity(r.Context(), sess.ID)
 			if e != nil {
@@ -905,7 +907,7 @@ func (s *Server) promoteSession(w http.ResponseWriter, r *http.Request) {
 		if name == "" {
 			name = projectNameFromPath(sess.Workdir)
 		}
-		project, err = s.DB.PromoteNewProjectAndBind(r.Context(), &store.Project{Name: name, TargetID: sess.TargetID, RepoPath: sess.Workdir, DefaultBaseBranch: s.repoBranch(r.Context(), sess.TargetID, sess.Workdir), DefaultAgent: sess.Agent, KeepWorktrees: 3}, sess.ID, sess.TmuxSession, sess.BootID, in.Expected.BootID, sess.TrackingIdentity, in.Expected.CID, sess.LaunchConfigJSON)
+		project, err = s.DB.PromoteNewProjectAndBind(r.Context(), &store.Project{Name: name, TargetID: sess.TargetID, RepoPath: sess.Workdir, DefaultBaseBranch: s.repoBranch(r.Context(), sess.TargetID, sess.Workdir), DefaultAgent: sess.Agent, KeepWorktrees: 3}, sess.ID, sess.TmuxSession, sess.BootID, in.Expected.BootID, originalTracking, in.Expected.TrackingIdentity, in.Expected.CID, sess.LaunchConfigJSON)
 		atomicBound = err == nil
 	} else {
 		project, err = s.resolvePromotionTarget(r.Context(), sess, in)
@@ -930,7 +932,7 @@ func (s *Server) promoteSession(w http.ResponseWriter, r *http.Request) {
 		}
 		var updateErr error
 		if in.Expected != nil {
-			res, e := s.DB.Exec(`UPDATE sessions SET project_id=?, workdir=?, agent=?, native_recovery_cid=?, launch_config_json=?, boot_id=? WHERE id=? AND target_id=? AND ended_at IS NULL AND archived_at IS NULL AND project_id IS NULL AND tmux_session=? AND boot_id=? AND tracking_identity=?`, project.ID, sess.Workdir, sess.Agent, in.Expected.CID, sess.LaunchConfigJSON, in.Expected.BootID, sess.ID, sess.TargetID, sess.TmuxSession, sess.BootID, sess.TrackingIdentity)
+			res, e := s.DB.Exec(`UPDATE sessions SET project_id=?, workdir=?, agent=?, native_recovery_cid=?, launch_config_json=?, boot_id=?, tracking_identity=? WHERE id=? AND target_id=? AND ended_at IS NULL AND archived_at IS NULL AND project_id IS NULL AND tmux_session=? AND boot_id=? AND tracking_identity=?`, project.ID, sess.Workdir, sess.Agent, in.Expected.CID, sess.LaunchConfigJSON, in.Expected.BootID, in.Expected.TrackingIdentity, sess.ID, sess.TargetID, sess.TmuxSession, sess.BootID, originalTracking)
 			if e != nil {
 				updateErr = e
 			} else if n, e := res.RowsAffected(); e != nil || n != 1 {
