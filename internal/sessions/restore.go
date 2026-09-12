@@ -44,7 +44,8 @@ func captureTrackingIdentity(ctx context.Context, ex executor.Executor, name str
 }
 
 // EnsureTrackingIdentity labels an existing live terminal once. It only sets a
-// tmux option and persists the observed marker; it never restarts the process.
+// tmux option and returns the observed marker; promotion persists it after all
+// proof and lifecycle checks pass. It never restarts the process.
 func (m *Manager) EnsureTrackingIdentity(ctx context.Context, id int64) (string, error) {
 	row, err := m.DB.Session(id)
 	if err != nil {
