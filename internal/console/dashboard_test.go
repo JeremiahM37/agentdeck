@@ -37,6 +37,29 @@ func TestSessionActionsExposeConversationPromotionForUnassignedNativeCandidate(t
 	}
 }
 
+func TestPromotionPreviewPreservesProofAndSessionBinding(t *testing.T) {
+	m := newDashboard(New("http://unused", ""), nil)
+	m.section = 0
+	m.rows = []row{{"id": float64(42), "name": "first", "agent": "shell", "status": "running"}}
+	m.filter()
+	m.promotionPreviewForm([]byte(`{"session_id":42,"identity":{"agent":"claude","cid":"cid-1","pid":17,"proc_start":"start-1","workdir":"/srv/exact","tmux_session":"adk-42","tracking_identity":"track-1","future_proof":"retain-me"},"existing_projects":[{"id":7,"name":"Exact","repo_path":"/srv/exact"}]}`))
+	if m.form == nil {
+		t.Fatal("valid promotion preview did not open form")
+	}
+	m.rows = []row{{"id": float64(99), "name": "changed selection", "agent": "shell", "status": "running"}}
+	m.filter()
+	if cmd := m.form.submit(map[string]any{"project_id": "7"}); cmd != nil {
+		t.Fatal("confirmation should be deferred until y")
+	}
+	if m.pending == nil || m.pending.Path != "/sessions/42/promote" {
+		t.Fatalf("promotion changed session binding: %#v", m.pending)
+	}
+	proof, ok := m.pending.Body.(map[string]any)["expected_identity"].(json.RawMessage)
+	if !ok || !strings.Contains(string(proof), `"future_proof":"retain-me"`) {
+		t.Fatalf("identity proof was not preserved: %#v", m.pending.Body)
+	}
+}
+
 func TestReadableInteractiveDetailsUseLabelsAndRetainUnknownFields(t *testing.T) {
 	got := readable(map[string]any{
 		"status":         "running",

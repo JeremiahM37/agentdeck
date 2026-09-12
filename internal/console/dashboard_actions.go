@@ -778,25 +778,25 @@ func (m *dashboard) loadPromotionPreview() tea.Cmd {
 // reject a changed process, directory, terminal, or native conversation.
 func (m *dashboard) promotionPreviewForm(data []byte) tea.Cmd {
 	var preview struct {
-		Identity struct {
-			Agent            string `json:"agent"`
-			CID              string `json:"cid"`
-			Workspace        string `json:"workdir"`
-			TmuxSession      string `json:"tmux_session"`
-			ProcStart        string `json:"proc_start"`
-			TrackingIdentity string `json:"tracking_identity"`
-			PID              int    `json:"pid"`
-			TargetID         int64  `json:"target_id"`
-		} `json:"identity"`
+		IdentityRaw json.RawMessage `json:"identity"`
 		Existing    []row           `json:"existing_projects"`
 		SessionID   int64           `json:"session_id"`
-		IdentityRaw json.RawMessage `json:"identity"`
 	}
 	if err := json.Unmarshal(data, &preview); err != nil {
 		m.notice = "Promotion preview: " + err.Error()
 		return nil
 	}
-	if preview.Identity.Agent == "" || preview.Identity.CID == "" || preview.Identity.Workspace == "" {
+	var identity struct {
+		Agent            string `json:"agent"`
+		CID              string `json:"cid"`
+		Workspace        string `json:"workdir"`
+		TmuxSession      string `json:"tmux_session"`
+		ProcStart        string `json:"proc_start"`
+		TrackingIdentity string `json:"tracking_identity"`
+		PID              int    `json:"pid"`
+		TargetID         int64  `json:"target_id"`
+	}
+	if len(preview.IdentityRaw) == 0 || json.Unmarshal(preview.IdentityRaw, &identity) != nil || preview.SessionID <= 0 || identity.Agent == "" || identity.CID == "" || identity.Workspace == "" {
 		m.notice = "Promotion preview did not contain an exact native conversation binding."
 		return nil
 	}
@@ -804,9 +804,6 @@ func (m *dashboard) promotionPreviewForm(data []byte) tea.Cmd {
 	choices = append(choices, options(preview.Existing, "")...)
 	fields := []field{optionField("project_id", "Existing project", "", choices, false), {Key: "name", Label: "Project name (new project)"}}
 	sessionID := fmt.Sprint(preview.SessionID)
-	if preview.SessionID == 0 {
-		sessionID = id(m.current())
-	}
 	return m.openForm("Promote conversation", fields, func(body map[string]any) tea.Cmd {
 		projectID := strings.TrimSpace(str(body["project_id"]))
 		if projectID != "" {
@@ -816,7 +813,7 @@ func (m *dashboard) promotionPreviewForm(data []byte) tea.Cmd {
 			return nil
 		}
 		body["expected_identity"] = preview.IdentityRaw
-		warning := fmt.Sprintf("Bind this exact running conversation?\n  Agent: %s (PID %d)\n  Directory: %s\n  Terminal: %s\n  Conversation: %s\nThe terminal, session ID, and native history stay in place.", preview.Identity.Agent, preview.Identity.PID, preview.Identity.Workspace, preview.Identity.TmuxSession, preview.Identity.CID)
+		warning := fmt.Sprintf("Bind this exact running conversation?\n  Agent: %s (PID %d)\n  Directory: %s\n  Terminal: %s\n  Conversation: %s\nThe terminal, session ID, and native history stay in place.", identity.Agent, identity.PID, identity.Workspace, identity.TmuxSession, identity.CID)
 		m.pending = &dashboardAction{Label: "Promote conversation", Method: "POST", Path: "/sessions/" + sessionID + "/promote", Body: body, Warning: warning}
 		m.form = nil
 		m.notice = "Review the exact agent, directory, and terminal, then press y to confirm."
