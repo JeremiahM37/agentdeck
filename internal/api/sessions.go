@@ -871,14 +871,21 @@ func (s *Server) promoteSession(w http.ResponseWriter, r *http.Request) {
 	var err error
 	atomicBound := false
 	if in.Expected != nil && in.ProjectID == nil {
+		if projects, e := s.DB.Projects(); e == nil {
+			for _, p := range projects {
+				if p.TargetID == sess.TargetID && cleanPromotionPath(p.RepoPath) == cleanPromotionPath(sess.Workdir) {
+					in.ProjectID = &p.ID
+					break
+				}
+			}
+		}
+	}
+	if in.Expected != nil && in.ProjectID == nil {
 		name := strings.TrimSpace(in.Name)
 		if name == "" {
 			name = projectNameFromPath(sess.Workdir)
 		}
 		project, err = s.DB.PromoteNewProjectAndBind(r.Context(), &store.Project{Name: name, TargetID: sess.TargetID, RepoPath: sess.Workdir, DefaultBaseBranch: s.repoBranch(r.Context(), sess.TargetID, sess.Workdir), DefaultAgent: sess.Agent, KeepWorktrees: 3}, sess.ID, sess.TmuxSession, in.Expected.BootID, sess.TrackingIdentity, in.Expected.CID, sess.LaunchConfigJSON)
-		if err == nil {
-			s.provisionProjectMemory(r.Context(), project)
-		}
 		atomicBound = err == nil
 	} else {
 		project, err = s.resolvePromotionTarget(r.Context(), sess, in)
@@ -886,9 +893,6 @@ func (s *Server) promoteSession(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		respondErr(w, err)
 		return
-	}
-	if in.Expected != nil {
-		s.Sessions.RestartNativeCheckpoint(sess.ID, sess.Agent, sess.Workdir, in.Expected.NativeHome, sess.TmuxSession)
 	}
 	if !atomicBound {
 		fields := map[string]any{"project_id": project.ID}
@@ -900,10 +904,25 @@ func (s *Server) promoteSession(w http.ResponseWriter, r *http.Request) {
 				fields["launch_config_json"] = sess.LaunchConfigJSON
 			}
 		}
-		if err := s.DB.Update("sessions", sess.ID, fields); err != nil {
-			respondErr(w, err)
+		var updateErr error
+		if in.Expected != nil {
+			res, e := s.DB.Exec(`UPDATE sessions SET project_id=?, workdir=?, agent=?, native_recovery_cid=?, launch_config_json=? WHERE id=? AND ended_at IS NULL AND archived_at IS NULL AND project_id IS NULL AND tmux_session=? AND boot_id=? AND tracking_identity=?`, project.ID, sess.Workdir, sess.Agent, in.Expected.CID, sess.LaunchConfigJSON, sess.ID, sess.TmuxSession, in.Expected.BootID, sess.TrackingIdentity)
+			if e != nil {
+				updateErr = e
+			} else if n, e := res.RowsAffected(); e != nil || n != 1 {
+				updateErr = fmt.Errorf("promotion preview is stale; the session lifecycle changed")
+			}
+		} else {
+			updateErr = s.DB.Update("sessions", sess.ID, fields)
+		}
+		if updateErr != nil {
+			respondErr(w, updateErr)
 			return
 		}
+	}
+	if in.Expected != nil {
+		s.Sessions.RestartNativeCheckpoint(sess.ID, sess.Agent, sess.Workdir, in.Expected.NativeHome, sess.TmuxSession)
+		s.provisionProjectMemory(r.Context(), project)
 	}
 	// the work so far is worth keeping even if the wrap fails, so this is
 	// deliberately after the link and its error is reported rather than fatal
