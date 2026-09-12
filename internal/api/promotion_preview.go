@@ -48,6 +48,7 @@ func (s *Server) resolvePromotionIdentity(r *http.Request, row *store.Session) (
 		candidates = []string{"claude", "codex"}
 	}
 	found := make([]promotionIdentity, 0, 2)
+	var ambiguous error
 	for _, agent := range candidates {
 		home := ""
 		ex, e := s.Reg.For(target)
@@ -57,7 +58,12 @@ func (s *Server) resolvePromotionIdentity(r *http.Request, row *store.Session) (
 		evidence, e := sessions.CaptureNativeEvidence(r.Context(), ex, agent, row.Workdir, home, row.TmuxSession, row.TrackingIdentity, true)
 		if e == nil {
 			found = append(found, promotionIdentity{Agent: agent, CID: evidence.ID, PID: evidence.PID, ProcStart: evidence.ProcStart, Workspace: evidence.Workspace, RootPID: evidence.RootPID, RootStart: evidence.RootStart, PaneID: evidence.PaneID, NativeHome: evidence.NativeHome, TargetID: row.TargetID, TmuxSession: row.TmuxSession, TrackingIdentity: row.TrackingIdentity})
+		} else if strings.Contains(e.Error(), "ambiguous") {
+			ambiguous = e
 		}
+	}
+	if ambiguous != nil {
+		return promotionIdentity{}, ambiguous
 	}
 	if len(found) == 1 {
 		return found[0], nil

@@ -44,6 +44,7 @@ def native_identity(agent, workspace, home, name, expected, discovery=False):
         # still be observed read-only; do not claim it is the original session
         # or retain a binding after this observation.
         root = int(before[3]); root_start = process(root)[1]
+        boot_id = Path('/proc/sys/kernel/random/boot_id').read_text().strip()
         # Snapshot ancestry once, and verify each evidence-bearing process again.
         census = {}
         for path in Path('/proc').glob('[0-9]*/stat'):
@@ -77,7 +78,7 @@ def native_identity(agent, workspace, home, name, expected, discovery=False):
                 cid = row.get('sessionId', '')
                 if re.fullmatch(r'[a-fA-F0-9]{8}(?:-[a-fA-F0-9]{4}){3}-[a-fA-F0-9]{12}', str(cid)) and process(pid)[1] == start:
                     candidates.add(cid)
-                    evidence[cid] = dict(pid=pid, proc_start=start, workspace=actual_cwd, native_home=str(Path(process_env(pid, 'CLAUDE_CONFIG_DIR', home)).resolve()), root_pid=root, root_start=root_start, pane_id=before[2])
+                    evidence[cid] = dict(pid=pid, proc_start=start, workspace=actual_cwd, native_home=str(Path(process_env(pid, 'CLAUDE_CONFIG_DIR', home)).resolve()), boot_id=boot_id, root_pid=root, root_start=root_start, pane_id=before[2])
             elif agent == 'codex':
                 # A shell tool opening history is not the native agent.
                 try:
@@ -106,10 +107,10 @@ def native_identity(agent, workspace, home, name, expected, discovery=False):
                         if not re.fullmatch(r'[a-fA-F0-9]{8}(?:-[a-fA-F0-9]{4}){3}-[a-fA-F0-9]{12}', str(cid)): continue
                         if fd.resolve(strict=True) == path and process(pid)[1] == start:
                             candidates.add(cid)
-                            evidence[cid] = dict(pid=pid, proc_start=start, workspace=actual_cwd, native_home=str(Path(process_env(pid, 'CODEX_HOME', home)).resolve()), root_pid=root, root_start=root_start, pane_id=before[2])
+                            evidence[cid] = dict(pid=pid, proc_start=start, workspace=actual_cwd, native_home=str(Path(process_env(pid, 'CODEX_HOME', home)).resolve()), boot_id=boot_id, root_pid=root, root_start=root_start, pane_id=before[2])
                     except (OSError, ValueError, TypeError, IndexError): continue
         if pane() != before or process(root)[1] != root_start: return dict(state='changed')
-        if len(candidates) > 1: return dict(state='ambiguous')
+        if len(candidates) > 1 or len(evidence) > 1: return dict(state='ambiguous')
         if not candidates: return unknown
         cid = next(iter(candidates))
         return dict(state='identified', id=cid, evidence=evidence.get(cid, {}))

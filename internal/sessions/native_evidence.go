@@ -23,6 +23,7 @@ type NativeEvidence struct {
 	RootStart  string `json:"root_start"`
 	PaneID     string `json:"pane_id"`
 	NativeHome string `json:"native_home"`
+	BootID     string `json:"boot_id"`
 }
 
 // CaptureNativeEvidence resolves the native identity in one target-side probe.
@@ -54,13 +55,17 @@ func CaptureNativeEvidence(ctx context.Context, ex executor.Executor, agent, wor
 			RootStart  string `json:"root_start"`
 			PaneID     string `json:"pane_id"`
 			NativeHome string `json:"native_home"`
+			BootID     string `json:"boot_id"`
 		} `json:"evidence"`
 	}
 	if err := json.Unmarshal([]byte(strings.TrimSpace(r.Stdout)), &raw); err != nil {
 		return NativeEvidence{}, fmt.Errorf("could not parse native process identity")
 	}
-	if raw.State != "identified" || raw.ID == "" || raw.Evidence.PID <= 0 || raw.Evidence.ProcStart == "" || raw.Evidence.RootPID <= 0 || raw.Evidence.RootStart == "" || raw.Evidence.PaneID == "" || raw.Evidence.NativeHome == "" {
+	if raw.State != "identified" || raw.ID == "" || raw.Evidence.PID <= 0 || raw.Evidence.ProcStart == "" || raw.Evidence.RootPID <= 0 || raw.Evidence.RootStart == "" || raw.Evidence.PaneID == "" || raw.Evidence.NativeHome == "" || raw.Evidence.BootID == "" {
+		if raw.State == "ambiguous" {
+			return NativeEvidence{}, fmt.Errorf("native process identity is ambiguous")
+		}
 		return NativeEvidence{}, fmt.Errorf("the interactive process has no provable native conversation identity; keep the terminal open and try again")
 	}
-	return NativeEvidence{State: raw.State, ID: raw.ID, PID: raw.Evidence.PID, ProcStart: raw.Evidence.ProcStart, Workspace: raw.Evidence.Workspace, RootPID: raw.Evidence.RootPID, RootStart: raw.Evidence.RootStart, PaneID: raw.Evidence.PaneID, NativeHome: raw.Evidence.NativeHome}, nil
+	return NativeEvidence{State: raw.State, ID: raw.ID, PID: raw.Evidence.PID, ProcStart: raw.Evidence.ProcStart, Workspace: raw.Evidence.Workspace, RootPID: raw.Evidence.RootPID, RootStart: raw.Evidence.RootStart, PaneID: raw.Evidence.PaneID, NativeHome: raw.Evidence.NativeHome, BootID: raw.Evidence.BootID}, nil
 }
