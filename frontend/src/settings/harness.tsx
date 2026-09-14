@@ -84,6 +84,30 @@ const api: SettingsApi = {
         skills: [{ id: "skill-a", name: "Skill A", description: "Useful" }],
       };
     if (p.startsWith("/projects/1/skills?")) return { attachments: [] };
+    if (p.startsWith("/projects/1/workflows?"))
+      return {
+        workflows: [
+          {
+            id: "spec-kit",
+            name: "Spec Kit",
+            description: "Specification-first development with constitution, planning, tasks, and implementation workflows.",
+            version: "d848fb4e18f44640ad6b42e60a280551ee90cdce",
+            upstream_url: "https://github.com/github/spec-kit",
+            enabled: false,
+            commands: ["agentdeck-spec-kit constitution", "agentdeck-spec-kit specify", "agentdeck-spec-kit clarify", "agentdeck-spec-kit plan", "agentdeck-spec-kit tasks", "agentdeck-spec-kit analyze", "agentdeck-spec-kit checklist", "agentdeck-spec-kit implement", "agentdeck-spec-kit converge"],
+          },
+          {
+            id: "maestro",
+            name: "Maestro",
+            description: "Curated agent workflow guidance for diagnosing, fortifying, refining, reflecting, and teaching Maestro.",
+            version: "00f9115d446a8ba26b8f18f6ed306bc4a21807c3",
+            upstream_url: "https://github.com/sharpdeveye/maestro",
+            enabled: false,
+            commands: ["agentdeck-maestro diagnose", "agentdeck-maestro fortify", "agentdeck-maestro refine", "agentdeck-maestro reflect", "agentdeck-maestro agent-workflow", "agentdeck-maestro teach-maestro"],
+          },
+        ],
+        reload_required: true,
+      };
     if (p === "/agents")
       return [
         { name: "claude", command: "claude", builtin: true },

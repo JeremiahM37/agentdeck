@@ -1,0 +1,178 @@
+{
+  "repository": "https://github.com/sharpdeveye/maestro",
+  "revision": "00f9115d446a8ba26b8f18f6ed306bc4a21807c3",
+  "license": "MIT",
+  "description": "Unmodified upstream files. AgentDeck adaptations are outside this upstream directory.",
+  "files": [
+    {
+      "path": "LICENSE",
+      "sha256": "dcde205d11d46880a5d90f39a056c7396294d09a547ae8226a9f1097d013d6cf",
+      "bytes": 1068
+    },
+    {
+      "path": "NOTICE.md",
+      "sha256": "4f8ca62ad1f0a5d9f3493cbebe8dc5d13c2d27fbc9ea09a0abcab860401bba3d",
+      "bytes": 742
+    },
+    {
+      "path": "source/skills/accelerate/SKILL.md",
+      "sha256": "60623041bd794883904312a4065c107a73062749f1f638a4bca4e3ba71c7a7f3",
+      "bytes": 2982
+    },
+    {
+      "path": "source/skills/adapt-workflow/SKILL.md",
+      "sha256": "cb17c9c406a00d1ab6b5e795106f03c31cd7bf4e20782fcb942e046d1c196aa9",
+      "bytes": 2391
+    },
+    {
+      "path": "source/skills/agent-workflow/SKILL.md",
+      "sha256": "160eb61fa8565b11c447f70bc9bd9846037f00615b4642bf8b4bea144ac2da2b",
+      "bytes": 8321
+    },
+    {
+      "path": "source/skills/agent-workflow/reference/agent-architecture.md",
+      "sha256": "69ebbeaf3fe4a0a1a69ad0a5a7239b83ebc7f10a5ca7e853bbdd5aff3e5c857c",
+      "bytes": 3689
+    },
+    {
+      "path": "source/skills/agent-workflow/reference/context-management.md",
+      "sha256": "a63d83bb27947e170e4f437c064555ece944f68a36faa63e013ced01584d0d3e",
+      "bytes": 3493
+    },
+    {
+      "path": "source/skills/agent-workflow/reference/feedback-loops.md",
+      "sha256": "2003fcb7d89a01f0caf64815ed850b9a8026d70f5fdbddceeb8a9ab478c552b9",
+      "bytes": 3875
+    },
+    {
+      "path": "source/skills/agent-workflow/reference/guardrails-safety.md",
+      "sha256": "1c0d7657d9a7fe22dddaf73b8d89a6bdbd650ac170fc8888012d60a266dfc2e3",
+      "bytes": 4105
+    },
+    {
+      "path": "source/skills/agent-workflow/reference/knowledge-systems.md",
+      "sha256": "9c9923fda5ac3e452a70cba0e7a5f87adccdeb811a4b5c53362619b73fa08c3c",
+      "bytes": 3411
+    },
+    {
+      "path": "source/skills/agent-workflow/reference/prompt-engineering.md",
+      "sha256": "5a41926390fd74669c8687c5c7d654ea8c3448586d88c23c3deb4b918de72eaf",
+      "bytes": 3913
+    },
+    {
+      "path": "source/skills/agent-workflow/reference/tool-orchestration.md",
+      "sha256": "e5495474cd21d676be31119c43d4b036b2c378ff9485efaca0f137aba5fd638b",
+      "bytes": 3339
+    },
+    {
+      "path": "source/skills/amplify/SKILL.md",
+      "sha256": "5d72d0bbe67609eee1b7cf64552d59783daaf62410404343d6d37a7cc12a509b",
+      "bytes": 3132
+    },
+    {
+      "path": "source/skills/calibrate/SKILL.md",
+      "sha256": "823c4149ce52e7e715308e879e3ee0aaa7d0411742090ce2f4c8c69dfed06e38",
+      "bytes": 3135
+    },
+    {
+      "path": "source/skills/capture/SKILL.md",
+      "sha256": "94afa951f7b2eb691329493ef2c826d64ca4c2f2de07ace1496a89191f6dff1e",
+      "bytes": 2707
+    },
+    {
+      "path": "source/skills/chain/SKILL.md",
+      "sha256": "8c0bd8954ba20b95e4b89508fee95d1d6de0b56790cc2aa7bca7c461db7216e6",
+      "bytes": 2475
+    },
+    {
+      "path": "source/skills/compose/SKILL.md",
+      "sha256": "f3b306b99c394ffa517f69fab5052fed0415c1535847ba0a7200f6e37d53e0a9",
+      "bytes": 2885
+    },
+    {
+      "path": "source/skills/diagnose/SKILL.md",
+      "sha256": "0c78596366318cd876ce9f9ce36d805a43cf39df2aa3a763fea57c5a192418a2",
+      "bytes": 6257
+    },
+    {
+      "path": "source/skills/enrich/SKILL.md",
+      "sha256": "d47c539e83eee385eb52321b787d26ba106aa2347c0f0b07928119125d71c907",
+      "bytes": 3315
+    },
+    {
+      "path": "source/skills/evaluate/SKILL.md",
+      "sha256": "7f3cb4e8eee342ad968389bc7e7b629f1aa9aea77f606ba82543eca20cb64078",
+      "bytes": 3107
+    },
+    {
+      "path": "source/skills/extract-pattern/SKILL.md",
+      "sha256": "c8504df5bd7b3221675cad90a6b99911414e41cc29a3ff5f786fe7ae0950759f",
+      "bytes": 2660
+    },
+    {
+      "path": "source/skills/fortify/SKILL.md",
+      "sha256": "4e0003e18cc4792c20f1b5871069be1c682dbb476cdf99cba9c557f278526cb0",
+      "bytes": 2760
+    },
+    {
+      "path": "source/skills/guard/SKILL.md",
+      "sha256": "be9fb3cf991a756128f92c15970680341d7d1439ed8a8ac87b422db961a94e5d",
+      "bytes": 3141
+    },
+    {
+      "path": "source/skills/iterate/SKILL.md",
+      "sha256": "dd2a6d407a1606ccb23a4afbfcf78ecb3132d783d74b1f2d15b2e51eb231c03c",
+      "bytes": 3446
+    },
+    {
+      "path": "source/skills/onboard-agent/SKILL.md",
+      "sha256": "ab3ff0a7a11c4edc79cb8080c3cc7a7bacd8e1a316d4d7c3aa20f6e6036fdcfe",
+      "bytes": 2603
+    },
+    {
+      "path": "source/skills/recap/SKILL.md",
+      "sha256": "3da54be44c53843c3f846c58ecca74aed4fb0bbbe3e1f284772f734f259a5cc2",
+      "bytes": 2733
+    },
+    {
+      "path": "source/skills/refine/SKILL.md",
+      "sha256": "2dfb74cefcab1e5e9a8c77f5ff1b80ab431bed353a40ee0907634934021bdf47",
+      "bytes": 2937
+    },
+    {
+      "path": "source/skills/reflect/SKILL.md",
+      "sha256": "ed59b6c99782b3a2b2b609fb4ce56b75d1468dc870368eb17bc2a9a72c0e03d0",
+      "bytes": 4459
+    },
+    {
+      "path": "source/skills/specialize/SKILL.md",
+      "sha256": "65d7a876a7b0124eff008f18b160dce53449f9bf4c1196f35cb17f77e8ec929d",
+      "bytes": 2458
+    },
+    {
+      "path": "source/skills/streamline/SKILL.md",
+      "sha256": "0765d5d42e3536ad727b2fa631e24f36993bde3f63e97ec831e0aeb7f2526e37",
+      "bytes": 3123
+    },
+    {
+      "path": "source/skills/teach-maestro/SKILL.md",
+      "sha256": "690bcd398db9700fe4378a5419cf24c713e15663d602d2ce87948cda6c4eaa17",
+      "bytes": 3151
+    },
+    {
+      "path": "source/skills/temper/SKILL.md",
+      "sha256": "1dce3625b7fd389253bf8da58106053d39b2d8c98f0c8d1ab2c254070bb4ac26",
+      "bytes": 2624
+    },
+    {
+      "path": "source/skills/turbocharge/SKILL.md",
+      "sha256": "acf6c48f62fdfc9c36fe9e366f3926689ee16fd5c8db3270c3a0050a316bef89",
+      "bytes": 3188
+    },
+    {
+      "path": "source/skills/zero-defect/SKILL.md",
+      "sha256": "49023ea5fd9db5130ebfcfe19199dfe8f5bfd9077a44c62022eb67de79b4992d",
+      "bytes": 4286
+    }
+  ]
+}

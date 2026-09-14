@@ -657,6 +657,9 @@ func (m *dashboard) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case skillsLoadedMsg:
 		m.busy = false
 		return m, m.skillsSettingsLoaded(v)
+	case workflowsLoadedMsg:
+		m.busy = false
+		return m, m.workflowsLoaded(v)
 	case discoveredMsg:
 		m.busy = false
 		if v.err != nil {
@@ -965,11 +968,9 @@ func (m *dashboard) attachSelected(shell bool) tea.Cmd {
 		m.menuIndex = 0
 		return nil
 	}
-	if shell {
-		if kind == "project" {
-			m.notice = "Enter opens the project shell."
-			return nil
-		}
+	// Projects already resolve to a shell; Enter and s open the same terminal
+	// in the repository without creating an agent session.
+	if shell && kind != "project" {
 		kind += "-shell"
 	}
 	if m.attach == nil {
@@ -1114,6 +1115,9 @@ func (m *dashboard) View() string {
 		if m.selectedGroup() != nil {
 			keys = " Enter fold · / find · q quit"
 		}
+	}
+	if sections[m.section] == "projects" {
+		keys = " Enter open project shell · / find · m actions · q quit"
 	}
 	footer := muted.Render(clip(keys, m.width-1)) + "\n" + clip(" "+status, m.width-1)
 	return header + strings.Join(lines, "\n") + "\n" + footer

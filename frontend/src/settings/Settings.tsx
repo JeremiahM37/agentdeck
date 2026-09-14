@@ -3,6 +3,7 @@ import type { JsonValue } from "../api";
 import type { Project, Target } from "../types";
 import { AgentEditor, type AgentSpec } from "./AgentEditor";
 import { Skills } from "./Skills";
+import { Workflows } from "./Workflows";
 import { Modal } from "../sessions/Modal";
 import { AgentCommands } from "./AgentCommands";
 export interface SettingsApi {
@@ -674,6 +675,12 @@ function ProjectCard({
         onNotice={onNotice}
         sourceText={sources}
         onSourceText={setSources}
+      />
+      <Workflows
+        api={api}
+        projectId={p.id}
+        defaultAgent={p.default_agent}
+        onNotice={onNotice}
       />
       <button
         onClick={() => {

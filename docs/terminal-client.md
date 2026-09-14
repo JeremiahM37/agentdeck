@@ -23,6 +23,18 @@ launches with no arguments and no terminal still start the server.
 | 7 / 8 / 9 | Settings / usage / full API |
 | ? / q | Help / quit without stopping agents |
 
+In **Projects** (key **4**), select a project and press **Enter** to open a
+persistent shell in its repository on the project's machine. No agent is
+launched. You can inspect files and run commands directly; **Ctrl-b**, then
+**d** returns to the project list. A configured tmux `default-command` does
+not replace this shell with an agent launcher.
+
+For optional workflow packs, use **Projects → Actions → Workflows (Spec Kit /
+Maestro)**. Choose the provider and pack, then Enable or Disable and save with
+**Ctrl-s**. Each provider's availability is shown in the picker. Start a new
+session to load changes; disabling preserves generated documents. In the plain
+console, use the project's **workflows** action and select a pack to toggle it.
+
 The wide layout shows a live preview beside the list. Narrow terminals keep one
 focused pane visible; Tab switches between the list and preview. Forms use named
 project/target choices, accept multiline prompts, and keep your draft after an

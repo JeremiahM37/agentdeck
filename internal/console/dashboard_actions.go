@@ -103,6 +103,8 @@ func (m *dashboard) choose(a dashboardAction) tea.Cmd {
 		return m.mcpSettingsForm()
 	case "skills":
 		return m.skillsSettingsForm()
+	case "workflows":
+		return m.workflowsForm()
 	case "rename":
 		return m.renameForm()
 	case "edit":
@@ -215,6 +217,7 @@ func (m *dashboard) rowActions() []dashboardAction {
 		actions = []dashboardAction{post("Run now", "/run"), {Label: "Enable schedule", Method: "PATCH", Path: path, Body: map[string]any{"enabled": true}}, {Label: "Disable schedule", Method: "PATCH", Path: path, Body: map[string]any{"enabled": false}}, op("Rename", "rename"), op("Edit routine", "edit")}
 	case "projects":
 		actions = []dashboardAction{op("Open project shell", "attach"), op("Review changes", "review"), read("Project brief", "/brief"), read("Notes", "/notes"), read("Handoffs", "/wraps"), read("Capabilities", "/capability"), op("Rename", "rename"), op("Edit project", "edit"), op("MCP settings (add / edit / remove)", "mcp"), op("Skills (attach / detach)", "skills")}
+		actions = append(actions, op("Workflows (Spec Kit / Maestro)", "workflows"))
 	case "targets":
 		actions = []dashboardAction{post("Check connection", "/check"), read("Check agent commands", "/agents"), op("Rename", "rename"), op("Edit target", "edit")}
 	case "approvals":

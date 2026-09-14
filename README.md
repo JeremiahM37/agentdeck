@@ -102,6 +102,9 @@ existing remote `agentdeck` launcher was kept.
 See [Standalone local AgentDeck](docs/local.md) for Linux, macOS, and WSL
 installation and the difference between local and remote operation.
 
+Project-specific optional Spec Kit and Maestro workflows are documented in
+[Project workflows](docs/workflows.md).
+
 <details>
 <summary>…or build the binary</summary>
 

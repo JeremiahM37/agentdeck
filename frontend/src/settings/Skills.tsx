@@ -53,7 +53,13 @@ export function Skills({
       if (mine !== generation.current) return;
       setCatalog(a.skills || []);
       setAttached(b.attachments || []);
-      setStatus(`${(a.skills || []).length} available · ${(b.attachments || []).length} attached`);
+      const ordinarySkills = (a.skills || []).filter(
+        (skill) => !skill.id.startsWith("agentdeck-workflow/") && skill.source !== "agentdeck-bundled",
+      );
+      const ordinaryAttachments = (b.attachments || []).filter(
+        (attachment) => !attachment.source_id?.startsWith("agentdeck-bundled/"),
+      );
+      setStatus(`${ordinarySkills.length} available · ${ordinaryAttachments.length} attached`);
     } catch (e) {
       if (mine !== generation.current) return;
       setStatus(e instanceof Error ? e.message : String(e));
@@ -94,7 +100,10 @@ export function Skills({
       setBusy(false);
     }
   }
-  const ids = new Set(attached.map((a) => a.skill_id));
+  const ordinaryAttached = attached.filter(
+    (attachment) => !attachment.source_id?.startsWith("agentdeck-bundled/"),
+  );
+  const ids = new Set(ordinaryAttached.map((a) => a.skill_id));
   return (
     <section className="project-skills">
       <h4>Project skills</h4>
@@ -125,8 +134,8 @@ export function Skills({
         />
       </label>
       <h5>Attached</h5>
-      {!attached.length && <p>No skills attached for this provider.</p>}
-      {attached.map((a) => (
+      {!ordinaryAttached.length && <p>No skills attached for this provider.</p>}
+      {ordinaryAttached.map((a) => (
         <div className="attached-skill" key={a.id}>
           <b>{a.entry_name || a.skill_id}</b>
           <small>

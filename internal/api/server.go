@@ -97,6 +97,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/projects/{id}/skills", s.projectSkills)
 	mux.HandleFunc("POST /api/projects/{id}/skills", s.attachProjectSkill)
 	mux.HandleFunc("DELETE /api/projects/{id}/skills/{attachment_id}", s.detachProjectSkill)
+	mux.HandleFunc("GET /api/projects/{id}/workflows", s.projectWorkflows)
+	mux.HandleFunc("PUT /api/projects/{id}/workflows/{workflow_id}", s.putProjectWorkflow)
 	mux.HandleFunc("PUT /api/projects/{id}/mcp", s.putProjectMCP)
 	mux.HandleFunc("DELETE /api/projects/{id}", s.deleteProject)
 	mux.HandleFunc("GET /api/projects/usage", s.projectsUsage)

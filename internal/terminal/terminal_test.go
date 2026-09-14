@@ -273,12 +273,12 @@ func TestShellAttachOpensAPersistentSessionInTheRepo(t *testing.T) {
 		want   string
 	}{
 		"local": {&store.Target{Kind: "local"},
-			"tmux new-session -A -s adk-sh12 -c /srv/code ; set-option -w -t =adk-sh12: window-size smallest"},
+			"tmux new-session -A -s adk-sh12 -c /srv/code -- /bin/sh -c exec \"${SHELL:-/bin/sh}\" -i ; set-option -w -t =adk-sh12: window-size smallest"},
 		"pct": {&store.Target{Kind: "pct", Host: "104"},
-			"sudo pct exec 104 -- tmux new-session -A -s adk-sh12 -c /srv/code ; set-option -w -t =adk-sh12: window-size smallest"},
+			"sudo pct exec 104 -- tmux new-session -A -s adk-sh12 -c /srv/code -- /bin/sh -c exec \"${SHELL:-/bin/sh}\" -i ; set-option -w -t =adk-sh12: window-size smallest"},
 		"ssh": {&store.Target{Kind: "ssh", Host: "192.0.2.14", User: "claude"},
 			"ssh -tt -o StrictHostKeyChecking=accept-new claude@192.0.2.14 " +
-				"tmux new-session -A -s adk-sh12 -c /srv/code ';' set-option -w -t =adk-sh12: window-size smallest"},
+				"tmux new-session -A -s adk-sh12 -c /srv/code -- /bin/sh -c 'exec \"${SHELL:-/bin/sh}\" -i' ';' set-option -w -t =adk-sh12: window-size smallest"},
 	} {
 		got, err := AttachArgv(att, tc.target)
 		if err != nil {

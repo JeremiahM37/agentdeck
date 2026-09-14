@@ -145,7 +145,11 @@ func AttachArgv(a Attachment, target *store.Target) ([]string, error) {
 	// was half-typed, rather than starting over in a fresh directory.
 	inner := []string{"tmux", "attach", "-t", sess}
 	if a.IsShell() {
-		inner = []string{"tmux", "new-session", "-A", "-s", sess, "-c", a.Workdir}
+		// An empty command inherits tmux's default-command, which may launch an
+		// agent. Resolve SHELL on the target, not on the control-plane host, and
+		// pass a real shell explicitly for project and companion terminals.
+		inner = []string{"tmux", "new-session", "-A", "-s", sess, "-c", a.Workdir,
+			"--", "/bin/sh", "-c", `exec "${SHELL:-/bin/sh}" -i`}
 	}
 	// One pane has one grid. tmux's `latest` policy crops smaller clients around
 	// the cursor when a larger client joins, often showing only blank padding.

@@ -1,0 +1,118 @@
+{
+  "repository": "https://github.com/github/spec-kit",
+  "revision": "d848fb4e18f44640ad6b42e60a280551ee90cdce",
+  "license": "MIT",
+  "description": "Unmodified upstream files. AgentDeck adaptations are outside this upstream directory.",
+  "files": [
+    {
+      "path": "LICENSE",
+      "sha256": "2510b446bc1f0cf9702453075d20cd88631e20e5642658edb7325d9c1eb534f7",
+      "bytes": 1060
+    },
+    {
+      "path": "scripts/bash/check-prerequisites.sh",
+      "sha256": "5e5e3dbfe29d8ca0a6f06de80fb2042cd3d26f42cff475b3a097c4aa0d70f16d",
+      "bytes": 8313
+    },
+    {
+      "path": "scripts/bash/common.sh",
+      "sha256": "170e91ece502b88d83c715e427473843e0b358f550e86e3ff524546df405a9ca",
+      "bytes": 38444
+    },
+    {
+      "path": "scripts/bash/create-new-feature.sh",
+      "sha256": "9f7a741d9766a6c1c5d5e44368f2c6bea6026b399ff6f0055870f760afdb8726",
+      "bytes": 16466
+    },
+    {
+      "path": "scripts/bash/resolve-template.sh",
+      "sha256": "829e227096abc8bf0889889ec9f792f503ca5d395b7836a8a7eb739ee75214e7",
+      "bytes": 1547
+    },
+    {
+      "path": "scripts/bash/setup-plan.sh",
+      "sha256": "d0bd298c026446f3c63167130d65e49e4aa4485de6bef18bcdfd57b19aa0de96",
+      "bytes": 2540
+    },
+    {
+      "path": "scripts/bash/setup-tasks.sh",
+      "sha256": "0f7d7e996ed4a26ab7bf09bf10540366ee402b930a4a9cbc0ee7bc6a8bd0013b",
+      "bytes": 3609
+    },
+    {
+      "path": "templates/checklist-template.md",
+      "sha256": "c65b7f10aa9a965ea9c7f4e879d4ab0240665473731c5e9e638c4acb3ca9afc4",
+      "bytes": 2088
+    },
+    {
+      "path": "templates/commands/analyze.md",
+      "sha256": "ffe0640ebe778795737937f2d4ec6f0149d7d55b72692e25369a668f985d1dfe",
+      "bytes": 11764
+    },
+    {
+      "path": "templates/commands/checklist.md",
+      "sha256": "1192784f378fb977b408b72ca1bfb8fc55e129519f3f44bc5d0a7e152c480654",
+      "bytes": 22340
+    },
+    {
+      "path": "templates/commands/clarify.md",
+      "sha256": "9d8e5c5c29c22546a404c80ebcc63b20ebd7043f939c308cf868cb62344c1ee4",
+      "bytes": 19392
+    },
+    {
+      "path": "templates/commands/constitution.md",
+      "sha256": "a915ba6ae5fdbd499c143204eab3888b95a0ff0656e2c16b40282375acb5902c",
+      "bytes": 10329
+    },
+    {
+      "path": "templates/commands/converge.md",
+      "sha256": "35d0179071a125a0407f812a0100bcb7a446b8ff908accb3fa14fbd1371fa8cf",
+      "bytes": 12796
+    },
+    {
+      "path": "templates/commands/implement.md",
+      "sha256": "feab334232940cfd4ecbcdae41cf63ccb7d581a60380230837385f296f7b49bd",
+      "bytes": 12779
+    },
+    {
+      "path": "templates/commands/plan.md",
+      "sha256": "206a0386d20b3eed4c087a4d9de247a3e7b2b59348bf3c801fc74f63ca2726a5",
+      "bytes": 8047
+    },
+    {
+      "path": "templates/commands/specify.md",
+      "sha256": "7d5a88e6afa504f1d16503df6bf8664f30e3df812b83f9a456a2eaccaeb638ee",
+      "bytes": 18453
+    },
+    {
+      "path": "templates/commands/tasks.md",
+      "sha256": "2f9176c6e7c23d2a83d2bd018ffa1e67aee977389a57f2a3fe35fe987b425944",
+      "bytes": 11416
+    },
+    {
+      "path": "templates/commands/taskstoissues.md",
+      "sha256": "a4298d09f8737bb41abbad481589ecfa277cb222d042c7f244194a3b51828900",
+      "bytes": 7809
+    },
+    {
+      "path": "templates/constitution-template.md",
+      "sha256": "ce7549540fa45543cca797a150201d868e64495fdff39dc38246fb17bd4024b3",
+      "bytes": 2346
+    },
+    {
+      "path": "templates/plan-template.md",
+      "sha256": "dfba43da2b2a207ff8c177a0fba03af074fd45e261696b4b64172041fad2e992",
+      "bytes": 3770
+    },
+    {
+      "path": "templates/spec-template.md",
+      "sha256": "3945437fc35cd30a5b2bf7beea680337c3516826d3efa5a6b92c4a7eca1ba28e",
+      "bytes": 4556
+    },
+    {
+      "path": "templates/tasks-template.md",
+      "sha256": "1e448e9153462e8c5b5a55231a54c756d870a82950d4dd9425a2bf5b7008a0d9",
+      "bytes": 9182
+    }
+  ]
+}

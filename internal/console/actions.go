@@ -16,7 +16,7 @@ func (u *UI) item(kind, id string, row map[string]any) error {
 			"sessions":  "attach · shell · read · send · interrupt · upload · files · rename (edit) · handoff · wraps · promote · restore (tracking) · delete",
 			"tasks":     "attach · messages · send · upload · events · diff · dispatch · takeover · followup · complete · cancel · commit · cleanup · edit · delete",
 			"routines":  "run · enable · disable · edit · delete (running tasks appear in Tasks; choose takeover there)",
-			"projects":  "attach · brief · notes · wraps · capability · MCP settings (add / edit / remove) · skills (attach / detach) · edit · delete",
+			"projects":  "attach · shell · brief · notes · wraps · capability · MCP settings (add / edit / remove) · skills (attach / detach) · workflows (Spec Kit / Maestro) · edit · delete",
 			"targets":   "check · edit · delete",
 			"approvals": "allow · deny",
 		}
@@ -35,6 +35,10 @@ func (u *UI) item(kind, id string, row map[string]any) error {
 			e = u.mcpSettings(path)
 		case "skills":
 			e = u.skillsSettings(path, row)
+		case "workflows":
+			if kind == "projects" {
+				e = u.workflowSettings(path, row)
+			}
 		case "attach", "shell":
 			terminalKind := strings.TrimSuffix(kind, "s")
 			terminalID := id
@@ -55,7 +59,7 @@ func (u *UI) item(kind, id string, row map[string]any) error {
 				terminalID = fmt.Sprintf("%.0f", attempt["id"])
 				terminalKind = "attempt"
 			}
-			if pick == "shell" {
+			if pick == "shell" && kind != "projects" {
 				terminalKind += "-shell"
 			}
 			if u.Attach == nil {
