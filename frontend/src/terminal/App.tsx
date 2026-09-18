@@ -195,6 +195,7 @@ export function TerminalApp({
   const [historyPane, setHistoryPane] = useState("agent");
   const [previewPath, setPreviewPath] = useState<string>();
   const [search, setSearch] = useState(false);
+  const [toolsOpen, setToolsOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [matches, setMatches] = useState("");
   const [states, setStates] = useState<Record<string, Snapshot>>({});
@@ -211,6 +212,46 @@ export function TerminalApp({
   }, [externalNotice]);
   const current = () => engines.current.get(activeRef.current);
   const state = states[active];
+  // The toolbar clips its own dropdown (it scrolls horizontally, which clips
+  // vertically too), so the open menu is placed against the viewport instead.
+  // The compact layout already pins the menu to the screen edge; leave it alone.
+  const placeTools = useCallback(() => {
+    const details = tools.current,
+      panel = details?.querySelector<HTMLElement>(".action-menu-panel"),
+      summary = details?.querySelector("summary");
+    if (!details || !panel || !summary) return;
+    if (!details.open || document.body.classList.contains("compact-chrome")) {
+      details.classList.remove("menu-fixed");
+      return;
+    }
+    const anchor = summary.getBoundingClientRect(),
+      gap = 7,
+      edge = 8,
+      width = panel.offsetWidth || 230;
+    details.style.setProperty(
+      "--menu-left",
+      Math.round(
+        Math.max(edge, Math.min(anchor.right - width, innerWidth - width - edge)),
+      ) + "px",
+    );
+    details.style.setProperty("--menu-top", Math.round(anchor.bottom + gap) + "px");
+    details.style.setProperty(
+      "--menu-max-height",
+      Math.round(Math.max(140, innerHeight - anchor.bottom - gap - edge)) + "px",
+    );
+    details.classList.add("menu-fixed");
+  }, []);
+  useEffect(() => {
+    placeTools();
+    if (!toolsOpen) return;
+    const abort = new AbortController(),
+      signal = abort.signal;
+    addEventListener("resize", placeTools, { signal });
+    tools.current
+      ?.closest("nav")
+      ?.addEventListener("scroll", placeTools, { signal });
+    return () => abort.abort();
+  }, [toolsOpen, placeTools]);
   const showHistory = useCallback((pane: string) => {
     setHistoryPane(pane);
     setDialog("history");
@@ -550,7 +591,12 @@ export function TerminalApp({
         <a id="desktop" className="button" href={info?.desktop_uri}>
           Open in terminal
         </a>
-        <details id="terminal-tools" className="action-menu" ref={tools}>
+        <details
+          id="terminal-tools"
+          className="action-menu"
+          ref={tools}
+          onToggle={(event) => setToolsOpen(event.currentTarget.open)}
+        >
           <summary id="terminal-tools-summary">
             {state?.paused ? "Paused · Tools" : "Tools"}
           </summary>
