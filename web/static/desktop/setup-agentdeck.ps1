@@ -15,7 +15,7 @@ $sessionId = $Matches[2]
 # Launch a console application normally. Windows hosts it in the user's
 # default terminal application (Windows Terminal, Console Host, or another host).
 $ssh = (Get-Command ssh.exe -ErrorAction Stop).Source
-Start-Process -FilePath $ssh -ArgumentList @('-t','agentdeck','/usr/local/bin/agentdeck','attach',$kind,$sessionId)
+Start-Process -FilePath $ssh -ArgumentList @('-t','agentdeck','/usr/local/bin/agentdeck','--hosted-attach','attach',$kind,$sessionId)
 '@
 $launcherPath = Join-Path $installDir 'open-terminal.ps1'
 if (Test-Path $launcherPath) { Copy-Item $launcherPath ($launcherPath + '.bak') -Force }

@@ -1,3 +1,4 @@
+import json
 """Internal terminal navigation with actual ttyd, tmux, input and output."""
 import subprocess
 from playwright.sync_api import expect
@@ -100,3 +101,22 @@ def test_terminal_tabs_restore_and_fit_on_mobile(page,real_terminal):
     one.locator('#preview-dialog [data-close]').click()
     one.locator('#files-dialog [data-close]').click()
     page.screenshot(path='/tmp/agentdeck-in-app-terminal-mobile.png')
+
+
+def test_terminal_tabs_restore_in_a_fresh_browser_context(browser, real_terminal):
+    """A browser restart keeps the terminal views while the hosted tmux lives."""
+    t = real_terminal
+    seed = {"active": f"/terminal/session/{t['id']}",
+            "tabs": [{"path": f"/terminal/session/{t['id']}", "label": "Real terminal"}]}
+    with browser.new_context(viewport={"width": 1440, "height": 900}) as context:
+        value = json.dumps(json.dumps(seed))
+        context.add_init_script(
+            f"localStorage.setItem('adk-terminal-tabs-durable-v1', {value});"
+            "localStorage.setItem('adk-last-view', 'terminals');")
+        page = context.new_page()
+        page.goto(t['url'])
+        expect(page.locator('.tab[data-tab="terminals"]')).to_have_class('tab on')
+        expect(page.get_by_role('tab', name='Real terminal', exact=True)).to_have_attribute('aria-selected', 'true')
+        f = frame(page, t['id'])
+        ready(f)
+        page.close()

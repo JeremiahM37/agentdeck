@@ -22,9 +22,13 @@ def real_terminal(tmp_path, request):
     tmux_dir = tempfile.TemporaryDirectory(prefix='adkt-', dir='/tmp')
     env = {**os.environ, 'TMUX_TMPDIR': tmux_dir.name, 'TMUX': '', 'AGENTDECK_MOCK': '0',
            'AGENTDECK_DB': str(tmp_path/'test.db'), 'AGENTDECK_HOST': '127.0.0.1',
-           'AGENTDECK_GRIMOIRE_URL': '', 'AGENTDECK_AUTH_TOKEN': '', 'AGENTDECK_SESSION_POLL': '3600'}
+           'AGENTDECK_GRIMOIRE_URL': '', 'AGENTDECK_AUTH_TOKEN': '', 'AGENTDECK_SESSION_POLL': '3600',
+           'XDG_STATE_HOME': str(tmp_path/'state')}
     port = _unused_port(); env['AGENTDECK_PORT'] = str(port)
     url = f'http://127.0.0.1:{port}'
+    # Native attachment is a client command. Keep it pointed at this fixture's
+    # server after the CLI's no-API default became the private local runtime.
+    env['AGENTDECK_API'] = url
     root = tmp_path/'workspace'; root.mkdir()
     (root/'hello.txt').write_text('A useful artifact\n<script>window.bad=true</script>\n')
     subprocess.run(['git','init','-q',str(root)], check=True)

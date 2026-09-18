@@ -10,7 +10,7 @@ if (($#)); then
   attachment_kind=${BASH_REMATCH[1]}
   attachment_id=${BASH_REMATCH[2]}
   command=(env TERM=xterm-256color ssh -t -o StrictHostKeyChecking=yes agentdeck
-    /usr/local/bin/agentdeck attach "$attachment_kind" "$attachment_id")
+    /usr/local/bin/agentdeck --hosted-attach attach "$attachment_kind" "$attachment_id")
   # Ask the desktop first. No terminal brand, theme, font or scrollback override.
   if command -v xdg-terminal-exec >/dev/null; then
     exec xdg-terminal-exec -- "${command[@]}"

@@ -22,6 +22,22 @@ func TestNaming(t *testing.T) {
 	}
 }
 
+func TestNamespacedWorktreePathsAndBranches(t *testing.T) {
+	if got := NamespacedWorkroot("/srv/.agentdeck-worktrees", "local/runtime-1"); got != "/srv/.agentdeck-worktrees/local-runtime-1" {
+		t.Fatalf("namespaced workroot = %q", got)
+	}
+	if got := NamespacedBranch("adk/task1-a1", "local/runtime-1"); got != "adk/local-runtime-1/task1-a1" {
+		t.Fatalf("namespaced branch = %q", got)
+	}
+	if got := NamespacedWorkroot("/srv/.agentdeck-worktrees", ""); got != "/srv/.agentdeck-worktrees" {
+		t.Fatalf("empty namespace changed workroot: %q", got)
+	}
+	plan := PlanInteractive("/srv/app", 4, InteractiveOptions{Namespace: "local-a"})
+	if !strings.HasPrefix(plan.Path, "/srv/.agentdeck-worktrees/local-a/session4-") || !strings.HasPrefix(plan.Branch, "adk/local-a/session4-") {
+		t.Fatalf("interactive allocation was not namespaced: %q %q", plan.Path, plan.Branch)
+	}
+}
+
 func TestSplitPatchSingleFile(t *testing.T) {
 	files := SplitPatch(executor.MockDiff)
 	if len(files) != 1 || files[0].Path != "app.py" {

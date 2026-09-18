@@ -30,21 +30,62 @@ func attach(cfg *config.Config, args []string) error {
 	}
 	return syscall.Exec(binary, argv, os.Environ())
 }
+
+// hostedAttach is the server-side half of an SSH attachment. The generated
+// command carries this private marker so a hosted peer cannot interpret its
+// attachment as a fresh local-runtime request. It also ignores any inherited
+// client attachment/API environment and talks to the hosted loopback service.
+func hostedAttach(cfg *config.Config, args []string) error {
+	if len(args) < 1 || args[0] != "attach" {
+		return fmt.Errorf("usage: --hosted-attach attach KIND ID")
+	}
+	oldAPI, oldHost := os.Getenv("AGENTDECK_API"), os.Getenv("AGENTDECK_ATTACH_HOST")
+	_ = os.Unsetenv("AGENTDECK_API")
+	_ = os.Unsetenv("AGENTDECK_ATTACH_HOST")
+	defer func() {
+		if oldAPI != "" {
+			_ = os.Setenv("AGENTDECK_API", oldAPI)
+		}
+		if oldHost != "" {
+			_ = os.Setenv("AGENTDECK_ATTACH_HOST", oldHost)
+		}
+	}()
+	return attachAt(cfg, args[1:], "http://127.0.0.1:"+strconv.Itoa(cfg.Port), "")
+}
+
+func attachAt(cfg *config.Config, args []string, base, attachHost string) error {
+	argv, err := attachmentCommandAt(cfg, args, base, attachHost)
+	if err != nil {
+		return err
+	}
+	argv = attachmentInWorkspace(argv, os.Getenv("TMUX"))
+	binary, err := exec.LookPath(argv[0])
+	if err != nil {
+		return err
+	}
+	return syscall.Exec(binary, argv, os.Environ())
+}
 func attachmentCommand(cfg *config.Config, args []string) ([]string, error) {
+	return attachmentCommandAt(cfg, args, env("AGENTDECK_API", "http://127.0.0.1:"+strconv.Itoa(cfg.Port)), os.Getenv("AGENTDECK_ATTACH_HOST"))
+}
+
+func attachmentCommandAt(cfg *config.Config, args []string, base, attachHost string) ([]string, error) {
 	if err := validateTerminal(args, false); err != nil {
 		return nil, err
 	}
-	if host := os.Getenv("AGENTDECK_ATTACH_HOST"); host != "" {
+	if host := attachHost; host != "" {
 		if strings.HasPrefix(host, "-") || strings.ContainsAny(host, " \t\r\n") {
 			return nil, fmt.Errorf("invalid SSH alias")
 		}
 		// The SSH peer may not have the local emulator's terminfo (e.g. xterm-kitty).
 		// Scope a portable terminal type to this attachment, for both CLI entry points.
-		return []string{"env", "TERM=xterm-256color", "ssh", "-tt", host, "/usr/local/bin/agentdeck", "attach", args[0], args[1]}, nil
+		// The hosted peer must bypass the no-API local auto-start rule. This
+		// marker is handled only by the server-side binary and never comes from
+		// user input.
+		return []string{"env", "TERM=xterm-256color", "ssh", "-tt", host, "/usr/local/bin/agentdeck", "--hosted-attach", "attach", args[0], args[1]}, nil
 	}
 	// attach_argv contains paths on the control-plane host. Never execute it on
 	// a remote client where those paths name a different machine.
-	base := env("AGENTDECK_API", "http://127.0.0.1:"+strconv.Itoa(cfg.Port))
 	parsed, err := url.Parse(base)
 	if err != nil {
 		return nil, err

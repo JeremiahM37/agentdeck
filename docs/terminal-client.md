@@ -51,9 +51,17 @@ The server and client must use the same Linux architecture for this installer;
 other architectures can build the Go binary from source.
 
 For Windows, download `/desktop/install-agentdeck-cli.ps1` and run it with
-`-Server YOUR_SSH_ALIAS`. It installs an OpenSSH launcher on your user PATH;
-management runs on the server. `agentdeck upload` stages local files over SCP.
+`-Server YOUR_SSH_ALIAS` (and `-Api http://127.0.0.1:9110` when the server uses
+a non-default API address). It installs an OpenSSH launcher on your user PATH;
+management runs on the server with an explicit hosted API environment.
+`agentdeck upload` stages local files over SCP.
 The native Windows launcher requires OpenSSH, with your existing host/key setup.
+
+For a terminal workspace that runs entirely on the current computer, use the
+[standalone local installer](local.md) instead. It installs `agentdeck` (or
+`agentdeck-local` when the remote client already owns that name) and does not
+need a control-plane URL or SSH server; the remote installer above continues to
+install the `agentdeck` client.
 
 This client works in your existing terminal. The
 separate desktop URI installers enable opening an attachment from the web UI.

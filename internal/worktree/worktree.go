@@ -5,6 +5,7 @@ package worktree
 import (
 	"context"
 	"fmt"
+	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
@@ -33,6 +34,40 @@ func BranchName(taskID int64, attemptN int) string {
 // Path is where one attempt's worktree lives under a workroot.
 func Path(workroot string, taskID int64, attemptN int) string {
 	return fmt.Sprintf("%s/task%d-a%d", strings.TrimRight(workroot, "/"), taskID, attemptN)
+}
+
+// NamespacedWorkroot keeps automatically-created allocations from separate
+// control-plane instances out of one another's default directory.
+func NamespacedWorkroot(workroot, namespace string) string {
+	namespace = namespaceSlug(namespace)
+	if namespace == "" {
+		return workroot
+	}
+	return filepath.Join(strings.TrimRight(workroot, "/"), namespace)
+}
+
+// NamespacedBranch scopes an automatically-created branch to one runtime.
+func NamespacedBranch(branch, namespace string) string {
+	namespace = namespaceSlug(namespace)
+	if namespace == "" || branch == "" {
+		return branch
+	}
+	return "adk/" + namespace + "/" + strings.TrimPrefix(branch, "adk/")
+}
+
+func namespaceSlug(value string) string {
+	var b strings.Builder
+	for _, r := range strings.TrimSpace(value) {
+		if r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || r == '-' || r == '_' || r == '.' {
+			b.WriteRune(r)
+		} else if b.Len() > 0 && !strings.HasSuffix(b.String(), "-") {
+			b.WriteByte('-')
+		}
+		if b.Len() >= 80 {
+			break
+		}
+	}
+	return strings.Trim(b.String(), "-.")
 }
 
 // DefaultWorkroot puts worktrees beside the repo, not inside it.

@@ -84,10 +84,29 @@ LiteLLM, vLLM) to drive whatever model you run.
 docker compose -f deploy/docker-compose.yml up -d    # → http://localhost:9110
 ```
 
+For a terminal-only workspace on the same computer as your agent, install the
+standalone local command. It needs no hosted server, SSH alias, or Grimoire:
+
+```bash
+git clone https://github.com/JeremiahM37/agentdeck.git
+cd agentdeck
+bash tools/install-local.sh
+agentdeck local
+```
+
+Use `agentdeck-local` in that last command if the installer reported that the
+existing remote `agentdeck` launcher was kept.
+
+See [Standalone local AgentDeck](docs/local.md) for Linux, macOS, and WSL
+installation and the difference between local and remote operation.
+
 <details>
 <summary>…or build the binary</summary>
 
 ```bash
+npm ci --prefix frontend                  # Node 24 at build time
+npm run build --prefix frontend
+python3 frontend/scripts/stage.py
 go build -o agentdeck ./cmd/agentdeck
 ./agentdeck serve                          # → http://<host>:9110
 # In an interactive terminal, a bare `agentdeck` opens the terminal dashboard.

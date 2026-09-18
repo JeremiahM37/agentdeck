@@ -18,6 +18,9 @@ type Config struct {
 	Port    int
 	Host    string
 	BaseURL string // what a target uses to reach the control plane (hook callbacks)
+	// WorktreeNamespace scopes automatically-created local worktrees and
+	// branches to one durable local runtime. Empty preserves hosted behavior.
+	WorktreeNamespace string
 
 	// Mock swaps every executor for the scripted MockExecutor: no real git,
 	// tmux or agent binary. Powers the hermetic suite and the UI demo mode.

@@ -48,7 +48,7 @@ Because both views attach to the same tmux session, the inserted path appears
 in your terminal too. A native terminal drop alone may only insert a LOCAL filename.
 
 Manual connection (any SSH terminal):
-   ssh -t agentdeck /usr/local/bin/agentdeck attach session SESSION_ID
+   ssh -t agentdeck /usr/local/bin/agentdeck --hosted-attach attach session SESSION_ID
 Copy the exact command from the Desktop panel; tasks use attempt IDs.
 
 The browser's Split shell starts an independent persistent shell in the same
@@ -71,7 +71,7 @@ On the AgentDeck server: agentdeck console
 On Linux: download install-agentdeck-cli.sh from this directory, then:
   bash install-agentdeck-cli.sh --server agentdeck --api https://YOUR_SERVER:8443
 On Windows: download install-agentdeck-cli.ps1 and run in PowerShell:
-  powershell -ExecutionPolicy Bypass -File .\install-agentdeck-cli.ps1 -Server agentdeck
+  powershell -ExecutionPolicy Bypass -File .\install-agentdeck-cli.ps1 -Server agentdeck -Api http://127.0.0.1:9110
 
 Run agentdeck to open the console; agentdeck --help lists scripting commands.
 Manage sessions, tasks, routines, projects, targets, approvals and settings.
