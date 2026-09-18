@@ -17,6 +17,9 @@ Environment=AGENTDECK_BASE_URL=http://YOUR-SERVER-IP:9110
 # PATH — a probe reporting "codex: null" for an installed codex means this.
 Environment=PATH=/usr/local/bin:/usr/bin:/bin:/home/admin/.local/bin
 ExecStart=/usr/local/bin/agentdeck
+# tmux owns interactive agents independently; a web-service upgrade must not
+# terminate those sessions. The service drains its own HTTP/ttyd resources.
+KillMode=process
 Restart=on-failure
 RestartSec=5
 
