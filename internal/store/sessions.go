@@ -190,3 +190,41 @@ func (db *DB) InsertWrap(w *Wrap) (int64, error) {
 	}
 	return res.LastInsertId()
 }
+
+// ScratchSession is the little the scratch sweep needs from a session row: who
+// claims a directory, whether they still do, and whether a conversation was
+// ever recorded there.
+type ScratchSession struct {
+	ID        int64
+	TargetID  int64
+	Name      string
+	Agent     string
+	Workdir   string
+	ProjectID *int64
+	EndedAt   *float64
+	LastSeen  float64
+	ResumeID  string
+	NativeCID string
+}
+
+// ScratchSessions lists every session, ended ones included: an ended session is
+// what makes a directory's history knowable.
+func (db *DB) ScratchSessions() ([]*ScratchSession, error) {
+	rows, err := db.Query(`SELECT id,target_id,name,agent,workdir,project_id,ended_at,
+ MAX(COALESCE(ended_at,0),COALESCE(updated_at,0),COALESCE(last_activity_at,0),COALESCE(created_at,0)),
+ COALESCE(resume_id,''),COALESCE(native_recovery_cid,'') FROM sessions`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []*ScratchSession{}
+	for rows.Next() {
+		s := new(ScratchSession)
+		if err := rows.Scan(&s.ID, &s.TargetID, &s.Name, &s.Agent, &s.Workdir, &s.ProjectID, &s.EndedAt,
+			&s.LastSeen, &s.ResumeID, &s.NativeCID); err != nil {
+			return nil, err
+		}
+		out = append(out, s)
+	}
+	return out, rows.Err()
+}

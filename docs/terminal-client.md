@@ -156,6 +156,35 @@ that to work from another device.
 `AGENTDECK_MEDIA_DIR` moves the store (default: `agentdeck-media` beside the
 database) and `AGENTDECK_MEDIA_MAX_MB` caps one file (default 1024).
 
+## Scratch workspaces and the sweep
+
+Every blank shell and every session started without a project gets its own
+directory under the target's scratch root (`~/agentdeck-scratch`, or
+`AGENTDECK_SCRATCH_ROOT`). Once an hour the server sweeps them. A directory is
+removed only when all of this is true: no session is running in it, no session
+there belongs to a project, it holds no files and no commits, no conversation
+was recorded there, and it has been idle for `AGENTDECK_SCRATCH_DAYS` (default 7;
+`0` turns the sweep off).
+
+A conversation counts as work even when the directory is empty: Claude's
+history is looked up by directory, a session's recorded conversation identity is
+checked, and Codex's dated history is searched for the path. That last search is
+run only for directories that already pass every other test, and a search that
+fails counts as a hit. Symlinks are never followed, so a scratch name that now
+points at a promoted project is left alone.
+
+Removal is a move into `.trash` inside the scratch root (or
+`AGENTDECK_SCRATCH_TRASH`), purged after `AGENTDECK_SCRATCH_TRASH_DAYS` (default
+14). Anything the sweep will not decide — work that no project claims — is listed
+under **Sessions → Scratch workspaces**, where you keep it for good or discard it.
+
+```bash
+agentdeck api GET /scratch                       # what the sweep sees; changes nothing
+agentdeck api POST /scratch/sweep '{"dry_run":true}'
+agentdeck api POST /scratch/keep '{"target_id":1,"name":"shell-20260918-qfEK6Y"}'
+agentdeck api POST /scratch/discard '{"target_id":1,"name":"codex-20260909-Y7AYgu"}'
+```
+
 ## Project skills
 
 Claude and Codex can discover skills on the selected target and attach them to a

@@ -32,7 +32,12 @@ type Config struct {
 	ApprovalPoll   time.Duration
 	ApprovalExpire time.Duration
 	JanitorDays    float64
-	MockAgentDelay time.Duration
+	// ScratchDays is how long an empty, unowned scratch workspace sits idle
+	// before the sweep trashes it (0 disables the sweep); ScratchTrashDays is how
+	// long it stays recoverable after that.
+	ScratchDays      float64
+	ScratchTrashDays float64
+	MockAgentDelay   time.Duration
 
 	VAPIDPrivateKey string
 	VAPIDPublicKey  string
@@ -147,6 +152,8 @@ func Load() *Config {
 		ApprovalPoll:            envSeconds("AGENTDECK_APPROVAL_POLL", 25),
 		ApprovalExpire:          envSeconds("AGENTDECK_APPROVAL_EXPIRE", 900),
 		JanitorDays:             envFloat("AGENTDECK_JANITOR_DAYS", 7),
+		ScratchDays:             envFloat("AGENTDECK_SCRATCH_DAYS", 7),
+		ScratchTrashDays:        envFloat("AGENTDECK_SCRATCH_TRASH_DAYS", 14),
 		MockAgentDelay:          envSeconds("AGENTDECK_MOCK_DELAY", 0.4),
 		VAPIDPrivateKey:         os.Getenv("AGENTDECK_VAPID_PRIVATE"),
 		VAPIDPublicKey:          os.Getenv("AGENTDECK_VAPID_PUBLIC"),

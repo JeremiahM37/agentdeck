@@ -27,6 +27,7 @@ import (
 	"github.com/JeremiahM37/agentdeck/internal/executor"
 	"github.com/JeremiahM37/agentdeck/internal/memory"
 	"github.com/JeremiahM37/agentdeck/internal/sandbox"
+	"github.com/JeremiahM37/agentdeck/internal/scratch"
 	"github.com/JeremiahM37/agentdeck/internal/sinks"
 	"github.com/JeremiahM37/agentdeck/internal/skills"
 	"github.com/JeremiahM37/agentdeck/internal/state"
@@ -143,6 +144,15 @@ func (s *Scheduler) Stop() {
 	<-s.done
 }
 
+// Scratch is the sweep over throwaway workspaces, configured as the server is.
+func (s *Scheduler) Scratch() *scratch.Sweeper {
+	trash := s.Cfg.ScratchTrashDays
+	if trash <= 0 {
+		trash = 14
+	}
+	return &scratch.Sweeper{DB: s.DB, Reg: s.Reg, Log: s.Log, Days: s.Cfg.ScratchDays, TrashDays: trash}
+}
+
 // Tick is one scheduling pass. Exported so tests can drive it deterministically.
 func (s *Scheduler) Tick(ctx context.Context) {
 	s.ProcessTakeovers(ctx)
@@ -150,6 +160,12 @@ func (s *Scheduler) Tick(ctx context.Context) {
 		s.lastJanitor = store.Now()
 		if _, err := s.Janitor(ctx, s.Cfg.JanitorDays); err != nil {
 			s.Log.Error("janitor sweep failed", "err", err)
+		}
+		// The scripted mock target has no filesystem to sweep.
+		if s.Cfg.ScratchDays > 0 && !s.Cfg.Mock {
+			if _, err := s.Scratch().Sweep(ctx, false, 0); err != nil {
+				s.Log.Error("scratch sweep failed", "err", err)
+			}
 		}
 	}
 	if s.Sessions != nil && store.Now()-s.lastSessionPoll >= s.Cfg.SessionPoll.Seconds() {

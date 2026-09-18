@@ -1,3 +1,4 @@
+import { ScratchReview } from "./ScratchReview";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type {
   InteractiveWorkspace,
@@ -579,6 +580,7 @@ export function Sessions({
           <pre>{archiveText.text || "No terminal output was available."}</pre>
         </Modal>
       )}
+      <ScratchReview api={api} onNotice={onNotice} />
     </section>
   );
 }

@@ -37,6 +37,12 @@ def real_terminal(tmp_path, request):
     subprocess.run(['git','init','-q',str(root)], check=True)
     subprocess.run(['tmux','-f','/dev/null','new-session','-d','-s','terminal-test','-c',str(root),'bash','--norc'],env=env,check=True, capture_output=True, text=True)
     options = getattr(request, 'param', {})
+    if options.get('isolated_scratch'):
+        # The scratch sweep inspects and removes directories under the target's
+        # home. Give it a home of its own, so nothing it does can reach the real
+        # one on the machine running the suite.
+        for key, name in (('AGENTDECK_SCRATCH_ROOT','scratch'),('CLAUDE_CONFIG_DIR','claude-home'),('CODEX_HOME','codex-home')):
+            (tmp_path/name).mkdir(); env[key] = str(tmp_path/name)
     if options.get('no_alternate_screen'):
         subprocess.run(['tmux','set-option','-g','terminal-overrides',',*:smcup@:rmcup@'],env=env,check=True)
     if options.get('agent_script'):
