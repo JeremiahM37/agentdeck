@@ -1,0 +1,29 @@
+/// <reference lib="webworker" />
+const worker=self as unknown as ServiceWorkerGlobalScope;
+declare const __CACHE_NAME__:string;
+declare const __STATIC_ASSETS__:string[];
+const CACHE=__CACHE_NAME__;
+worker.addEventListener('install',event=>event.waitUntil((async()=>{await(await caches.open(CACHE)).addAll(__STATIC_ASSETS__);await worker.skipWaiting();})()));
+worker.addEventListener('activate',event=>event.waitUntil((async()=>{await Promise.all((await caches.keys()).filter(key=>key.startsWith('agentdeck-')&&key!==CACHE).map(key=>caches.delete(key)));await worker.clients.claim();})()));
+worker.addEventListener('fetch',event=>{
+ const request=event.request,url=new URL(request.url);
+ if(request.method!=='GET'||url.origin!==worker.location.origin||/^\/(api|term|terminal)\//.test(url.pathname))return;
+ const immutable=url.pathname.startsWith('/react/assets/')||url.pathname.startsWith('/fonts/')||url.pathname==='/icon.svg';
+ event.respondWith((async()=>{
+  const cache=await caches.open(CACHE);
+  if(immutable){const cached=await cache.match(request);if(cached)return cached;}
+  try{const response=await fetch(request);if(response.ok)await cache.put(request,response.clone());return response;}
+  catch{return await cache.match(request)||(request.mode==='navigate'?await cache.match('/'):undefined)||new Response('AgentDeck is offline',{status:503});}
+ })());
+});
+interface PushData {title?:string;body?:string;url?:string;kind?:string}
+worker.addEventListener('push',event=>{
+ let data:PushData={};try{data=event.data?.json() as PushData||{};}catch{}
+ const options:NotificationOptions & {actions:{action:string;title:string}[]}={body:data.body||'',icon:'/icon.svg',badge:'/icon.svg',data:{url:data.url||'/'},actions:data.kind==='approval'?[{action:'open',title:'Review'}]:[]};
+ event.waitUntil(worker.registration.showNotification(data.title||'agentdeck',options));
+});
+worker.addEventListener('notificationclick',event=>{
+ event.notification.close();const data=event.notification.data as {url?:string}|undefined;let url=new URL(data?.url||'/',worker.location.origin);if(url.origin!==worker.location.origin)url=new URL('/',worker.location.origin);
+ event.waitUntil((async()=>{const windows=await worker.clients.matchAll({type:'window',includeUncontrolled:true});const app=windows[0];if(app){await app.navigate(url.href);await app.focus();}else await worker.clients.openWindow(url.href);})());
+});
+export {};

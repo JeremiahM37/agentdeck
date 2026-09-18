@@ -11,6 +11,16 @@ options:
     viewport: [1280, 800]
 
 steps:
+  - name: React frontend builds and stages
+    actions:
+      - shell: npm test --prefix frontend
+      - shell:
+          cmd: flock /tmp/agentdeck-react-build.lock -c 'npm run build --prefix frontend && python3 frontend/scripts/stage.py'
+          timeout: 180
+      - shell: test -s web/index.html -a -s web/static/terminal.html -a -s web/static/sw.js -a -n "$(find web/static/react/assets -type f -print -quit)"
+    expect:
+      no_log_contains: "error TS"
+
   - name: go suite passes
     actions:
       - shell: go test ./... -count=1

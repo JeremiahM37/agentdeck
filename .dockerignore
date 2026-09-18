@@ -1,0 +1,12 @@
+.git
+.venv
+.pytest_cache
+.verify-artifacts
+frontend/node_modules
+frontend/dist
+agentdeck.db*
+agentdeck-diffs
+.agentdeck-worktrees
+smoke-repo
+**/__pycache__
+*.env

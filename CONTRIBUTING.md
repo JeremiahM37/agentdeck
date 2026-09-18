@@ -3,6 +3,9 @@
 ## Dev setup
 
 ```bash
+npm ci --prefix frontend                          # Node 24
+npm run build --prefix frontend
+python3 frontend/scripts/stage.py                  # refresh Go embeds
 go build ./...                                     # Go 1.25+
 pip install pytest playwright pyte==0.8.2 && playwright install chromium   # for the e2e suite
 ```
@@ -55,5 +58,9 @@ first. Key seams to respect:
 
 - Explicit `.verify.yaml` + hermetic tests over mocking internals.
 - Secrets never in the repo — config via environment (see `internal/config/`).
-- Vanilla ES modules in `web/`, no build step. Everything is embedded in the
-  binary, so a deploy is one file.
+- React and strict TypeScript source lives in `frontend/src/`. Run the frontend
+  build and staging script after edits, before rebuilding or testing Go.
+  Generated assets, app/terminal HTML and the content-versioned service worker
+  are embedded in the binary; deployment still needs only that binary.
+- `npm run dev --prefix frontend` is a frontend-only development server.
+  Use a staged Go build for API, authentication, terminal and offline checks.

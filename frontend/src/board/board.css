@@ -1,0 +1,25 @@
+.sheet {
+  box-sizing: border-box;
+  width: min(760px, calc(100vw - 24px));
+  max-height: calc(100dvh - 24px);
+  margin: auto 0 0 auto;
+  padding: 20px;
+  overflow: auto;
+  color: inherit;
+  background: var(--panel, #111827);
+  border: 1px solid var(--border, #334155);
+  border-radius: 16px 16px 0 0;
+}
+.sheet::backdrop { background: rgb(0 0 0 / 58%); }
+.sheet-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; position: sticky; top: -20px; z-index: 2; padding: 12px 0; background: inherit; }
+.sheet-head h2 { margin: 0; }
+.sheet label { display: grid; gap: 5px; margin: 10px 0; }
+.sheet input, .sheet select, .sheet textarea { box-sizing: border-box; max-width: 100%; }
+.task-detail { width: min(900px, calc(100vw - 24px)); }
+.board-column { display: contents; }
+#rt-list { min-height: 1px; }
+@media (max-width: 700px) {
+  #board .col.mobile-off { display: none; }
+  #board .col.mobile-on { display: flex; width: 100%; min-width: 0; }
+  .sheet { width: 100vw; max-height: 92dvh; border-radius: 16px 16px 0 0; }
+}

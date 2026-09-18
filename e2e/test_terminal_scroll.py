@@ -141,24 +141,19 @@ def test_middle_autoscroll_reads_history_and_returns_live(page,real_terminal,can
 
 @pytest.mark.parametrize('real_terminal',[{'no_alternate_screen':True}],indirect=True)
 def test_middle_autoscroll_moves_normal_terminal_buffer(page,real_terminal):
-    page.add_init_script('''let Constructor;
-      Object.defineProperty(window,'Terminal',{configurable:true,
-        get(){return Constructor},set(Base){Constructor=class extends Base {
-          constructor(...args){super(...args);window.testTerminal=this;}
-        };}});''')
     open_terminal(page,real_terminal)
     # Pace output so tmux sends scroll operations rather than coalescing the
     # whole burst into one screen redraw with little client-side scrollback.
     type_command(page,'for i in $(seq 1 120); do echo BUFFER-LINE-$i; sleep 0.02; done')
     expect(page.locator('#agent-terminal .xterm-screen')).to_contain_text('BUFFER-LINE-120')
-    base=page.evaluate('window.testTerminal.buffer.active.baseY')
-    assert base>20
+    base=page.locator('#agent-terminal .xterm-viewport').evaluate('(viewport)=>viewport.scrollTop')
+    assert base>200
     box=page.locator('#agent-terminal').bounding_box()
     x=box['x']+box['width']/2;y=box['y']+box['height']/2
     page.mouse.click(x,y,button='middle');page.mouse.move(x,y-150)
-    page.wait_for_function('(base)=>window.testTerminal.buffer.active.viewportY<base-10',arg=base)
+    page.wait_for_function('(base)=>document.querySelector("#agent-terminal .xterm-viewport").scrollTop<base-100',arg=base)
     page.mouse.move(x,y+200)
-    page.wait_for_function('window.testTerminal.buffer.active.viewportY===window.testTerminal.buffer.active.baseY')
+    page.wait_for_function('(()=>{const v=document.querySelector("#agent-terminal .xterm-viewport");return v.scrollTop>=v.scrollHeight-v.clientHeight-2})()')
     page.keyboard.press('Escape')
     expect(page.locator('.terminal-autoscroll-marker')).to_have_count(0)
     expect(page.locator('.frozen')).not_to_be_visible()

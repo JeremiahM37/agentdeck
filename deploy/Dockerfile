@@ -1,9 +1,22 @@
+# React/TypeScript is compiled during the image build; Node is not shipped.
+FROM node:24-bookworm AS frontend
+WORKDIR /src/frontend
+COPY frontend/package.json frontend/package-lock.json ./
+RUN npm ci
+COPY frontend/ ./
+COPY web/ /src/web/
+RUN npm run build
+
 # Build the control plane, then ship a single static binary.
 FROM golang:1.25-bookworm AS build
 WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
+COPY --from=frontend /src/frontend/dist/assets /src/web/static/react/assets
+COPY --from=frontend /src/frontend/dist/index.html /src/web/index.html
+COPY --from=frontend /src/frontend/dist/terminal.html /src/web/static/terminal.html
+COPY --from=frontend /src/frontend/dist/sw.js /src/web/static/sw.js
 # CGO off: modernc.org/sqlite is pure Go, so the result runs on any base image
 RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/agentdeck ./cmd/agentdeck
 
