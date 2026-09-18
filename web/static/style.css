@@ -739,6 +739,19 @@ body.terminals-open { overflow: hidden; }
 /* A drag that crosses a frame would otherwise be swallowed by it. */
 .terminal-panels.resizing .terminal-tabpanel { pointer-events:none; }
 .terminal-panels.resizing { user-select:none; }
+/* New terminal: one press for the default machine, the caret for any other. */
+.terminal-new { position:relative; display:flex; flex:none; border:1px solid var(--line-2); border-radius:8px; background:var(--panel); }
+.terminal-new-main, .terminal-new-machines>summary { border:0; background:transparent; color:var(--accent-soft); min-height:40px; font-size:12.5px; cursor:pointer; white-space:nowrap; }
+.terminal-new-main { padding:9px 12px; border-radius:8px 0 0 8px; }
+.terminal-new-main:only-child { border-radius:8px; }
+.terminal-new-main:disabled { opacity:.6; cursor:default; }
+.terminal-new-machines>summary { list-style:none; display:flex; align-items:center; padding:0 10px; border-left:1px solid var(--line-2); border-radius:0 8px 8px 0; }
+.terminal-new-machines>summary::-webkit-details-marker { display:none; }
+.terminal-new-main:hover:not(:disabled), .terminal-new-machines>summary:hover { background:var(--panel-2); }
+.terminal-new-machines>.terminal-actions-panel { max-height:60vh; overflow-y:auto; }
+.terminal-empty .terminal-new-machines>.terminal-actions-panel { left:0; right:auto; }
+@media(max-width:1023px) { .terminal-tabbar .terminal-new-label { display:none; } .terminal-tabbar .terminal-new-main { padding:9px 13px; font-size:16px; } }
+.terminal-empty-actions { display:flex; flex-wrap:wrap; gap:10px; align-items:center; }
 .terminal-split { flex:none; white-space:nowrap; color:var(--ink-dim); background:var(--panel); border:1px solid var(--line-2); border-radius:8px; padding:9px 12px; font-size:12.5px; min-height:40px; cursor:pointer; }
 .terminal-split[aria-pressed="true"] { color:var(--accent-soft); border-color:var(--accent-soft); background:var(--accent-wash); }
 .terminal-split:disabled { opacity:.45; cursor:default; }

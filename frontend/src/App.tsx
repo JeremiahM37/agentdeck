@@ -164,6 +164,24 @@ export default function App() {
     },
     [api, openTerminal, sessions, notice],
   );
+  const newTerminal = useCallback(
+    async (machineID?: number) => {
+      try {
+        const shell = await api.request<SessionView>("/shells", {
+          method: "POST",
+          body: machineID ? { target_id: machineID } : {},
+        });
+        const response = await api.request<{ url: string }>(
+          `/sessions/${shell.id}/terminal`,
+          { method: "POST" },
+        );
+        openTerminal(response.url, shell.name);
+      } catch (error) {
+        notice(String(error), true);
+      }
+    },
+    [api, openTerminal, notice],
+  );
   const openTask = useCallback(
     (id: number) => {
       setOpenTaskId(id);
@@ -618,6 +636,8 @@ export default function App() {
       <TerminalTabs
         controller={terminals}
         visible={view === "terminals"}
+        machines={targets}
+        onNew={newTerminal}
         onBrowse={() => navigate("#sessions")}
         onSearch={() => setPalette(true)}
       />

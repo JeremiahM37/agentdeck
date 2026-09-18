@@ -1,7 +1,7 @@
 /// <reference lib="webworker" />
 const worker = self;
-const CACHE = "agentdeck-react-c30351a07040";
-worker.addEventListener('install', event => event.waitUntil((async () => { await (await caches.open(CACHE)).addAll(["/","/icon.svg","/manifest.webmanifest","/fonts.css","/fonts/inter-latin.woff2","/fonts/inter-latin-ext.woff2","/react/assets/Review-DBxyHbgk.js","/react/assets/Review-DR5PCwew.css","/react/assets/app-BJFW1oRP.js","/react/assets/app-PZgVnwdg.css","/react/assets/terminal-CabX5hnp.css","/react/assets/terminal-jA1qsufg.js"]); await worker.skipWaiting(); })()));
+const CACHE = "agentdeck-react-f8b22fdec606";
+worker.addEventListener('install', event => event.waitUntil((async () => { await (await caches.open(CACHE)).addAll(["/","/icon.svg","/manifest.webmanifest","/fonts.css","/fonts/inter-latin.woff2","/fonts/inter-latin-ext.woff2","/react/assets/Review-DBxyHbgk.js","/react/assets/Review-DR5PCwew.css","/react/assets/app-BbP9lZB7.css","/react/assets/app-Xb4xNT73.js","/react/assets/terminal-CabX5hnp.css","/react/assets/terminal-jA1qsufg.js"]); await worker.skipWaiting(); })()));
 worker.addEventListener('activate', event => event.waitUntil((async () => { await Promise.all((await caches.keys()).filter(key => key.startsWith('agentdeck-') && key !== CACHE).map(key => caches.delete(key))); await worker.clients.claim(); })()));
 worker.addEventListener('fetch', event => {
     const request = event.request, url = new URL(request.url);
