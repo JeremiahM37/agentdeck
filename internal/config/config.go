@@ -75,6 +75,10 @@ type Config struct {
 	// separate from TickInterval because a session poll costs one exec per
 	// target, whether or not anything is dispatched.
 	SessionPoll time.Duration
+
+	// MediaPath overrides MediaDir; MediaMaxBytes caps one posted file.
+	MediaPath     string
+	MediaMaxBytes int64
 }
 
 // DiffDir is where captured patches live — derived from the DB path so each
@@ -83,6 +87,26 @@ type Config struct {
 // production diffs.
 func (c *Config) DiffDir() string {
 	return filepath.Join(filepath.Dir(c.DBPath), "agentdeck-diffs")
+}
+
+// MediaDir holds what agents post back for the operator to look at: recordings,
+// screenshots, reports. It sits beside the database for the same reason DiffDir
+// does, but is overridable because a demo video is far larger than a patch and
+// an operator may want it on a bulk volume.
+func (c *Config) MediaDir() string {
+	if c.MediaPath != "" {
+		return c.MediaPath
+	}
+	return filepath.Join(filepath.Dir(c.DBPath), "agentdeck-media")
+}
+
+// MediaLimit is the largest single file an agent may post. A Config built by
+// hand, as tests do, gets the same default Load applies.
+func (c *Config) MediaLimit() int64 {
+	if c.MediaMaxBytes > 0 {
+		return c.MediaMaxBytes
+	}
+	return 1 << 30
 }
 
 func env(key, def string) string {
@@ -116,6 +140,8 @@ func Load() *Config {
 		Port:                    port,
 		Host:                    env("AGENTDECK_HOST", "0.0.0.0"),
 		Mock:                    os.Getenv("AGENTDECK_MOCK") == "1",
+		MediaPath:               os.Getenv("AGENTDECK_MEDIA_DIR"),
+		MediaMaxBytes:           int64(envFloat("AGENTDECK_MEDIA_MAX_MB", 1024)) << 20,
 		AuthToken:               os.Getenv("AGENTDECK_AUTH_TOKEN"),
 		TickInterval:            envSeconds("AGENTDECK_TICK", 2.0),
 		ApprovalPoll:            envSeconds("AGENTDECK_APPROVAL_POLL", 25),

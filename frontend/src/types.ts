@@ -225,3 +225,18 @@ export interface Wrap {
   next_session_id: number | null;
   created_at: number;
 }
+
+export interface Media {
+  id: number;
+  session_id: number | null;
+  kind: "file" | "link";
+  title: string;
+  note: string;
+  name: string;
+  mime: string;
+  size: number;
+  url: string;
+  source: string;
+  created_at: number;
+  session_name?: string;
+}

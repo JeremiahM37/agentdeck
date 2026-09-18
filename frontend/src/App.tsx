@@ -1,6 +1,14 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { authToken, createDeckApi, withToken } from "./api";
-import type { Approval, Project, SessionView, Target, TaskView } from "./types";
+import type {
+  Approval,
+  Media as MediaRow,
+  Project,
+  SessionView,
+  Target,
+  TaskView,
+} from "./types";
+import { Media } from "./media/Media";
 import { Board } from "./board/Board";
 import { Sessions } from "./sessions/Sessions";
 import { Conversation } from "./sessions/Conversation";
@@ -17,6 +25,7 @@ const tabs = [
   "board",
   "sessions",
   "terminals",
+  "media",
   "deck",
   "approvals",
   "targets",
@@ -26,12 +35,18 @@ const labels: Record<Tab, string> = {
   board: "Board",
   sessions: "Sessions",
   terminals: "Terminals",
+  media: "Media",
   deck: "Deck",
   approvals: "Approvals",
   targets: "Settings",
 };
 const isTab = (value: string): value is Tab =>
   tabs.some((tab) => tab === value);
+// #media/<session id> narrows the feed to one session's posts.
+const mediaSessionOf = (hash: string) => {
+  const match = /^#?media\/([1-9]\d*)$/.exec(hash);
+  return match ? Number(match[1]) : null;
+};
 export default function App() {
   const [view, setView] = useState<Tab>("board"),
     [projects, setProjects] = useState<Project[]>([]),
@@ -39,6 +54,8 @@ export default function App() {
     [tasks, setTasks] = useState<TaskView[]>([]),
     [sessions, setSessions] = useState<SessionView[]>([]),
     [approvals, setApprovals] = useState<Approval[]>([]),
+    [media, setMedia] = useState<MediaRow[]>([]),
+    [mediaSession, setMediaSession] = useState<number | null>(null),
     [version, setVersion] = useState(0),
     [connected, setConnected] = useState(false),
     [palette, setPalette] = useState(false),
@@ -89,6 +106,7 @@ export default function App() {
     const kind = hash.replace(/^#/, "").split("/")[0] || "board";
     if (isTab(kind)) {
       setView(kind);
+      if (kind === "media") setMediaSession(mediaSessionOf(hash));
       try {
         localStorage.setItem("adk-last-view", kind);
       } catch {}
@@ -96,6 +114,13 @@ export default function App() {
     }
   }, []);
   const terminals = useTerminalTabs(navigate);
+  const mediaCounts = useMemo(() => {
+    const counts: Record<number, number> = {};
+    for (const row of media)
+      if (row.session_id != null)
+        counts[row.session_id] = (counts[row.session_id] || 0) + 1;
+    return counts;
+  }, [media]);
   const refresh = useCallback(async () => {
     const generation = ++refreshGeneration.current;
     const results = await Promise.allSettled([
@@ -104,14 +129,16 @@ export default function App() {
       api.tasks(),
       api.request<SessionView[]>("/sessions?include_setup_failures=true"),
       api.request<Approval[]>("/approvals?status=pending"),
+      api.request<MediaRow[]>("/media?limit=200"),
     ]);
     if (generation !== refreshGeneration.current) return;
-    const [p, t, j, s, a] = results;
+    const [p, t, j, s, a, m] = results;
     if (p.status === "fulfilled") setProjects(p.value);
     if (t.status === "fulfilled") setTargets(t.value);
     if (j.status === "fulfilled") setTasks(j.value);
     if (s.status === "fulfilled") setSessions(s.value);
     if (a.status === "fulfilled") setApprovals(a.value);
+    if (m.status === "fulfilled") setMedia(m.value);
     setVersion((old) => old + 1);
     const failed = results.find((result) => result.status === "rejected");
     if (failed?.status === "rejected") throw failed.reason;
@@ -188,6 +215,7 @@ export default function App() {
       }
       if (kind && isTab(kind)) {
         setView(kind);
+        if (kind === "media") setMediaSession(mediaSessionOf(raw));
         return;
       }
       let saved = "board";
@@ -227,6 +255,8 @@ export default function App() {
       "session",
       "session_dismissed",
       "task_deleted",
+      "media",
+      "media_deleted",
     ])
       stream.addEventListener(event, update);
     stream.addEventListener("session_handoff", (event) => {
@@ -540,8 +570,22 @@ export default function App() {
             }
             projects={projects}
             targets={targets}
+            mediaCounts={mediaCounts}
+            onMedia={(id) => navigate("#media/" + id)}
             onOpenTerminal={openTerminal}
             onReview={setReview}
+            onNotice={notice}
+          />
+        )}{" "}
+        {view === "media" && (
+          <Media
+            api={api}
+            rows={media}
+            sessionFilter={mediaSession}
+            onFilter={(id) => navigate(id == null ? "#media" : "#media/" + id)}
+            onChanged={() =>
+              void refresh().catch((error) => notice(String(error), true))
+            }
             onNotice={notice}
           />
         )}{" "}
@@ -621,6 +665,11 @@ export default function App() {
                 {terminals.tabs.length}
               </b>
             )}
+            {tab === "media" && (
+              <b id="media-badge" className="badge dim" hidden={!media.length}>
+                {media.length}
+              </b>
+            )}
             {tab === "approvals" && (
               <b id="appr-badge" className="badge" hidden={!approvals.length}>
                 {approvals.length}
@@ -630,7 +679,7 @@ export default function App() {
         ))}
         <details
           id="nav-overflow"
-          className={`action-menu ${["deck", "approvals", "targets"].includes(view) ? "on" : ""}`}
+          className={`action-menu ${["media", "deck", "approvals", "targets"].includes(view) ? "on" : ""}`}
         >
           <summary aria-label="More pages">
             <span aria-hidden="true">···</span>More
@@ -639,7 +688,7 @@ export default function App() {
             </b>
           </summary>
           <div className="action-menu-panel">
-            {(["deck", "approvals", "targets"] as const).map((tab) => (
+            {(["media", "deck", "approvals", "targets"] as const).map((tab) => (
               <button
                 key={tab}
                 data-nav-target={tab}
