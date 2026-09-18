@@ -607,6 +607,18 @@ dialog {
   bottom: calc(100% + 6px);
 }
 
+/* The embedded toolbar scrolls horizontally, and an overflow container clips on
+   both axes — so an absolutely positioned menu is cut off at the toolbar's own
+   height and disappears behind the terminal. Coordinates measured as the menu
+   opens let it escape that clip and sit over the panes. */
+.action-menu.menu-fixed > .action-menu-panel {
+  position: fixed;
+  left: var(--menu-left);
+  top: var(--menu-top);
+  right: auto;
+  max-height: var(--menu-max-height);
+}
+
 nav > a.button {
   text-decoration: none;
   display: inline-flex;
