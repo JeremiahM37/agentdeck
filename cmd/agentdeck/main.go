@@ -50,9 +50,9 @@ func main() {
 		return
 	}
 	// An agent launched by a hosted server inherits that server's
-	// AGENTDECK_BASE_URL but no AGENTDECK_API. Its MCP tools belong on the board
-	// that launched it, not in a private runtime nobody is watching.
-	if len(os.Args) > 1 && os.Args[1] == "mcp" &&
+	// AGENTDECK_BASE_URL but no AGENTDECK_API. Its MCP tools and posts belong on
+	// the board that launched it, not in a private runtime nobody is watching.
+	if len(os.Args) > 1 && (os.Args[1] == "mcp" || os.Args[1] == "post") &&
 		strings.TrimSpace(os.Getenv("AGENTDECK_API")) == "" {
 		if hosted := strings.TrimSpace(os.Getenv("AGENTDECK_BASE_URL")); hosted != "" {
 			_ = os.Setenv("AGENTDECK_API", hosted)
@@ -75,7 +75,7 @@ func main() {
 
 	if len(os.Args) > 1 {
 		switch os.Args[1] {
-		case "console", "tui", "api", "agent", "upload", "files", "download", "skill", "help", "--help", "-h":
+		case "console", "tui", "api", "agent", "upload", "files", "download", "post", "skill", "help", "--help", "-h":
 			var err error
 			if explicitRemote || os.Args[1] == "help" || os.Args[1] == "--help" || os.Args[1] == "-h" {
 				err = clientCommand(cfg, os.Args[1], os.Args[2:])

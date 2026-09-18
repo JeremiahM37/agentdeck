@@ -15,7 +15,7 @@ import (
 
 var localClientCommands = map[string]bool{
 	"console": true, "tui": true, "api": true, "agent": true,
-	"upload": true, "files": true, "download": true, "skill": true,
+	"upload": true, "files": true, "download": true, "post": true, "skill": true,
 	"attach": true, "mcp": true,
 }
 

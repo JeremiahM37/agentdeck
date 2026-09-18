@@ -149,6 +149,21 @@ CREATE TABLE IF NOT EXISTS session_wraps(
   next_session_id INTEGER, created_at REAL
 );
 CREATE INDEX IF NOT EXISTS idx_wraps_project ON session_wraps(project_id);
+-- Media is what an agent posts back for the operator to look at: a recording of
+-- the feature working, a screenshot, a report, a link to the server it started.
+-- The bytes live in the media directory under blob; a link has url and no blob.
+-- session_id is nullable because a script outside any session may post too.
+CREATE TABLE IF NOT EXISTS media(
+  id INTEGER PRIMARY KEY,
+  session_id INTEGER REFERENCES sessions(id),
+  kind TEXT NOT NULL,                       -- file | link
+  title TEXT NOT NULL DEFAULT '', note TEXT DEFAULT '',
+  name TEXT DEFAULT '', mime TEXT DEFAULT '', size INTEGER DEFAULT 0,
+  blob TEXT DEFAULT '', url TEXT DEFAULT '',
+  source TEXT DEFAULT '',                   -- mcp | cli
+  created_at REAL
+);
+CREATE INDEX IF NOT EXISTS idx_media_session ON media(session_id);
 -- A takeover is durable before the background process is interrupted.
 CREATE TABLE IF NOT EXISTS task_takeovers(
   task_id INTEGER PRIMARY KEY REFERENCES tasks(id) ON DELETE CASCADE,

@@ -1,9 +1,12 @@
 package mcp
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/url"
 	"strings"
+
+	"github.com/JeremiahM37/agentdeck/internal/mediapost"
 )
 
 // tool is one MCP tool: its schema, and what it does.
@@ -50,6 +53,34 @@ func argBool(args map[string]any, key string, def bool) bool {
 
 // tools is the whole surface an MCP client sees.
 var tools = []tool{
+	{
+		Name: "post_media",
+		Description: "Show the operator something in AgentDeck's Media feed: a screen recording or demo video, " +
+			"a screenshot, a generated file or report (HTML renders in place), or a link to a site or dev server " +
+			"you are running. Use it to prove work with evidence instead of describing it. Give exactly one of " +
+			"path (a local file; it is copied, so it outlives your worktree) or url. The post is attached to " +
+			"your own session automatically.",
+		Schema: obj(map[string]any{
+			"path":       str("absolute path of a local file to post: mp4/webm video, image, pdf, html, log, any file"),
+			"url":        str("http(s) address to post instead of a file, e.g. the dev server you started"),
+			"title":      str("short headline, e.g. 'Split view working end to end'"),
+			"note":       str("what this shows and what to look for"),
+			"session_id": num("AgentDeck session to attach to; omit to use the session you are running in"),
+		}, "title"),
+		Run: func(s *Server, args map[string]any) (any, error) {
+			raw, err := mediapost.Send(s.API, s.Token, mediapost.Post{Path: argStr(args, "path"),
+				URL: argStr(args, "url"), Title: argStr(args, "title"), Note: argStr(args, "note"),
+				SessionID: argInt(args, "session_id"), Source: "mcp"})
+			if err != nil {
+				return nil, err
+			}
+			var row map[string]any
+			if err := json.Unmarshal(raw, &row); err != nil {
+				return nil, err
+			}
+			return row, nil
+		},
+	},
 	{
 		Name:        "board_summary",
 		Description: "Current board state: task counts per column and the pending approval count.",

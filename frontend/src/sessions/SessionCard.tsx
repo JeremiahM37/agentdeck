@@ -17,6 +17,8 @@ interface Props {
   projects: Project[];
   api: SessionsApi;
   progressError?: string;
+  mediaCount?: number;
+  onMedia?(sessionID: number): void;
   onRefresh: () => Promise<void>;
   onNotice: (text: string, error?: boolean) => void;
   onAttach: (session: SessionView) => void;
@@ -34,6 +36,8 @@ export function SessionCard({
   projects,
   api,
   progressError,
+  mediaCount = 0,
+  onMedia = () => {},
   onRefresh,
   onNotice,
   onAttach,
@@ -138,6 +142,15 @@ export function SessionCard({
         <span className="chip">
           {setup ? "setup" : "up"} {duration(s.uptime_seconds)}
         </span>
+        {mediaCount > 0 && (
+          <button
+            className="chip media-chip"
+            title="Recordings, files and links this session posted"
+            onClick={() => onMedia(s.id)}
+          >
+            ▶ {mediaCount} media
+          </button>
+        )}
         {s.launch_profile && (
           <span className="chip" title="Captured launch profile">
             {s.launch_profile}
