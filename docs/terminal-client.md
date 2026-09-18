@@ -110,6 +110,7 @@ agentdeck api POST /sessions/4/worktree/recover '{}'  # validate interrupted all
 agentdeck upload session 4 ./requirements.pdf
 agentdeck files session 4
 agentdeck download session 4 reports/result.txt ./result.txt
+agentdeck post ./demo.mp4 --title "Checkout flow passing"
 agentdeck attach session 4
 agentdeck promote 4
 ```
@@ -124,6 +125,36 @@ Uploads print the stored remote path. They do not submit a message: mention the
 path in your prompt, or paste it in the attached terminal. Upload also accepts
 `task`, `attempt`, and `project`. Files/download use `session`, `attempt`, or
 `project`. Downloads preserve an existing destination file.
+
+## Media: agents showing their work
+
+An agent can put evidence in front of you instead of describing it. The
+`post_media` MCP tool and `agentdeck post` both publish to the **Media** view: a
+screen recording of the feature working, a screenshot, a generated report, a
+log, or a link to the dev server the agent started.
+
+```bash
+agentdeck post ./demo.mp4 --title "Checkout flow passing" --note "Watch the total"
+agentdeck post ./report.html --title "Test report"
+agentdeck post http://127.0.0.1:5173 --title "Dev server"
+agentdeck post ./trace.zip --title "Playwright trace" --session 4
+```
+
+Inside an AgentDeck session the post attaches itself to that session: the
+poster reads the tmux session it is running in, so an agent never needs to know
+its own id. `--session` (or the tool's `session_id`) is for scripts running
+somewhere else. A post from outside any session still lands, unattributed.
+
+Files are copied into AgentDeck's media store, so a recording outlives the
+worktree that produced it. Video and audio play in place and seek, images and
+PDFs render inline, HTML renders in a sandboxed frame that cannot act as the
+AgentDeck origin, and text files preview on demand. A link posted as
+`127.0.0.1` or `localhost` opens on the address you reached AgentDeck at, since
+that is the machine the agent meant — the site has to listen on `0.0.0.0` for
+that to work from another device.
+
+`AGENTDECK_MEDIA_DIR` moves the store (default: `agentdeck-media` beside the
+database) and `AGENTDECK_MEDIA_MAX_MB` caps one file (default 1024).
 
 ## Project skills
 

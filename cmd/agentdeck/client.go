@@ -10,11 +10,13 @@ import (
 	"net/url"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
 
 	"github.com/JeremiahM37/agentdeck/internal/config"
 	"github.com/JeremiahM37/agentdeck/internal/console"
+	"github.com/JeremiahM37/agentdeck/internal/mediapost"
 )
 
 func promoteCommand(c *console.Client, args []string) error {
@@ -131,6 +133,8 @@ const clientHelp = `AgentDeck — web and terminal control
   agentdeck upload KIND ID FILE     Add a local file as agent context
   agentdeck files KIND ID [PATH]    Browse files on the agent's machine
   agentdeck download KIND ID REMOTE LOCAL
+  agentdeck post FILE|URL [--title T] [--note N] [--session ID]
+                                    Show a recording, file or link in the Media feed
   agentdeck agent list
   agentdeck agent save JSON|@file|-
   agentdeck skill list PROJECT [--agent claude|codex]
@@ -148,6 +152,8 @@ Examples:
   agentdeck api PATCH /routines/3 '{"enabled":false}'
   agentdeck api POST /sessions/4/send '{"text":"Run the tests"}'
   agentdeck upload session 4 ./requirements.pdf
+  agentdeck post ./demo.mp4 --title "Checkout flow passing"
+  agentdeck post http://127.0.0.1:5173 --title "Dev server"
   agentdeck agent list
   agentdeck agent save @agents.json
 
@@ -158,6 +164,53 @@ All web operations use this same API. See docs/terminal-client.md for the catalo
 With no AGENTDECK_API, client commands use the private local runtime automatically.
 agentdeck local [COMMAND ...] forces those existing AgentDeck commands to use this machine.
 `
+
+// postCommand shows a file or link in the Media feed. Inside an AgentDeck
+// session the post attributes itself; --session is for scripts outside one.
+func postCommand(base, token string, args []string) ([]byte, error) {
+	post := mediapost.Post{Source: "cli"}
+	subject := ""
+	for i := 0; i < len(args); i++ {
+		flag := args[i]
+		if !strings.HasPrefix(flag, "--") {
+			if subject != "" {
+				return nil, fmt.Errorf("post takes one FILE or URL; quote a title that has spaces")
+			}
+			subject = flag
+			continue
+		}
+		if i+1 >= len(args) {
+			return nil, fmt.Errorf("%s needs a value", flag)
+		}
+		i++
+		switch flag {
+		case "--title":
+			post.Title = args[i]
+		case "--note":
+			post.Note = args[i]
+		case "--session":
+			id, err := strconv.ParseInt(args[i], 10, 64)
+			if err != nil || id <= 0 {
+				return nil, fmt.Errorf("--session takes a session id")
+			}
+			post.SessionID = id
+		default:
+			return nil, fmt.Errorf("unknown flag %s", flag)
+		}
+	}
+	if subject == "" {
+		return nil, fmt.Errorf("usage: agentdeck post FILE|URL [--title T] [--note N] [--session ID]")
+	}
+	if lower := strings.ToLower(subject); strings.HasPrefix(lower, "http://") || strings.HasPrefix(lower, "https://") {
+		post.URL = subject
+	} else {
+		post.Path = subject
+	}
+	if post.Title == "" {
+		post.Title = filepath.Base(subject)
+	}
+	return mediapost.Send(base, token, post)
+}
 
 func clientCommand(cfg *config.Config, command string, args []string) error {
 	return clientCommandAt(cfg, command, args, env("AGENTDECK_API", "http://127.0.0.1:"+strconv.Itoa(cfg.Port)), cfg.AuthToken, false)
@@ -229,6 +282,8 @@ func clientCommandAt(cfg *config.Config, command string, args []string, base, to
 		data, err = skillCommand(c, args)
 	case "agent":
 		data, err = agentCommand(c, args)
+	case "post":
+		data, err = postCommand(base, token, args)
 	case "upload":
 		if len(args) != 3 {
 			return fmt.Errorf("usage: agentdeck upload KIND ID FILE")

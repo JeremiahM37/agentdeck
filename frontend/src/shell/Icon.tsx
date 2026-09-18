@@ -7,6 +7,7 @@ export function Icon({
     | "sessions"
     | "terminals"
     | "deck"
+    | "media"
     | "approvals"
     | "targets"
     | "brand"
@@ -36,6 +37,11 @@ export function Icon({
         <>
           <rect x="3" y="4" width="18" height="16" rx="2" />
           <path d="M7 9l3 3-3 3M13 15h4" />
+        </>
+      ) : name === "media" ? (
+        <>
+          <rect x="3" y="5" width="18" height="14" rx="2" />
+          <path d="M10 9.5v5l4.5-2.5z" />
         </>
       ) : name === "deck" ? (
         <>

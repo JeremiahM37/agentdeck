@@ -28,6 +28,8 @@ export interface SessionsProps {
   projects: Project[];
   targets: Target[];
   onOpenTerminal(url: string, title: string): void;
+  mediaCounts?: Record<number, number>;
+  onMedia?(sessionID: number): void;
   onConversation?(session: SessionView): void;
   onReview(session: SessionView): void;
   onNotice(message: string, error?: boolean): void;
@@ -74,6 +76,8 @@ export function Sessions({
   onReview,
   onNotice,
   refreshVersion = 0,
+  mediaCounts = {},
+  onMedia = () => {},
   action: externalAction,
   onActionConsumed = () => {},
   onMetadataRefresh,
@@ -318,6 +322,8 @@ export function Sessions({
         projects={projects}
         api={api}
         progressError={errors[session.id]}
+        mediaCount={mediaCounts[session.id] || 0}
+        onMedia={onMedia}
         onRefresh={refreshAll}
         onNotice={onNotice}
         onAttach={(session) => void attach(session)}

@@ -132,6 +132,10 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/tasks/{id}/diff", s.taskDiff)
 	mux.HandleFunc("GET /api/tasks/{id}/stream", s.taskStream)
 	mux.HandleFunc("GET /api/stream", s.boardStream)
+	mux.HandleFunc("GET /api/media", s.listMedia)
+	mux.HandleFunc("POST /api/media", s.postMedia)
+	mux.HandleFunc("GET /api/media/{id}/content", s.mediaContent)
+	mux.HandleFunc("DELETE /api/media/{id}", s.deleteMedia)
 
 	// ---- approvals (operator + agent) ----
 	mux.HandleFunc("GET /api/approvals", s.listApprovals)
