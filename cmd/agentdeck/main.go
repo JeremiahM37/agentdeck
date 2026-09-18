@@ -56,6 +56,15 @@ func main() {
 		}
 		return
 	}
+	// An agent launched by a hosted server inherits that server's
+	// AGENTDECK_BASE_URL but no AGENTDECK_API. Its MCP tools belong on the board
+	// that launched it, not in a private runtime nobody is watching.
+	if len(os.Args) > 1 && os.Args[1] == "mcp" &&
+		strings.TrimSpace(os.Getenv("AGENTDECK_API")) == "" {
+		if hosted := strings.TrimSpace(os.Getenv("AGENTDECK_BASE_URL")); hosted != "" {
+			_ = os.Setenv("AGENTDECK_API", hosted)
+		}
+	}
 	explicitRemote := strings.TrimSpace(os.Getenv("AGENTDECK_API")) != ""
 	if len(os.Args) == 1 && interactiveTerminal() {
 		var err error
