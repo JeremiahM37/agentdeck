@@ -6,8 +6,16 @@
    Sessions view the first session did not appear until 550px down.
 
    A phone is where this is used one-handed to check on agents, so the content
-   is what earns the pixels. Controls stay at least 34px tall — comfortably
-   tappable — but share rows, and secondary text steps down a size. */
+   is what earns the pixels. Controls share rows and secondary text steps down
+   a size. Two things are deliberately left alone:
+
+   - Fields keep 16px text. style.css forces it below 1024px because iOS Safari
+     zooms the whole page on focusing anything smaller. A field is made shorter
+     here by removing its vertical padding, never by shrinking its type.
+   - Touch targets stop at 36px, and primary actions at 40px. The desk sheet uses 44px, the most generous
+     guideline; 36px is what a phone terminal uses and is well clear of the
+     24px accessibility floor. Those 44px rules are written as `button.b`, so
+     the ones here have to be at least that specific to apply at all. */
 .session-filters { display: contents; }
 /* Words a desk has room for and a phone does not; the full name stays in the
    control's label for a screen reader either way. */
@@ -20,7 +28,7 @@
   #topbar { padding: 6px 12px; gap: 8px; min-height: 0; }
   #topbar h1 { font-size: 16px; }
   #topbar .brand-mark, #topbar svg { transform: scale(0.85); }
-  #topbar button { min-height: 34px; }
+  #topbar button { min-height: 36px; }
   main { padding-top: 6px; }
   #tabbar .tab { font-size: 10px; gap: 1px; padding: 4px 2px; }
   #tabbar .tab-ic svg { width: 19px; height: 19px; }
@@ -34,11 +42,14 @@
   #media .pane-head { padding-left: 2px; padding-right: 2px; }
   .page-heading h2, .sesshead h2, .pane-head h2, #media h2 { font-size: 17px; }
   .page-heading p, .sesshead p, .pane-head .sub { font-size: 11.5px; margin-top: 1px; }
-  .b { min-height: 34px; padding: 6px 10px; font-size: 12.5px; }
-  .f, select.f, input.f { min-height: 36px; font-size: 14px; }
+  button.b, a.b, .scard .btnrow button.b, #view button:not([class]) { min-height: 36px; padding: 0 11px; font-size: 12.5px; }
+  /* The primary action is the thumb's main target, and a test holds the launch
+     action to 40px: it keeps the larger size while the secondary ones step down. */
+  button.b.ok, .scard .btnrow button.b.ok, #sheet button.b.ok, .conversation button.b.ok { min-height: 40px; }
+  .f, select.f, input.f { min-height: 38px; }
   /* Every compacted select: the desk's vertical padding inside a shorter box
      clips the text, so the box centres it instead. */
-  select { padding-top: 0; padding-bottom: 0; line-height: normal; }
+  select, #view select, #sheet select { padding-top: 0; padding-bottom: 0; line-height: normal; min-height: 38px; }
 
   /* Sessions: title and the primary action share a row; the three secondary
      actions share the next, instead of taking a row each. */
@@ -53,10 +64,10 @@
     order: 2; flex: 1 1 28%; min-width: 0; padding: 6px 4px; font-size: 11.5px;
     white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
   }
-  #sess-search { min-height: 36px; margin: 0; }
+  #sess-search { min-height: 38px; height: 38px; padding-top: 0; padding-bottom: 0; margin: 0; }
   .session-filters { display: flex; gap: 8px; }
   .session-filters .session-grouping { flex: 1 1 0; min-width: 0; margin: 0; gap: 5px; font-size: 11px; white-space: nowrap; }
-  .session-filters .session-grouping select.f { flex: 1; min-width: 0; max-width: none; min-height: 32px; height: 32px; font-size: 12px; padding: 2px 6px; }
+  .session-filters .session-grouping select.f { flex: 1; min-width: 0; max-width: none; min-height: 36px; height: 36px; padding: 0 6px; }
 
   /* A card shows enough of the pane to tell what the agent is doing, and the
      next card is visible beneath it. */
@@ -67,8 +78,25 @@
   .smeta { gap: 4px; font-size: 11px; margin-top: 4px; }
   .spane { min-height: 0; height: auto; max-height: 58px; padding: 6px 0; font-size: 10.5px; line-height: 1.35; overflow: hidden; }
   .scard .btnrow { margin-top: 8px; gap: 6px; }
-  #sesslist .scard .btnrow button, #sesslist .scard .btnrow summary { min-height: 34px; height: 34px; font-size: 12.5px; padding: 0 10px; }
+  /* One height across a card's row, set by its primary action. */
+  #sesslist .scard .btnrow button, #sesslist .scard .btnrow summary { min-height: 40px; height: 40px; font-size: 12.5px; padding: 0 10px; }
   .session-worktree { margin: 4px 0 6px; font-size: 11px; }
+
+  /* Board: the header button matches its row. */
+  #view .page-heading button, #qb-routines { min-height: 36px; padding: 0 11px; font-size: 12.5px; }
+  #quickbar { gap: 6px; padding: 0 10px; }
+  /* The dispatch row keeps the 44px the responsive test holds it to; only its
+     padding changes, so its 16px text is centred rather than clipped. */
+  #quickbar #qb-project, #quickbar #qb-input, #quickbar #qb-filter { min-height: 44px; height: 44px; padding: 0 10px; }
+  .card { padding: 9px 10px; }
+  /* The one destructive control on a card was 22px: under the accessibility
+     floor, beside the area that opens the task. */
+  .card-x { width: 32px; height: 32px; font-size: 14px; }
+  .card h3, .card .title { font-size: 13.5px; }
+  .card .task-chat { min-height: 32px; margin: 6px 0; padding: 0 10px; font-size: 12px; width: auto; }
+  /* An agent's prompt or output is prose, not code to scroll sideways through:
+     on a phone it wraps, or the end of every line is off the screen. */
+  #sheet pre, .ev pre, #sheet .body { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 12px; }
 
   /* Media and the scratch review follow the same rhythm. */
   .media-feed { gap: 10px; }
@@ -77,14 +105,14 @@
   .media-frame { height: 300px; }
   /* Machine, desktop, port, expose: one row, not two. */
   .media-filter { font-size: 11px; gap: 5px; }
-  .media-filter select { min-height: 32px; height: 32px; font-size: 12px; padding: 0 6px; max-width: 150px; }
+  .media-filter select { min-height: 36px; height: 36px; padding: 0 6px; max-width: 170px; }
   .live-bar { flex-wrap: nowrap; gap: 5px; margin-bottom: 10px; }
   .live-bar label { flex: 1 1 0; min-width: 0; font-size: 0; gap: 0; }
-  .live-bar select { width: 100%; min-width: 0; min-height: 34px; height: 34px; font-size: 12px; padding: 0 6px; }
-  .live-bar .b { flex: none; padding: 0 9px; height: 34px; }
+  .live-bar select { width: 100%; min-width: 0; min-height: 36px; height: 36px; padding: 0 6px; }
+  .live-bar button.b { flex: none; padding: 0 9px; height: 36px; }
   .live-expose { flex: none; gap: 5px; }
-  .live-expose input { width: 58px; min-height: 34px; height: 34px; font-size: 12px; padding: 2px 6px; }
-  .media-link .b, .media-card footer .b, .media-card footer a.b { min-height: 34px; padding: 0 10px; }
+  .live-expose input { width: 64px; min-height: 36px; height: 36px; padding: 0 6px; }
+  .media-link button.b, .media-card footer button.b, .media-card footer a.b { min-height: 36px; padding: 0 10px; }
   .scratch-review { margin-top: 16px; }
 
   /* Chat: the transcript is the point. Header, reader controls and composer
@@ -92,9 +120,9 @@
   .conversation-head { padding: 6px 10px; gap: 8px; }
   .conversation-head h2 { font-size: 15px; }
   .conversation-head p { font-size: 11px; margin-top: 1px; }
-  .conversation .b { min-height: 34px; padding: 0 10px; font-size: 12.5px; }
+  .conversation button.b { min-height: 36px; padding: 0 10px; font-size: 12.5px; }
   .reader-controls { padding: 3px 10px; font-size: 11px; }
-  #conversation-input { height: 58px; min-height: 44px; font-size: 15px; padding: 8px 10px; }
+  #conversation-input { height: 58px; min-height: 44px; padding: 8px 10px; }
   #conversation-hint { display: none; }
   .conversation label[for="conversation-input"] { font-size: 11px; margin-bottom: 3px; }
 }
@@ -119,7 +147,7 @@
   #sheet { font-size: 12.5px; }
   /* The form's fields carry no shared class, so they are named by element. */
   #sheet input:not([type="checkbox"]):not([type="radio"]), #sheet select, #sheet textarea {
-    width: 100%; max-width: 100%; box-sizing: border-box; min-height: 38px; font-size: 15px;
+    width: 100%; max-width: 100%; box-sizing: border-box; min-height: 38px;
     padding: 6px 10px; margin-top: 3px;
   }
   /* A fixed height with the desk's vertical padding clips the text; let the

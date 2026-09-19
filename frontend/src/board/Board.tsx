@@ -210,6 +210,7 @@ export function Board({
             >
               <button
                 className="card-x"
+                aria-label={`Delete ${task.title}`}
                 onClick={(e) => {
                   e.stopPropagation();
                   if (task.status === "done" || confirm(`Delete “${task.title}”?`))
