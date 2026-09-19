@@ -52,10 +52,12 @@ export function Dialog({
 }
 export function Appearance({
   prefs,
+  minFont = 10,
   onPrefs,
   onClose,
 }: {
   prefs: Prefs;
+  minFont?: number;
   onPrefs: (prefs: Prefs) => void;
   onClose: () => void;
 }) {
@@ -66,14 +68,14 @@ export function Appearance({
         <input
           id="font-size"
           type="number"
-          min={10}
+          min={minFont}
           max={30}
           value={prefs.fontSize}
           onChange={(event) =>
             onPrefs({
               ...prefs,
               fontSize: Math.max(
-                10,
+                minFont,
                 Math.min(30, Number(event.target.value) || 15),
               ),
             })

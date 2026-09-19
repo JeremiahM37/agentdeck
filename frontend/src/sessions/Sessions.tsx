@@ -367,15 +367,17 @@ export function Sessions({
           className="b"
           id="sess-saved-search"
           onClick={() => setSearch(true)}
+          aria-label="Search saved conversations"
         >
-          Search saved conversations
+          Search saved<span className="wide-only"> conversations</span>
         </button>
         <button
           className="b"
           id="sess-discover"
           onClick={() => setSheet("discover")}
+          aria-label="Find running agents"
         >
-          ⌕ Find running agents
+          ⌕ Find<span className="wide-only"> running</span> agents
         </button>
         <button
           className="b"
@@ -398,6 +400,7 @@ export function Sessions({
         value={query}
         onChange={(event) => setQuery(event.target.value)}
       />
+      <div className="session-filters">
       <label className="session-grouping">
         Group by{" "}
         <select
@@ -430,6 +433,7 @@ export function Sessions({
           <option value="archived">Archived sessions</option>
         </select>
       </label>
+      </div>
       {recentOpen && (
         <RecentlyClosed
           api={api}

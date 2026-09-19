@@ -106,6 +106,13 @@ export function installTerminalScroll({
   listen(
     "pointerdown",
     (e) => {
+      if (e.pointerType === "touch" && !e.isPrimary) {
+        // A second finger is a pinch to resize the type; the drag the first
+        // finger began must not keep scrolling underneath it.
+        gesture = null;
+        stop();
+        return;
+      }
       if (e.pointerType !== "touch" || !e.isPrimary || !enabled()) return;
       stop();
       gesture = {

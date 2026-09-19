@@ -4,13 +4,17 @@ import {
   useCallback,
   useEffect,
   useLayoutEffect,
+  useMemo,
   useRef,
   useState,
 } from "react";
 import { Engine, type Snapshot } from "./engine";
+import { modified, type Mods } from "./keys";
 import { Appearance, Desktop, HistoryDialog, WorkspaceFiles } from "./dialogs";
 import {
   copyClipboard,
+  FONT_MAX,
+  FONT_MIN,
   json,
   loadPrefs,
   quote,
@@ -152,6 +156,8 @@ declare global {
     };
   }
 }
+// The keys a phone keyboard does not have, in the order a shell reaches for
+// them. The row scrolls sideways, so it can be complete without being tall.
 const keys = {
   escape: "\x1b",
   tab: "\t",
@@ -160,8 +166,16 @@ const keys = {
   down: "\x1b[B",
   right: "\x1b[C",
   interrupt: "\x03",
+  slash: "/",
+  dash: "-",
+  pipe: "|",
+  tilde: "~",
+  home: "\x1b[H",
+  end: "\x1b[F",
+  pageup: "\x1b[5~",
+  pagedown: "\x1b[6~",
 };
-const labels = {
+const labels: Record<keyof typeof keys, [string, string]> = {
   escape: ["Esc", "Send Escape"],
   tab: ["Tab", "Send Tab"],
   left: ["←", "Send Left arrow"],
@@ -169,7 +183,21 @@ const labels = {
   down: ["↓", "Send Down arrow"],
   right: ["→", "Send Right arrow"],
   interrupt: ["^C", "Send Ctrl-C"],
+  slash: ["/", "Send slash"],
+  dash: ["-", "Send dash"],
+  pipe: ["|", "Send pipe"],
+  tilde: ["~", "Send tilde"],
+  home: ["Home", "Send Home"],
+  end: ["End", "Send End"],
+  pageup: ["PgUp", "Send Page Up"],
+  pagedown: ["PgDn", "Send Page Down"],
 };
+// Esc and Tab lead; the sticky modifiers sit right after them, where a thumb
+// looks for Ctrl.
+const keyOrder: (keyof typeof keys | "ctrl" | "alt")[] = [
+  "escape", "tab", "ctrl", "alt", "left", "up", "down", "right", "interrupt",
+  "slash", "dash", "pipe", "tilde", "home", "end", "pageup", "pagedown",
+];
 export function TerminalApp({
   kind,
   id,
@@ -196,6 +224,10 @@ export function TerminalApp({
   const [previewPath, setPreviewPath] = useState<string>();
   const [search, setSearch] = useState(false);
   const [toolsOpen, setToolsOpen] = useState(false);
+  const [mobile, setMobile] = useState(false);
+  const [mods, setMods] = useState<Mods>({ ctrl: false, alt: false });
+  const modsRef = useRef(mods);
+  modsRef.current = mods;
   const [query, setQuery] = useState("");
   const [matches, setMatches] = useState("");
   const [states, setStates] = useState<Record<string, Snapshot>>({});
@@ -212,6 +244,28 @@ export function TerminalApp({
   }, [externalNotice]);
   const current = () => engines.current.get(activeRef.current);
   const state = states[active];
+  // The terminal is drawn at the size for the device it is on; the two are
+  // stored apart so resizing on the phone never shrinks the desk.
+  const shown = useMemo(
+    () => (mobile ? { ...prefs, fontSize: prefs.mobileFontSize } : prefs),
+    [prefs, mobile],
+  );
+  const [fontHint, setFontHint] = useState("");
+  const savePrefs = useCallback((next: Prefs) => {
+    setPrefs(next);
+    try {
+      localStorage.setItem("adk-terminal-prefs", JSON.stringify(next));
+    } catch {}
+  }, []);
+  const setShownFont = useCallback(
+    (size: number, persist = true) => {
+      const fontSize = Math.round(Math.max(mobile ? FONT_MIN : 10, Math.min(FONT_MAX, size)));
+      const next = mobile ? { ...prefs, mobileFontSize: fontSize } : { ...prefs, fontSize };
+      if (persist) savePrefs(next);
+      else setPrefs(next);
+    },
+    [mobile, prefs, savePrefs],
+  );
   // The toolbar clips its own dropdown (it scrolls horizontally, which clips
   // vertically too), so the open menu is placed against the viewport instead.
   // The compact layout already pins the menu to the screen edge; leave it alone.
@@ -261,8 +315,17 @@ export function TerminalApp({
     setDialog("files");
   }, []);
   const register = useCallback((id: string, engine: Engine | null) => {
-    if (engine) engines.current.set(id, engine);
-    else engines.current.delete(id);
+    if (engine) {
+      // An armed modifier applies to the next thing typed on the phone's own
+      // keyboard, then lets go — the same as the key bar's own keys.
+      engine.inputFilter = (text) => {
+        const armed = modsRef.current;
+        if (!armed.ctrl && !armed.alt) return text;
+        setMods({ ctrl: false, alt: false });
+        return modified(text, armed);
+      };
+      engines.current.set(id, engine);
+    } else engines.current.delete(id);
   }, []);
   const update = useCallback(
     (id: string, value: Snapshot) =>
@@ -294,6 +357,56 @@ export function TerminalApp({
       });
     return () => abort.abort();
   }, [base]);
+  // Two fingers resize the type, as they do in every phone terminal worth using.
+  // The size follows the fingers live and is saved when they lift.
+  const pinch = useRef({ size: shown.fontSize, set: setShownFont });
+  pinch.current = { size: shown.fontSize, set: setShownFont };
+  useEffect(() => {
+    const host = document.getElementById("workspace");
+    if (!host) return;
+    const abort = new AbortController(),
+      options = { signal: abort.signal, passive: false, capture: true };
+    let start: { spread: number; size: number } | undefined,
+      hide: number | undefined;
+    const spread = (touches: TouchList) =>
+      Math.hypot(
+        touches[0]!.clientX - touches[1]!.clientX,
+        touches[0]!.clientY - touches[1]!.clientY,
+      );
+    host.addEventListener(
+      "touchstart",
+      (event) => {
+        if (event.touches.length === 2)
+          start = { spread: spread(event.touches), size: pinch.current.size };
+      },
+      options,
+    );
+    host.addEventListener(
+      "touchmove",
+      (event) => {
+        if (!start || event.touches.length !== 2 || !start.spread) return;
+        event.preventDefault(); // otherwise the browser zooms the whole page
+        const size = Math.round((start.size * spread(event.touches)) / start.spread);
+        if (size === pinch.current.size) return;
+        pinch.current.set(size, false);
+        setFontHint(`${Math.max(FONT_MIN, Math.min(FONT_MAX, size))}px`);
+      },
+      options,
+    );
+    const finish = (event: TouchEvent) => {
+      if (!start || event.touches.length >= 2) return;
+      start = undefined;
+      pinch.current.set(pinch.current.size, true);
+      clearTimeout(hide);
+      hide = window.setTimeout(() => setFontHint(""), 900);
+    };
+    host.addEventListener("touchend", finish, options);
+    host.addEventListener("touchcancel", finish, options);
+    return () => {
+      clearTimeout(hide);
+      abort.abort();
+    };
+  }, []);
   useEffect(() => {
     window.__adkTerminalState = () => ({
       hasSelection: !!current()?.term.hasSelection(),
@@ -317,8 +430,10 @@ export function TerminalApp({
             short.matches),
       );
     const layout = () => {
-      if (!embedded)
+      if (!embedded) {
         document.body.classList.toggle("mobile-terminal", mobile.matches);
+        setMobile(mobile.matches);
+      }
       chrome();
     };
     layout();
@@ -335,6 +450,7 @@ export function TerminalApp({
       if (embedded) {
         document.body.classList.toggle("compact-terminal", data.compact);
         document.body.classList.toggle("mobile-terminal", data.mobile);
+        setMobile(data.mobile);
         chrome();
         fit();
       }
@@ -773,38 +889,61 @@ export function TerminalApp({
             <Pane
               key={spec.id}
               spec={spec}
-              prefs={prefs}
+              prefs={shown}
               active={active === spec.id}
               info={info}
               callbacks={callbacks}
             />
           ))}
       </main>
+      {fontHint && (
+        <div id="font-hint" role="status">
+          {fontHint} · {current()?.term.cols ?? 0} columns
+        </div>
+      )}
       <div id="terminal-keybar" role="group" aria-label="Terminal keys">
-        {(Object.keys(keys) as (keyof typeof keys)[]).map((key) => (
-          <button
-            key={key}
-            data-terminal-key={key}
-            aria-label={labels[key][1]}
-            disabled={!state?.connected || state.paused}
-            onPointerDown={(event) => event.preventDefault()}
-            onClick={() => {
-              const engine = current();
-              if (!engine) return;
-              let text = keys[key];
-              if (
-                engine.term.modes.applicationCursorKeysMode &&
-                /^\x1b\[[ABCD]$/.test(text)
-              )
-                text = text.replace("[", "O");
-              engine.input(text);
-              engine.term.scrollToBottom();
-              engine.term.focus();
-            }}
-          >
-            {labels[key][0]}
-          </button>
-        ))}
+        {keyOrder.map((key) =>
+          key === "ctrl" || key === "alt" ? (
+            <button
+              key={key}
+              data-terminal-key={key}
+              className="modifier"
+              aria-label={key === "ctrl" ? "Hold Ctrl for the next key" : "Hold Alt for the next key"}
+              aria-pressed={mods[key]}
+              disabled={!state?.connected || state.paused}
+              onPointerDown={(event) => event.preventDefault()}
+              onClick={() => setMods((old) => ({ ...old, [key]: !old[key] }))}
+            >
+              {key === "ctrl" ? "Ctrl" : "Alt"}
+            </button>
+          ) : (
+            <button
+              key={key}
+              data-terminal-key={key}
+              aria-label={labels[key][1]}
+              disabled={!state?.connected || state.paused}
+              onPointerDown={(event) => event.preventDefault()}
+              onClick={() => {
+                const engine = current();
+                if (!engine) return;
+                let text = keys[key];
+                const armed = mods.ctrl || mods.alt;
+                if (
+                  !armed &&
+                  engine.term.modes.applicationCursorKeysMode &&
+                  /^\x1b\[[ABCD]$/.test(text)
+                )
+                  text = text.replace("[", "O");
+                // input() applies and releases any armed modifier itself.
+                engine.input(text);
+                engine.term.scrollToBottom();
+                engine.term.focus();
+              }}
+            >
+              {labels[key][0]}
+            </button>
+          ),
+        )}
       </div>
       <footer>
         <span id="workspace-path">{info?.workdir}</span>
@@ -815,11 +954,15 @@ export function TerminalApp({
       </footer>
       {dialog === "appearance" && (
         <Appearance
-          prefs={prefs}
-          onPrefs={(prefs) => {
-            setPrefs(prefs);
-            localStorage.setItem("adk-terminal-prefs", JSON.stringify(prefs));
-          }}
+          prefs={shown}
+          minFont={mobile ? FONT_MIN : 10}
+          onPrefs={(next) =>
+            savePrefs(
+              mobile
+                ? { ...next, fontSize: prefs.fontSize, mobileFontSize: next.fontSize }
+                : { ...next, mobileFontSize: prefs.mobileFontSize },
+            )
+          }
           onClose={close}
         />
       )}

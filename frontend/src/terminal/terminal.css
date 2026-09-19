@@ -718,18 +718,55 @@ body.mobile-terminal #terminal-keybar {
   gap: 2px;
   flex: none;
   overflow-x: auto;
-  padding: 2px calc(70px + env(safe-area-inset-right, 0px))
-    calc(2px + env(safe-area-inset-bottom, 0px)) 4px;
+  /* The Tools button is pinned at the right of this row. The keys stop short
+     of it instead of scrolling underneath, where half a key would show. */
+  margin-right: calc(66px + env(safe-area-inset-right, 0px));
+  padding: 2px 2px calc(2px + env(safe-area-inset-bottom, 0px)) 4px;
   border-top: 1px solid var(--line);
   background: var(--surface);
 }
 #terminal-keybar button {
-  flex: 1 0 40px;
-  min-width: 40px;
-  min-height: 44px;
-  padding: 6px;
+  flex: 0 0 auto;
+  min-width: 38px;
+  min-height: 38px;
+  padding: 4px 9px;
+  font-size: 13px;
   background: transparent;
   border: 0;
+  border-radius: 6px;
+}
+#terminal-keybar button.modifier {
+  color: var(--muted);
+}
+#terminal-keybar button.modifier[aria-pressed="true"] {
+  background: var(--accent);
+  color: #14101f;
+}
+#terminal-keybar {
+  scrollbar-width: none;
+}
+#terminal-keybar::-webkit-scrollbar {
+  display: none;
+}
+/* The size a pinch has reached, over the terminal rather than in the layout:
+   a status line that pushed the terminal down would change the very column
+   count it is reporting. */
+#font-hint {
+  position: fixed;
+  top: 40%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  z-index: 60;
+  padding: 8px 14px;
+  border-radius: 10px;
+  background: #1b2432ee;
+  border: 1px solid #3a465a;
+  font-size: 13px;
+  pointer-events: none;
+}
+body.mobile-terminal .terminal-host {
+  padding: 3px 1px 1px 3px;
+  touch-action: pan-y;
 }
 @media (max-width: 1023px) {
   body.compact-chrome #root > nav {
@@ -743,7 +780,9 @@ body.mobile-terminal #terminal-keybar {
     z-index: 20;
   }
   body.compact-chrome #root > nav > #terminal-tools > summary {
-    min-height: 44px;
+    min-height: 38px;
+    padding: 8px 10px;
+    font-size: 13px;
     background: var(--surface);
   }
   body.compact-chrome #root > nav > #terminal-tools[open] > .action-menu-panel {
@@ -756,8 +795,9 @@ body.mobile-terminal #terminal-keybar {
   body.compact-chrome #compact-status {
     display: block;
     position: fixed;
-    right: 58px;
-    bottom: calc(20px + env(safe-area-inset-bottom));
+    /* On the Tools button's corner: the key row now ends where it used to sit. */
+    right: 9px;
+    bottom: calc(33px + env(safe-area-inset-bottom));
     z-index: 20;
   }
   body.compact-chrome #root > nav > #upload,

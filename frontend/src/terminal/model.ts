@@ -14,8 +14,15 @@ export interface TerminalInfo {
   desktop_command: string;
   attach_argv: string[];
 }
+// A phone and a desk want different type. 15px on a 390px screen is 40 columns,
+// and an agent's interface is unreadable wrapped that tight; the same 11px that
+// gives a phone 65 columns is too small to work at on a monitor.
+export const FONT_MIN = 7,
+  FONT_MAX = 30,
+  MOBILE_FONT_DEFAULT = 11;
 export interface Prefs {
   fontSize: number;
+  mobileFontSize: number;
   lineHeight: number;
   theme: string;
 }
@@ -59,14 +66,23 @@ export function loadPrefs(): Prefs {
       localStorage.getItem("adk-terminal-prefs") || "{}",
     );
     return {
-      fontSize: Math.max(10, Math.min(30, Number(value.fontSize) || 15)),
+      fontSize: Math.max(10, Math.min(FONT_MAX, Number(value.fontSize) || 15)),
+      mobileFontSize: Math.max(
+        FONT_MIN,
+        Math.min(FONT_MAX, Number(value.mobileFontSize) || MOBILE_FONT_DEFAULT),
+      ),
       lineHeight: [1, 1.15, 1.3].includes(Number(value.lineHeight))
         ? Number(value.lineHeight)
         : 1.15,
       theme: value.theme && themes[value.theme] ? value.theme : "slate",
     };
   } catch {
-    return { fontSize: 15, lineHeight: 1.15, theme: "slate" };
+    return {
+      fontSize: 15,
+      mobileFontSize: MOBILE_FONT_DEFAULT,
+      lineHeight: 1.15,
+      theme: "slate",
+    };
   }
 }
 export function quote(path: string) {

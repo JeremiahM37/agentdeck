@@ -1,0 +1,73 @@
+/* Phone density.
+
+   The interface was sized for a desk and then allowed to stack on a phone, so
+   every view spent most of a small screen on its own furniture: a 67px header,
+   a 60px tab bar, 22px headings, full-width 44px buttons one per row. On the
+   Sessions view the first session did not appear until 550px down.
+
+   A phone is where this is used one-handed to check on agents, so the content
+   is what earns the pixels. Controls stay at least 34px tall — comfortably
+   tappable — but share rows, and secondary text steps down a size. */
+.session-filters { display: contents; }
+/* Words a desk has room for and a phone does not; the full name stays in the
+   control's label for a screen reader either way. */
+@media (max-width: 600px) { .wide-only { display: none; } }
+
+@media (max-width: 600px) {
+  :root { --tabbar-h: calc(50px + env(safe-area-inset-bottom, 0px)); }
+
+  /* Shell */
+  #topbar { padding: 6px 12px; gap: 8px; min-height: 0; }
+  #topbar h1 { font-size: 16px; }
+  #topbar .brand-mark, #topbar svg { transform: scale(0.85); }
+  #topbar button { min-height: 34px; }
+  main { padding-top: 6px; }
+  #tabbar .tab { font-size: 10px; gap: 1px; padding: 4px 2px; }
+  #tabbar .tab-ic svg { width: 19px; height: 19px; }
+  #tabbar .badge { transform: scale(0.85); }
+  .list { padding: 0 10px; gap: 8px; }
+  .page-heading, .sesshead, .pane-head { padding: 2px 0 6px; gap: 6px; }
+  .page-heading h2, .sesshead h2, .pane-head h2, #media h2 { font-size: 17px; }
+  .page-heading p, .sesshead p, .pane-head .sub { font-size: 11.5px; margin-top: 1px; }
+  .b { min-height: 34px; padding: 6px 10px; font-size: 12.5px; }
+  .f, select.f, input.f { min-height: 36px; font-size: 14px; }
+
+  /* Sessions: title and the primary action share a row; the three secondary
+     actions share the next, instead of taking a row each. */
+  .sesshead { flex-wrap: wrap; align-items: center; }
+  /* The title takes all of its row except the primary button's width, which is
+     what pushes the secondary actions onto the row beneath. */
+  .sesshead > div { flex: 1 1 calc(100% - 150px); min-width: 0; }
+  .sesshead > div p { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .sesshead #sess-new { order: 1; flex: none; }
+  .sesshead > button:not(#sess-new) {
+    /* A real share of the row, so none can squeeze in beside the title. */
+    order: 2; flex: 1 1 28%; min-width: 0; padding: 6px 4px; font-size: 11.5px;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  #sess-search { min-height: 36px; margin: 0; }
+  .session-filters { display: flex; gap: 8px; }
+  .session-filters .session-grouping { flex: 1 1 0; min-width: 0; margin: 0; gap: 5px; font-size: 11px; white-space: nowrap; }
+  .session-filters .session-grouping select.f { flex: 1; min-width: 0; max-width: none; min-height: 32px; height: 32px; font-size: 12px; padding: 2px 6px; }
+
+  /* A card shows enough of the pane to tell what the agent is doing, and the
+     next card is visible beneath it. */
+  .scard { padding: 10px 12px; }
+  .scard .proj, .scard > .proj { font-size: 11px; }
+  .scard-top { gap: 6px; }
+  .scard-top b, .scard h3 { font-size: 14.5px; }
+  .smeta { gap: 4px; font-size: 11px; margin-top: 4px; }
+  .spane { min-height: 0; height: auto; max-height: 58px; padding: 6px 0; font-size: 10.5px; line-height: 1.35; overflow: hidden; }
+  .scard .btnrow { margin-top: 8px; gap: 6px; }
+  #sesslist .scard .btnrow button, #sesslist .scard .btnrow summary { min-height: 34px; height: 34px; font-size: 12.5px; padding: 0 10px; }
+  .session-worktree { margin: 4px 0 6px; font-size: 11px; }
+
+  /* Media and the scratch review follow the same rhythm. */
+  .media-feed { gap: 10px; }
+  .media-card { padding: 10px; gap: 8px; border-radius: 10px; }
+  .media-card h3 { font-size: 14px; margin-bottom: 4px; }
+  .media-frame { height: 300px; }
+  .live-bar { gap: 6px; margin-bottom: 10px; }
+  .live-expose input { width: 104px; }
+  .scratch-review { margin-top: 16px; }
+}

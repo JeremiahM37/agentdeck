@@ -765,9 +765,19 @@ body.terminals-open { overflow: hidden; }
 .terminal-actions-panel>a:hover,.terminal-actions-panel>button:hover { background:var(--panel); }
 @media(min-width:1024px) { #terminal-workspace { bottom:0; } }
 @media(max-width:600px) {
-  .terminal-tabbar { gap:4px; padding:4px; }
-  .terminal-tab { max-width:180px; min-height:44px; }
-  .terminal-tab-close { width:40px; min-height:44px; }
+  /* On a phone every pixel of chrome is a line of terminal lost. The bar is one
+     slim row: tabs shrink to their names and the controls to their glyphs. */
+  .terminal-tabbar { gap:3px; padding:3px 4px; }
+  .terminal-tablist { gap:3px; padding:1px; }
+  .terminal-tab-item { border-radius:7px; }
+  .terminal-tab { max-width:150px; min-height:34px; padding:5px 8px; font-size:12px; }
+  .terminal-tab-close { width:26px; min-height:34px; font-size:16px; }
+  /* workspace.css sizes these at 44px and loads later, so these name the bar. */
+  .terminal-tabbar .terminal-new-main, .terminal-tabbar .terminal-new-machines>summary,
+  .terminal-tabbar .terminal-search, .terminal-tabbar .terminal-actions>summary, .terminal-tabbar .terminal-focus { min-height:34px; height:34px; }
+  .terminal-tabbar .terminal-new-main { padding:0 10px; font-size:15px; }
+  .terminal-tabbar .terminal-new-machines>summary { padding:0 6px; }
+  .terminal-tabbar .terminal-search, .terminal-tabbar .terminal-actions>summary, .terminal-tabbar .terminal-focus { width:34px; font-size:16px; }
   .terminal-popout { padding:8px; font-size:12px; }
   #tabbar .tab { font-size:10px; min-width:0; }
 }

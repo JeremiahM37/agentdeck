@@ -148,8 +148,12 @@ export class Engine {
     if (this.ws?.readyState === WebSocket.OPEN)
       this.ws.send(new TextEncoder().encode(text));
   }
+  // Set by the page for the on-screen modifier keys: a phone keyboard has no
+  // Ctrl, so an armed Ctrl has to rewrite whatever is typed next.
+  inputFilter?: (text: string) => string;
   input(text: string) {
     if (!this.connected || this.paused) return;
+    if (this.inputFilter) text = this.inputFilter(text);
     ++this.historyRevision;
     this.leaveRetainedHistory();
     this.send("0" + text);
