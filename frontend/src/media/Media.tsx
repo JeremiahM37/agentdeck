@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { withToken, type createDeckApi } from "../api";
-import type { Media as MediaRow } from "../types";
+import type { LiveView, Media as MediaRow, Target } from "../types";
+import { Live, liveAddress } from "./Live";
 import "./media.css";
 
 type Api = ReturnType<typeof createDeckApi>;
@@ -63,12 +64,54 @@ function TextPreview({ row }: { row: MediaRow }) {
   );
 }
 
-function Body({ row }: { row: MediaRow }) {
+// loopbackPort is the port of a link only the posting machine can open.
+function loopbackPort(address: string) {
+  try {
+    const parsed = new URL(address);
+    if (!LOOPBACK.has(parsed.hostname)) return 0;
+    return Number(parsed.port) || (parsed.protocol === "https:" ? 443 : 80);
+  } catch {
+    return 0;
+  }
+}
+
+function Body({
+  row,
+  exposed,
+  onExpose,
+}: {
+  row: MediaRow;
+  exposed?: LiveView;
+  onExpose: (port: number) => void;
+}) {
   const [live, setLive] = useState(false);
   if (row.kind === "link") {
+    const port = loopbackPort(row.url);
+    // Once the port is forwarded, the link that works is the forwarded one: the
+    // posted address only ever meant something on the machine that posted it.
+    if (exposed) {
+      const parsed = new URL(row.url);
+      const href = liveAddress(exposed).base + parsed.pathname + parsed.search + parsed.hash;
+      return (
+        <div className="media-link">
+          <a href={href} target="_blank" rel="noopener noreferrer">
+            {href}
+          </a>
+          <small>
+            Posted as {row.url}, which only that machine can open. It is exposed above until you
+            stop it.
+          </small>
+        </div>
+      );
+    }
     const target = reachable(row.url);
     return (
       <div className="media-link">
+        {port > 0 && (
+          <button className="b ok media-expose" onClick={() => onExpose(port)}>
+            Expose localhost:{port} so this device can open it
+          </button>
+        )}
         <a href={target.href} target="_blank" rel="noopener noreferrer">
           {target.href}
         </a>
@@ -131,6 +174,8 @@ function TextPeek({ row }: { row: MediaRow }) {
 export function Media({
   api,
   rows,
+  live,
+  targets,
   sessionFilter,
   onFilter,
   onChanged,
@@ -138,6 +183,8 @@ export function Media({
 }: {
   api: Api;
   rows: MediaRow[];
+  live: LiveView[];
+  targets: Target[];
   sessionFilter: number | null;
   onFilter: (sessionID: number | null) => void;
   onChanged: () => void;
@@ -178,6 +225,7 @@ export function Media({
           </select>
         </label>
       </div>
+      <Live api={api} views={live} targets={targets} onChanged={onChanged} onNotice={onNotice} />
       {!rows.length && (
         <div className="media-empty">
           <p>
@@ -205,7 +253,28 @@ export function Media({
               </div>
             </header>
             {row.note && <p className="media-note">{row.note}</p>}
-            <Body row={row} />
+            <Body
+              row={row}
+              exposed={live.find(
+                (view) =>
+                  view.kind === "port" &&
+                  view.port === loopbackPort(row.url) &&
+                  view.session_id === row.session_id,
+              )}
+              onExpose={(port) =>
+                void api
+                  .request("/live/ports", {
+                    method: "POST",
+                    body: {
+                      port,
+                      title: row.title || `localhost:${port}`,
+                      ...(row.session_id != null ? { session_id: row.session_id } : {}),
+                    },
+                  })
+                  .then(onChanged)
+                  .catch((error) => onNotice(String(error), true))
+              }
+            />
             <footer>
               {row.kind === "file" && (
                 <a className="b" href={mediaContent(row, true)}>

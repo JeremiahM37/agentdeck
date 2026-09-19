@@ -226,6 +226,22 @@ export interface Wrap {
   created_at: number;
 }
 
+// An open forward: a port on a target's localhost, or a desktop running there.
+export interface LiveView {
+  id: number;
+  kind: "port" | "desktop";
+  title: string;
+  target_id: number;
+  target_name: string;
+  session_id: number | null;
+  port: number;
+  listen_port: number;
+  created_at: number;
+  expires_at: number;
+  connections: number;
+  detail?: Record<string, string>;
+}
+
 export interface Media {
   id: number;
   session_id: number | null;

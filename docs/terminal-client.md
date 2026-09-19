@@ -185,6 +185,53 @@ agentdeck api POST /scratch/keep '{"target_id":1,"name":"shell-20260918-qfEK6Y"}
 agentdeck api POST /scratch/discard '{"target_id":1,"name":"codex-20260909-Y7AYgu"}'
 ```
 
+## Live views: a machine's localhost, and a desktop on it
+
+An agent's dev server, an admin console, a browser automation in headed mode:
+they all live on the machine the agent runs on, bound to its `127.0.0.1` or
+drawing to a display nobody can see. Two things in **Media → Live** bring them
+to the device you are actually using.
+
+**Expose a port.** A link posted as `http://127.0.0.1:5173` gets an *Expose*
+button; so does any port you type, on any machine. AgentDeck opens a port of its
+own and carries the TCP connection to that machine's loopback — over the SSH
+connection it already holds, for a remote one. It is the port that is forwarded,
+not a path, so absolute asset URLs, redirects and websockets all work and the
+application never knows.
+
+**A live desktop.** *＋ Live desktop* starts a private virtual display on the
+machine, with noVNC in front of it, and shows it in the page. The card gives its
+`DISPLAY`: anything started with that in its environment draws there, so
+`DISPLAY=:90 your-tool --headed` is all it takes to watch a run. The address bar
+opens a browser on that desktop, and that browser sees the machine's own
+localhost — no forward needed. You watch by default; *Take control* passes your
+mouse and keyboard through. An agent can ask for one with the `open_live_view`
+tool, which returns the `DISPLAY` for it to use.
+
+```bash
+agentdeck expose 5173 --title "Dev server"            # this session's machine
+agentdeck expose 8080 --machine lxc-104-work
+agentdeck live http://127.0.0.1:18080 --title "Watching the replay"
+agentdeck live list
+agentdeck live stop 3
+```
+
+Both make something loopback-only reachable by whoever can reach AgentDeck, so
+neither happens on its own: a posted localhost link is never exposed until you
+press the button, every open view is listed with an *exposed* badge, and each
+one closes when its session ends, after four hours (`ttl_minutes`, at most a
+day), when you stop it, or when the server restarts. Forwards only ever reach
+the target's `127.0.0.1`. A forwarded port cannot check a bearer token, so a
+server with `AGENTDECK_AUTH_TOKEN` set refuses to open one unless
+`AGENTDECK_LIVE_UNAUTHENTICATED=1`. `AGENTDECK_LIVE_PORTS` sets the range
+AgentDeck listens on (default `19200-19299`).
+
+A desktop needs `Xvfb`, `x11vnc`, `websockify` and `novnc` on the machine that
+hosts it (`apt install xvfb x11vnc novnc websockify`); a machine without them
+says which are missing. A browser is optional — a tool that brings its own, as
+Playwright does, only needs the `DISPLAY`. Targets reached through a command
+prefix or `pct` cannot forward, because their loopback is not the SSH host's.
+
 ## Project skills
 
 Claude and Codex can discover skills on the selected target and attach them to a

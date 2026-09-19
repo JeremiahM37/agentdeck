@@ -63,6 +63,9 @@ type Server struct {
 	agentMu  sync.Mutex
 	agentKey []byte
 
+	// live holds forwarded ports and desktops; see live.go.
+	live liveState
+
 	uploadMu    sync.Mutex
 	uploadCount int
 
@@ -132,6 +135,11 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/tasks/{id}/diff", s.taskDiff)
 	mux.HandleFunc("GET /api/tasks/{id}/stream", s.taskStream)
 	mux.HandleFunc("GET /api/stream", s.boardStream)
+	mux.HandleFunc("GET /api/live", s.listLive)
+	mux.HandleFunc("POST /api/live/ports", s.openLivePort)
+	mux.HandleFunc("POST /api/live/desktops", s.openLiveDesktop)
+	mux.HandleFunc("POST /api/live/{id}/browser", s.liveBrowser)
+	mux.HandleFunc("DELETE /api/live/{id}", s.closeLive)
 	mux.HandleFunc("GET /api/media", s.listMedia)
 	mux.HandleFunc("POST /api/media", s.postMedia)
 	mux.HandleFunc("GET /api/media/{id}/content", s.mediaContent)
@@ -428,6 +436,7 @@ func (s *Server) sse(w http.ResponseWriter, r *http.Request, channel string) {
 
 // Shutdown releases everything the server owns.
 func (s *Server) Shutdown(ctx context.Context) {
+	s.liveShutdown()
 	s.DrainStreams()
 	s.Terminals.Shutdown()
 	s.Sched.Stop()

@@ -135,6 +135,11 @@ const clientHelp = `AgentDeck — web and terminal control
   agentdeck download KIND ID REMOTE LOCAL
   agentdeck post FILE|URL [--title T] [--note N] [--session ID]
                                     Show a recording, file or link in the Media feed
+  agentdeck live [URL] [--title T] [--machine NAME] [--session ID]
+                                    Start a desktop you can watch in Media; prints its DISPLAY
+  agentdeck expose PORT [--title T] [--machine NAME] [--session ID]
+                                    Reach a machine's localhost:PORT from your own browser
+  agentdeck live list | agentdeck live stop ID
   agentdeck agent list
   agentdeck agent save JSON|@file|-
   agentdeck skill list PROJECT [--agent claude|codex]
@@ -154,6 +159,8 @@ Examples:
   agentdeck upload session 4 ./requirements.pdf
   agentdeck post ./demo.mp4 --title "Checkout flow passing"
   agentdeck post http://127.0.0.1:5173 --title "Dev server"
+  agentdeck expose 5173 --title "Dev server"
+  agentdeck live http://127.0.0.1:18080 --title "Watching the replay"
   agentdeck agent list
   agentdeck agent save @agents.json
 
@@ -164,6 +171,80 @@ All web operations use this same API. See docs/terminal-client.md for the catalo
 With no AGENTDECK_API, client commands use the private local runtime automatically.
 agentdeck local [COMMAND ...] forces those existing AgentDeck commands to use this machine.
 `
+
+// liveCommand opens a desktop or forwards a port. Inside an AgentDeck session it
+// uses that session's machine; --machine names another, and outside both it
+// falls to the server's default.
+func liveCommand(c *console.Client, command string, args []string) ([]byte, error) {
+	if command == "live" && len(args) == 1 && args[0] == "list" {
+		return c.JSON("GET", "/live", nil)
+	}
+	if command == "live" && len(args) == 2 && args[0] == "stop" {
+		if _, err := strconv.ParseInt(args[1], 10, 64); err != nil {
+			return nil, fmt.Errorf("usage: agentdeck live stop ID")
+		}
+		return c.JSON("DELETE", "/live/"+args[1], nil)
+	}
+	body := map[string]any{}
+	subject, machine := "", ""
+	for i := 0; i < len(args); i++ {
+		flag := args[i]
+		if !strings.HasPrefix(flag, "--") {
+			if subject != "" {
+				return nil, fmt.Errorf("%s takes one argument; quote a title that has spaces", command)
+			}
+			subject = flag
+			continue
+		}
+		if i+1 >= len(args) {
+			return nil, fmt.Errorf("%s needs a value", flag)
+		}
+		i++
+		switch flag {
+		case "--title":
+			body["title"] = args[i]
+		case "--machine":
+			machine = args[i]
+		case "--session":
+			id, err := strconv.ParseInt(args[i], 10, 64)
+			if err != nil || id <= 0 {
+				return nil, fmt.Errorf("--session takes a session id")
+			}
+			body["session_id"] = id
+		default:
+			return nil, fmt.Errorf("unknown flag %s", flag)
+		}
+	}
+	if machine != "" {
+		data, err := c.JSON("GET", "/targets", nil)
+		if err != nil {
+			return nil, err
+		}
+		var targets []shellTarget
+		if err := json.Unmarshal(data, &targets); err != nil {
+			return nil, err
+		}
+		chosen, err := chooseShellTarget(machine, targets, strings.NewReader(""), io.Discard)
+		if err != nil {
+			return nil, err
+		}
+		body["target_id"] = chosen.ID
+	} else if body["session_id"] == nil {
+		body["tmux_session"] = mediapost.TmuxSession()
+	}
+	if command == "expose" {
+		port, err := strconv.Atoi(subject)
+		if err != nil || port < 1 || port > 65535 {
+			return nil, fmt.Errorf("usage: agentdeck expose PORT [--title T] [--machine NAME] [--session ID]")
+		}
+		body["port"] = port
+		return c.JSON("POST", "/live/ports", body)
+	}
+	if subject != "" {
+		body["url"] = subject
+	}
+	return c.JSON("POST", "/live/desktops", body)
+}
 
 // postCommand shows a file or link in the Media feed. Inside an AgentDeck
 // session the post attributes itself; --session is for scripts outside one.
@@ -284,6 +365,8 @@ func clientCommandAt(cfg *config.Config, command string, args []string, base, to
 		data, err = agentCommand(c, args)
 	case "post":
 		data, err = postCommand(base, token, args)
+	case "live", "expose":
+		data, err = liveCommand(c, command, args)
 	case "upload":
 		if len(args) != 3 {
 			return fmt.Errorf("usage: agentdeck upload KIND ID FILE")

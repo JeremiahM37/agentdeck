@@ -82,6 +82,38 @@ var tools = []tool{
 		},
 	},
 	{
+		Name: "open_live_view",
+		Description: "Give the operator a live view of a real desktop on the machine you are running on, shown in " +
+			"AgentDeck's Media view. Use it when they want to WATCH something happen rather than read about it: a " +
+			"browser automation in headed mode, a GUI app, a visual test. It starts a private virtual display and " +
+			"returns its DISPLAY value; run your tool with that in its environment (for example " +
+			"`DISPLAY=:91 your-tool --headed`) and it draws where the operator is watching. Pass url to also open a " +
+			"browser there — that browser sees this machine's own localhost, so it is also how the operator reaches a " +
+			"web app that only listens on 127.0.0.1. The view closes when your session ends.",
+		Schema: obj(map[string]any{
+			"title":      str("what the operator is about to watch, e.g. 'Quotation replay in headed mode'"),
+			"url":        str("optional http(s) address to open in a browser on the desktop, e.g. http://127.0.0.1:18080"),
+			"session_id": num("AgentDeck session to attach to; omit to use the session you are running in"),
+		}, "title"),
+		Run: func(s *Server, args map[string]any) (any, error) {
+			body := map[string]any{"title": argStr(args, "title"), "url": argStr(args, "url"),
+				"session_id": argInt(args, "session_id")}
+			if argInt(args, "session_id") == 0 {
+				body["tmux_session"] = mediapost.TmuxSession()
+			}
+			raw, err := s.api("POST", "/live/desktops", body)
+			if err != nil {
+				return nil, err
+			}
+			view, _ := raw.(map[string]any)
+			detail, _ := view["detail"].(map[string]any)
+			display, _ := detail["display"].(string)
+			view["how_to_use"] = "Run anything that opens a window with DISPLAY=" + display +
+				" in its environment. The operator is watching that display in AgentDeck → Media."
+			return view, nil
+		},
+	},
+	{
 		Name:        "board_summary",
 		Description: "Current board state: task counts per column and the pending approval count.",
 		Schema:      obj(map[string]any{}),

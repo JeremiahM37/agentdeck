@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { authToken, createDeckApi, withToken } from "./api";
 import type {
   Approval,
+  LiveView,
   Media as MediaRow,
   Project,
   SessionView,
@@ -55,6 +56,7 @@ export default function App() {
     [sessions, setSessions] = useState<SessionView[]>([]),
     [approvals, setApprovals] = useState<Approval[]>([]),
     [media, setMedia] = useState<MediaRow[]>([]),
+    [liveViews, setLiveViews] = useState<LiveView[]>([]),
     [mediaSession, setMediaSession] = useState<number | null>(null),
     [version, setVersion] = useState(0),
     [connected, setConnected] = useState(false),
@@ -130,15 +132,17 @@ export default function App() {
       api.request<SessionView[]>("/sessions?include_setup_failures=true"),
       api.request<Approval[]>("/approvals?status=pending"),
       api.request<MediaRow[]>("/media?limit=200"),
+      api.request<LiveView[]>("/live"),
     ]);
     if (generation !== refreshGeneration.current) return;
-    const [p, t, j, s, a, m] = results;
+    const [p, t, j, s, a, m, l] = results;
     if (p.status === "fulfilled") setProjects(p.value);
     if (t.status === "fulfilled") setTargets(t.value);
     if (j.status === "fulfilled") setTasks(j.value);
     if (s.status === "fulfilled") setSessions(s.value);
     if (a.status === "fulfilled") setApprovals(a.value);
     if (m.status === "fulfilled") setMedia(m.value);
+    if (l.status === "fulfilled") setLiveViews(l.value);
     setVersion((old) => old + 1);
     const failed = results.find((result) => result.status === "rejected");
     if (failed?.status === "rejected") throw failed.reason;
@@ -275,6 +279,7 @@ export default function App() {
       "task_deleted",
       "media",
       "media_deleted",
+      "live",
     ])
       stream.addEventListener(event, update);
     stream.addEventListener("session_handoff", (event) => {
@@ -599,6 +604,8 @@ export default function App() {
           <Media
             api={api}
             rows={media}
+            live={liveViews}
+            targets={targets}
             sessionFilter={mediaSession}
             onFilter={(id) => navigate(id == null ? "#media" : "#media/" + id)}
             onChanged={() =>
@@ -686,8 +693,13 @@ export default function App() {
               </b>
             )}
             {tab === "media" && (
-              <b id="media-badge" className="badge dim" hidden={!media.length}>
-                {media.length}
+              <b
+                id="media-badge"
+                className={liveViews.length ? "badge" : "badge dim"}
+                hidden={!media.length && !liveViews.length}
+                title={liveViews.length ? `${liveViews.length} live` : undefined}
+              >
+                {media.length + liveViews.length}
               </b>
             )}
             {tab === "approvals" && (
