@@ -164,7 +164,7 @@ directory under the target's scratch root (`~/agentdeck-scratch`, or
 removed only when all of this is true: no session is running in it, no session
 there belongs to a project, it holds no files and no commits, no conversation
 was recorded there, and it has been idle for `AGENTDECK_SCRATCH_DAYS` (default 7;
-`0` turns the sweep off).
+`0` turns the sweep off). Each directory it takes is named in the server log.
 
 A conversation counts as work even when the directory is empty: Claude's
 history is looked up by directory, a session's recorded conversation identity is
@@ -216,8 +216,14 @@ agentdeck live list
 agentdeck live stop 3
 ```
 
+Live views are **off by default**: start the server with `AGENTDECK_LIVE=1` to
+turn them on. They open listening ports of their own, and `open_live_view` lets
+an agent start a desktop that can be driven from the network, which is not
+something an upgrade should hand anyone. With it off, Media offers none of this
+and the API and the tool say how to enable it.
+
 Both make something loopback-only reachable by whoever can reach AgentDeck, so
-neither happens on its own: a posted localhost link is never exposed until you
+even when enabled neither happens on its own: a posted localhost link is never exposed until you
 press the button, every open view is listed with an *exposed* badge, and each
 one closes when its session ends, after four hours (`ttl_minutes`, at most a
 day), when you stop it, or when the server restarts. Forwards only ever reach

@@ -1,6 +1,7 @@
 """Reaching a target's localhost, and watching a desktop on it, from the browser."""
 import json
 import os
+import re
 import shutil
 import socket
 import subprocess
@@ -12,6 +13,8 @@ import pytest
 from playwright.sync_api import expect
 from conftest import _binary
 from test_terminal_workspace import real_terminal
+
+LIVE=[{'live':True}]
 
 DESKTOP_TOOLS=all(shutil.which(b) for b in ('Xvfb','x11vnc','websockify'))
 
@@ -39,17 +42,18 @@ def cli(t,*args):
     return json.loads(out.stdout) if out.stdout.strip() else None
 
 
+@pytest.mark.parametrize('real_terminal',LIVE,indirect=True)
 def test_a_posted_localhost_link_becomes_reachable_with_one_click(page,real_terminal,loopback_app):
     t=real_terminal;errors=[];page.on('pageerror',lambda e:errors.append(str(e)))
     cli(t,'post',f'http://127.0.0.1:{loopback_app}/index.html','--title','Dev server','--session',str(t['id']))
     page.goto(t['url']+'/#media')
     card=page.locator('.media-card[data-kind="link"]')
     # Nothing is exposed because a link was posted: that takes a person.
-    assert t['api']('/live')==[]
+    assert t['api']('/live')['views']==[]
     card.get_by_role('button',name=f'Expose localhost:{loopback_app} so this device can open it').click()
     live=page.locator('.live-card[data-kind="port"]')
     expect(live).to_contain_text('exposed',timeout=10000);expect(live).to_contain_text(f'localhost:{loopback_app}')
-    view=t['api']('/live')[0]
+    view=t['api']('/live')['views'][0]
     assert view['port']==loopback_app and view['session_id']==t['id'] and view['listen_port']!=loopback_app,view
     # The posted link now points at the forwarded port, path intact.
     expect(card.get_by_role('link')).to_have_attribute('href',f'http://127.0.0.1:{view["listen_port"]}/index.html')
@@ -66,12 +70,13 @@ def test_a_posted_localhost_link_becomes_reachable_with_one_click(page,real_term
     # The CLI is the same door, and knows its session the same way a post does.
     made=cli(t,'expose',str(loopback_app),'--title','From the CLI','--session',str(t['id']))
     assert made['kind']=='port' and made['session_id']==t['id']
-    assert [v['id'] for v in cli(t,'live','list')]==[made['id']]
+    assert [v['id'] for v in cli(t,'live','list')['views']]==[made['id']]
     cli(t,'live','stop',str(made['id']))
-    assert t['api']('/live')==[]
+    assert t['api']('/live')['views']==[]
     assert not errors,errors
 
 
+@pytest.mark.parametrize('real_terminal',LIVE,indirect=True)
 def test_forwards_are_confined_to_the_targets_loopback(real_terminal):
     t=real_terminal
     def post(path,body):
@@ -81,17 +86,18 @@ def test_forwards_are_confined_to_the_targets_loopback(real_terminal):
     assert post('/live/ports',{'port':0})==422
     assert post('/live/ports',{'port':70000})==422
     assert post('/live/ports',{'port':80,'session_id':99999})==422
-    assert t['api']('/live')==[]
+    assert t['api']('/live')['views']==[]
 
 
 @pytest.mark.skipif(not DESKTOP_TOOLS,reason='needs Xvfb, x11vnc and websockify for a real desktop')
+@pytest.mark.parametrize('real_terminal',LIVE,indirect=True)
 def test_a_live_desktop_shows_what_runs_on_the_target(page,real_terminal,loopback_app):
     t=real_terminal;errors=[];page.on('pageerror',lambda e:errors.append(str(e)))
     page.goto(t['url']+'/#media')
     page.locator('#live-desktop').click()
     card=page.locator('.live-card[data-kind="desktop"]')
     expect(card).to_be_visible(timeout=30000)
-    view=t['api']('/live')[0];display=view['detail']['display']
+    view=t['api']('/live')['views'][0];display=view['detail']['display']
     try:
         expect(card).to_contain_text(f'DISPLAY={display}')
         # The embedded client really connects to the display, not merely loads.
@@ -127,3 +133,18 @@ def test_a_live_desktop_shows_what_runs_on_the_target(page,real_terminal,loopbac
         time.sleep(.1)
     assert not os.path.exists(f'/tmp/.X11-unix/X{number}')
     assert not errors,errors
+
+
+def test_live_views_are_not_offered_until_the_operator_turns_them_on(page,real_terminal,loopback_app):
+    # The fixture's server is a default one: nothing here asked for live views.
+    t=real_terminal
+    assert t['api']('/live')=={'enabled':False,'views':[]}
+    cli(t,'post',f'http://127.0.0.1:{loopback_app}/','--title','Dev server','--session',str(t['id']))
+    page.goto(t['url']+'/#media')
+    card=page.locator('.media-card[data-kind="link"]')
+    expect(card).to_contain_text('Dev server')
+    # No bar to start one, and no button on the link that could not work.
+    expect(page.locator('#live')).to_have_count(0)
+    expect(card.get_by_role('button',name=re.compile('Expose'))).to_have_count(0)
+    out=subprocess.run([_binary(),'expose',str(loopback_app)],env={**t['env'],'AGENTDECK_API':t['url'],'TMUX':''},capture_output=True,text=True,timeout=60)
+    assert out.returncode!=0 and 'AGENTDECK_LIVE=1' in out.stderr,out.stderr

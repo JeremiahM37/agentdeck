@@ -37,7 +37,11 @@ type Config struct {
 	// long it stays recoverable after that.
 	ScratchDays      float64
 	ScratchTrashDays float64
-	MockAgentDelay   time.Duration
+	// Live turns on forwarded ports and live desktops. They open listening
+	// ports of their own and let an agent start a desktop that can be driven
+	// from the network, so an operator asks for them; they are not a default.
+	Live           bool
+	MockAgentDelay time.Duration
 
 	VAPIDPrivateKey string
 	VAPIDPublicKey  string
@@ -154,6 +158,7 @@ func Load() *Config {
 		JanitorDays:             envFloat("AGENTDECK_JANITOR_DAYS", 7),
 		ScratchDays:             envFloat("AGENTDECK_SCRATCH_DAYS", 7),
 		ScratchTrashDays:        envFloat("AGENTDECK_SCRATCH_TRASH_DAYS", 14),
+		Live:                    os.Getenv("AGENTDECK_LIVE") == "1",
 		MockAgentDelay:          envSeconds("AGENTDECK_MOCK_DELAY", 0.4),
 		VAPIDPrivateKey:         os.Getenv("AGENTDECK_VAPID_PRIVATE"),
 		VAPIDPublicKey:          os.Getenv("AGENTDECK_VAPID_PUBLIC"),

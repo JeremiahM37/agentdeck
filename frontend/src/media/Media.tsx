@@ -82,7 +82,7 @@ function Body({
 }: {
   row: MediaRow;
   exposed?: LiveView;
-  onExpose: (port: number) => void;
+  onExpose?: (port: number) => void;
 }) {
   const [live, setLive] = useState(false);
   if (row.kind === "link") {
@@ -107,7 +107,7 @@ function Body({
     const target = reachable(row.url);
     return (
       <div className="media-link">
-        {port > 0 && (
+        {port > 0 && onExpose && (
           <button className="b ok media-expose" onClick={() => onExpose(port)}>
             Expose localhost:{port} so this device can open it
           </button>
@@ -175,6 +175,7 @@ export function Media({
   api,
   rows,
   live,
+  liveEnabled,
   targets,
   sessionFilter,
   onFilter,
@@ -184,6 +185,8 @@ export function Media({
   api: Api;
   rows: MediaRow[];
   live: LiveView[];
+  // Off unless the operator turned it on; nothing that needs it is offered then.
+  liveEnabled: boolean;
   targets: Target[];
   sessionFilter: number | null;
   onFilter: (sessionID: number | null) => void;
@@ -225,7 +228,9 @@ export function Media({
           </select>
         </label>
       </div>
-      <Live api={api} views={live} targets={targets} onChanged={onChanged} onNotice={onNotice} />
+      {liveEnabled && (
+        <Live api={api} views={live} targets={targets} onChanged={onChanged} onNotice={onNotice} />
+      )}
       {!rows.length && (
         <div className="media-empty">
           <p>
@@ -261,7 +266,7 @@ export function Media({
                   view.port === loopbackPort(row.url) &&
                   view.session_id === row.session_id,
               )}
-              onExpose={(port) =>
+              onExpose={!liveEnabled ? undefined : (port) =>
                 void api
                   .request("/live/ports", {
                     method: "POST",

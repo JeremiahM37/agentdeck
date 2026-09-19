@@ -164,8 +164,13 @@ func (w *Sweeper) Sweep(ctx context.Context, dryRun bool, onlyTarget int64) (*Re
 			res.Purged += n
 		}
 	}
-	if len(res.Trashed) > 0 && w.Log != nil {
-		w.Log.Info("scratch: removed idle empty workspaces", "count", len(res.Trashed), "purged", res.Purged)
+	// Named one by one: a directory that goes missing should be findable in the
+	// log by its own name, not inferred from a count.
+	for _, name := range res.Trashed {
+		if w.Log != nil {
+			w.Log.Info("scratch: moved an idle empty workspace to the trash", "workspace", name,
+				"idle_days", w.Days, "recoverable_days", w.TrashDays)
+		}
 	}
 	return res, nil
 }

@@ -85,10 +85,16 @@ func (s *Server) liveShutdown() {
 	s.live.forwards.CloseAll()
 }
 
-// liveAllowed refuses when the API is token-protected. A forwarded port is raw
-// TCP and cannot check a bearer token, so opening one would put an unguarded
-// door beside a guarded one. An operator who wants that says so.
+// liveAllowed refuses unless the operator turned live views on, and again when
+// the API is token-protected. A forwarded port is raw TCP and cannot check a
+// bearer token, so opening one would put an unguarded door beside a guarded
+// one. An operator who wants that says so.
 func (s *Server) liveAllowed(w http.ResponseWriter) bool {
+	if !s.Cfg.Live {
+		httpError(w, 409, "live views are off on this server. They open extra listening ports and let an agent "+
+			"start a desktop that can be driven from the network, so they are opt-in: set AGENTDECK_LIVE=1 and restart")
+		return false
+	}
 	if s.Cfg.AuthToken != "" && os.Getenv("AGENTDECK_LIVE_UNAUTHENTICATED") != "1" {
 		httpError(w, 409, "this server requires a token, and a forwarded port cannot check one; "+
 			"set AGENTDECK_LIVE_UNAUTHENTICATED=1 to allow forwards anyone who can reach the server may use")
@@ -166,12 +172,14 @@ func liveError(w http.ResponseWriter, err error) {
 	}
 }
 
+// listLive also says whether the feature is on, so a client offers it only
+// where it would work.
 func (s *Server) listLive(w http.ResponseWriter, r *http.Request) {
-	if s.live.forwards == nil {
-		writeJSON(w, 200, []*forward.Forward{})
-		return
+	views := []*forward.Forward{}
+	if s.live.forwards != nil {
+		views = s.live.forwards.List()
 	}
-	writeJSON(w, 200, s.live.forwards.List())
+	writeJSON(w, 200, map[string]any{"enabled": s.Cfg.Live, "views": views})
 }
 
 // openLivePort forwards one port on a target's localhost.

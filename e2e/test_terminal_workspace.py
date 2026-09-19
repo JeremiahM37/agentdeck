@@ -37,6 +37,8 @@ def real_terminal(tmp_path, request):
     subprocess.run(['git','init','-q',str(root)], check=True)
     subprocess.run(['tmux','-f','/dev/null','new-session','-d','-s','terminal-test','-c',str(root),'bash','--norc'],env=env,check=True, capture_output=True, text=True)
     options = getattr(request, 'param', {})
+    if options.get('live'):
+        env['AGENTDECK_LIVE'] = '1'
     if options.get('isolated_scratch'):
         # The scratch sweep inspects and removes directories under the target's
         # home. Give it a home of its own, so nothing it does can reach the real
