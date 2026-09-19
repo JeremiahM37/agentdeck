@@ -360,6 +360,9 @@ func ProbeExactTmux(ctx context.Context, ex executor.Executor, name string) erro
 // ExportCheckpoint reads the old DB read-only and captures every live session.
 // An unavailable native identity is represented as unknown; callers requiring
 // complete coverage must reject that manifest before replacing the binary.
+// shellAgent marks a session that is a plain shell rather than an agent.
+const shellAgent = "shell"
+
 func ExportCheckpoint(ctx context.Context, dbPath string, factory CheckpointExecutorFactory) (CheckpointManifest, error) {
 	identity, err := dbIdentity(dbPath)
 	if err != nil {
@@ -386,6 +389,14 @@ func ExportCheckpoint(ctx context.Context, dbPath string, factory CheckpointExec
 		}
 		if !checkpointTmuxName.MatchString(row.TmuxSession) {
 			return CheckpointManifest{}, fmt.Errorf("session %d has invalid tmux name", row.ID)
+		}
+		// A blank shell has no agent conversation to carry across an upgrade:
+		// there is nothing to checkpoint and nothing a manifest could restore. Its
+		// tmux session survives the restart like any other. Treating it as an
+		// unsupported row failed the whole export, so one open terminal blocked
+		// every upgrade — and the Terminals view makes opening one a single tap.
+		if row.Agent == shellAgent {
+			continue
 		}
 		if row.Workdir == "" || row.Agent == "" || row.LaunchConfig == "" {
 			return CheckpointManifest{}, fmt.Errorf("session %d is unsupported: missing workdir, agent, or launch configuration", row.ID)

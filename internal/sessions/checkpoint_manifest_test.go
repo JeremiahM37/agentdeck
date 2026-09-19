@@ -259,3 +259,38 @@ func TestImportSkipsEndedRowWithoutAbortingManifest(t *testing.T) {
 		t.Fatalf("ended row report %+v", report)
 	}
 }
+
+func TestExportSkipsABlankShellInsteadOfRefusingTheUpgrade(t *testing.T) {
+	dbPath := writeOldCheckpointDB(t, true)
+	db, err := store.Open(dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// What the New terminal button creates: no agent, so no launch
+	// configuration, no tracking identity and no conversation to resume.
+	_, err = db.Exec(`INSERT INTO sessions(target_id,name,agent,workdir,tmux_session,status,origin,created_at,updated_at)
+ VALUES(1,'Shell · local','shell','/scratch/shell-1','adk-s99','idle','agentdeck',1,1)`)
+	db.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	ex := &checkpointFixtureExecutor{native: true}
+	m, err := ExportCheckpoint(context.Background(), dbPath, func(*store.Target) (executor.Executor, error) { return ex, nil })
+	if err != nil {
+		t.Fatalf("one open shell must not block an upgrade: %v", err)
+	}
+	if len(m.Sessions) != 1 || m.Sessions[0].ID != 1 {
+		t.Fatalf("the agent session is still covered and the shell is not listed: %+v", m.Sessions)
+	}
+	// A real agent row that cannot be described is still a hard stop.
+	db, _ = store.Open(dbPath)
+	_, err = db.Exec(`INSERT INTO sessions(target_id,name,agent,workdir,tmux_session,status,origin,created_at,updated_at)
+ VALUES(1,'broken','claude','/w','adk-s98','idle','agentdeck',1,1)`)
+	db.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ExportCheckpoint(context.Background(), dbPath, func(*store.Target) (executor.Executor, error) { return ex, nil }); err == nil {
+		t.Fatal("an agent session with no launch configuration must still refuse the export")
+	}
+}

@@ -185,6 +185,9 @@ columns = {row[1] for row in conn.execute("PRAGMA table_info(sessions)")}
 where = ["ended_at IS NULL"]
 if "archived_at" in columns:
     where.append("archived_at IS NULL")
+# A blank shell has no agent conversation to recover; the exporter leaves it out
+# of the manifest, so it must not count as uncovered here.
+where.append("agent <> 'shell'")
 rows = conn.execute("SELECT id FROM sessions WHERE " + " AND ".join(where)).fetchall()
 conn.close()
 ids = {int(r[0]) for r in rows}
