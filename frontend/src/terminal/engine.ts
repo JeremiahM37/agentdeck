@@ -122,6 +122,9 @@ export class Engine {
       host: options.host,
       term: this.term,
       enabled: () => this.connected && !this.paused && !this.stopped,
+      // Held still, the terminal becomes text: the buffer as the phone's own
+      // selectable type, which is the only kind a phone can select and copy.
+      longPress: () => this.freeze(true),
       autoscrollHost: options.pane,
       historyViewport: () =>
         this.readingRetainedHistory ? options.frozen : null,
@@ -358,6 +361,9 @@ export class Engine {
         buffer = this.term.buffer.active;
       for (let i = 0; i < buffer.length; i++)
         lines.push(buffer.getLine(i)?.translateToString(true) || "");
+      // The rows under the cursor are blank; left in, the frozen view would
+      // open scrolled to an empty screen instead of to what was just showing.
+      while (lines.length && !lines[lines.length - 1]) lines.pop();
       this.frozenText = snapshot ?? lines.join("\n");
     }
     this.term.options.disableStdin = on || !this.connected;

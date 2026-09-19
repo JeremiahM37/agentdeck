@@ -10,7 +10,14 @@ import {
 } from "react";
 import { Engine, type Snapshot } from "./engine";
 import { modified, type Mods } from "./keys";
-import { Appearance, Desktop, HistoryDialog, WorkspaceFiles } from "./dialogs";
+import {
+  Appearance,
+  Desktop,
+  HistoryDialog,
+  Snippets,
+  WorkspaceFiles,
+} from "./dialogs";
+import { loadSnippets, saveSnippets, snippetBytes } from "./snippets";
 import {
   copyClipboard,
   FONT_MAX,
@@ -102,6 +109,11 @@ function Pane({
   useLayoutEffect(() => {
     engine.current?.syncFrozenLayout();
   }, [state.retained, state.frozen]);
+  // A paused view opens where the live one was: at the latest output.
+  useLayoutEffect(() => {
+    if (state.paused && !state.retained && frozen.current)
+      frozen.current.scrollTop = frozen.current.scrollHeight;
+  }, [state.paused, state.retained]);
   return (
     <section
       ref={el}
@@ -218,8 +230,9 @@ export function TerminalApp({
   const [notice, setNotice] = useState("");
   const [uploading, setUploading] = useState(0);
   const [dialog, setDialog] = useState<
-    "appearance" | "history" | "files" | "desktop" | null
+    "appearance" | "history" | "files" | "desktop" | "snippets" | null
   >(null);
+  const [snippets, setSnippets] = useState(loadSnippets);
   const [historyPane, setHistoryPane] = useState("agent");
   const [previewPath, setPreviewPath] = useState<string>();
   const [search, setSearch] = useState(false);
@@ -896,12 +909,54 @@ export function TerminalApp({
             />
           ))}
       </main>
+      {mobile && state?.paused && (
+        <div id="select-bar" role="toolbar" aria-label="Text selection">
+          <span>Hold any text to select it</span>
+          <button
+            id="select-copy-all"
+            onClick={() => {
+              const engine = current();
+              if (!engine) return;
+              void copyClipboard(engine.options.frozen.textContent || "", () => {})
+                .then(() => setNotice("Copied the whole screen buffer."))
+                .catch((error) => setNotice(errorMessage(error)));
+            }}
+          >
+            Copy all
+          </button>
+          <button
+            id="select-done"
+            className="primary"
+            // Keep focus off this button: it is about to be removed, and focus
+            // left on a removed element lands on the page, not the terminal.
+            onPointerDown={(event) => event.preventDefault()}
+            onClick={() => {
+              const engine = current();
+              engine?.freeze(false);
+              setTimeout(() => engine?.term.focus(), 60);
+            }}
+          >
+            Done
+          </button>
+        </div>
+      )}
       {fontHint && (
         <div id="font-hint" role="status">
           {fontHint} · {current()?.term.cols ?? 0} columns
         </div>
       )}
       <div id="terminal-keybar" role="group" aria-label="Terminal keys">
+        <button
+          data-terminal-key="snippets"
+          className="snippets"
+          aria-label="Snippets"
+          title="Saved replies"
+          disabled={!state?.connected || state.paused}
+          onPointerDown={(event) => event.preventDefault()}
+          onClick={() => setDialog("snippets")}
+        >
+          ⚡
+        </button>
         {keyOrder.map((key) =>
           key === "ctrl" || key === "alt" ? (
             <button
@@ -987,6 +1042,22 @@ export function TerminalApp({
               );
             engine.paste(text);
           }}
+        />
+      )}
+      {dialog === "snippets" && (
+        <Snippets
+          snippets={snippets}
+          onChange={(next) => {
+            setSnippets(next);
+            saveSnippets(next);
+          }}
+          onSend={(snippet) => {
+            const engine = current();
+            if (!engine) return;
+            engine.input(snippetBytes(snippet));
+            engine.term.scrollToBottom();
+          }}
+          onClose={close}
         />
       )}
       {dialog === "desktop" && info && (

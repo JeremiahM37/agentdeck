@@ -11,7 +11,7 @@
 .session-filters { display: contents; }
 /* Words a desk has room for and a phone does not; the full name stays in the
    control's label for a screen reader either way. */
-@media (max-width: 600px) { .wide-only { display: none; } }
+@media (max-width: 600px) { .wide-only, .wide-only-control { display: none; } }
 
 @media (max-width: 600px) {
   :root { --tabbar-h: calc(50px + env(safe-area-inset-bottom, 0px)); }
@@ -26,11 +26,19 @@
   #tabbar .tab-ic svg { width: 19px; height: 19px; }
   #tabbar .badge { transform: scale(0.85); }
   .list { padding: 0 10px; gap: 8px; }
-  .page-heading, .sesshead, .pane-head { padding: 2px 0 6px; gap: 6px; }
+  /* The session header sits inside a padded list; the others are full-bleed
+     and carry their own gutter. */
+  .sesshead { padding: 2px 0 6px; gap: 6px; }
+  .page-heading, .pane-head { padding: 2px 12px 6px; gap: 6px; }
+  #media { padding: 0 10px; }
+  #media .pane-head { padding-left: 2px; padding-right: 2px; }
   .page-heading h2, .sesshead h2, .pane-head h2, #media h2 { font-size: 17px; }
   .page-heading p, .sesshead p, .pane-head .sub { font-size: 11.5px; margin-top: 1px; }
   .b { min-height: 34px; padding: 6px 10px; font-size: 12.5px; }
   .f, select.f, input.f { min-height: 36px; font-size: 14px; }
+  /* Every compacted select: the desk's vertical padding inside a shorter box
+     clips the text, so the box centres it instead. */
+  select { padding-top: 0; padding-bottom: 0; line-height: normal; }
 
   /* Sessions: title and the primary action share a row; the three secondary
      actions share the next, instead of taking a row each. */
@@ -67,7 +75,60 @@
   .media-card { padding: 10px; gap: 8px; border-radius: 10px; }
   .media-card h3 { font-size: 14px; margin-bottom: 4px; }
   .media-frame { height: 300px; }
-  .live-bar { gap: 6px; margin-bottom: 10px; }
-  .live-expose input { width: 104px; }
+  /* Machine, desktop, port, expose: one row, not two. */
+  .media-filter { font-size: 11px; gap: 5px; }
+  .media-filter select { min-height: 32px; height: 32px; font-size: 12px; padding: 0 6px; max-width: 150px; }
+  .live-bar { flex-wrap: nowrap; gap: 5px; margin-bottom: 10px; }
+  .live-bar label { flex: 1 1 0; min-width: 0; font-size: 0; gap: 0; }
+  .live-bar select { width: 100%; min-width: 0; min-height: 34px; height: 34px; font-size: 12px; padding: 0 6px; }
+  .live-bar .b { flex: none; padding: 0 9px; height: 34px; }
+  .live-expose { flex: none; gap: 5px; }
+  .live-expose input { width: 58px; min-height: 34px; height: 34px; font-size: 12px; padding: 2px 6px; }
+  .media-link .b, .media-card footer .b, .media-card footer a.b { min-height: 34px; padding: 0 10px; }
   .scratch-review { margin-top: 16px; }
+
+  /* Chat: the transcript is the point. Header, reader controls and composer
+     gave it under half the screen. */
+  .conversation-head { padding: 6px 10px; gap: 8px; }
+  .conversation-head h2 { font-size: 15px; }
+  .conversation-head p { font-size: 11px; margin-top: 1px; }
+  .conversation .b { min-height: 34px; padding: 0 10px; font-size: 12.5px; }
+  .reader-controls { padding: 3px 10px; font-size: 11px; }
+  #conversation-input { height: 58px; min-height: 44px; font-size: 15px; padding: 8px 10px; }
+  #conversation-hint { display: none; }
+  .conversation label[for="conversation-input"] { font-size: 11px; margin-bottom: 3px; }
+}
+
+/* A sheet is a <dialog>, and the browser's own dialog styles cap its width and
+   centre it with auto margins: on a narrow screen it came out 35px short and
+   pushed against the right edge. Below the desktop layout it is a full-width
+   bottom sheet, as its left:0/right:0 always meant it to be. */
+@media (max-width: 1023px) {
+  /* Height follows top and bottom: the browser default is fit-content, which
+     without the auto margins runs the sheet off the bottom of the screen. */
+  #sheet { width: 100%; max-width: 100%; margin: 0; height: auto; max-height: none; }
+}
+@media (max-width: 600px) {
+  /* Only the side gutters narrow. The bottom padding is what the sticky action
+     bar is measured against, and a test holds Start session fully on screen. */
+  #sheet { top: 3dvh; padding-left: 12px; padding-right: 12px; }
+  .sheet-head { padding-bottom: 8px; margin-bottom: 8px; }
+  .sheet-head h2 { font-size: 17px; }
+  #sheet p, #sheet .subhint, #sheet small { font-size: 11.5px; margin: 3px 0 6px; line-height: 1.4; }
+  #sheet label { font-size: 12px; margin-top: 8px; }
+  #sheet { font-size: 12.5px; }
+  /* The form's fields carry no shared class, so they are named by element. */
+  #sheet input:not([type="checkbox"]):not([type="radio"]), #sheet select, #sheet textarea {
+    width: 100%; max-width: 100%; box-sizing: border-box; min-height: 38px; font-size: 15px;
+    padding: 6px 10px; margin-top: 3px;
+  }
+  /* A fixed height with the desk's vertical padding clips the text; let the
+     height centre it instead. */
+  #sheet select { height: 38px; padding-top: 0; padding-bottom: 0; line-height: normal; }
+  /* The sticky action bar bleeds to the sheet's edges with negative margins, so
+     they have to follow the sheet's padding wherever that changes. */
+  .session-launch-actions { margin-left: -12px; margin-right: -12px; padding-left: 12px; padding-right: 12px; }
+  /* A checkbox sits beside its words, not centred above them. */
+  #sheet label:has(> input[type="checkbox"]) { display: flex; align-items: center; gap: 8px; }
+  #sheet input[type="checkbox"] { width: 18px; height: 18px; min-height: 0; margin: 0; flex: none; }
 }

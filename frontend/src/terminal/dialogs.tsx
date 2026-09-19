@@ -1,4 +1,5 @@
 import { errorMessage } from "./model";
+import type { Snippet } from "./snippets";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
   copyClipboard,
@@ -666,6 +667,89 @@ export function Desktop({
           Copy command
         </button>
       </details>
+    </Dialog>
+  );
+}
+
+// Snippets: tap one to send it, or manage the list.
+export function Snippets({
+  snippets,
+  onSend,
+  onChange,
+  onClose,
+}: {
+  snippets: Snippet[];
+  onSend: (snippet: Snippet) => void;
+  onChange: (snippets: Snippet[]) => void;
+  onClose: () => void;
+}) {
+  const [text, setText] = useState(""),
+    [enter, setEnter] = useState(true),
+    [editing, setEditing] = useState(false);
+  return (
+    <Dialog
+      id="snippets-dialog"
+      title="Snippets"
+      onClose={onClose}
+      actions={
+        <button id="snippets-edit" aria-pressed={editing} onClick={() => setEditing(!editing)}>
+          {editing ? "Done" : "Edit"}
+        </button>
+      }
+    >
+      <div className="snippet-list">
+        {snippets.map((snippet, index) => (
+          <div className="snippet-row" key={index + snippet.text}>
+            <button
+              className="snippet-send"
+              disabled={editing}
+              onClick={() => {
+                onSend(snippet);
+                onClose();
+              }}
+            >
+              <code>{snippet.text}</code>
+              {snippet.enter && <span aria-label="then Enter">⏎</span>}
+            </button>
+            {editing && (
+              <button
+                className="snippet-remove"
+                aria-label={"Remove " + snippet.text}
+                onClick={() => onChange(snippets.filter((_, other) => other !== index))}
+              >
+                ×
+              </button>
+            )}
+          </div>
+        ))}
+        {!snippets.length && <p>No snippets yet. Add the replies you type most.</p>}
+      </div>
+      <form
+        className="snippet-add"
+        onSubmit={(event) => {
+          event.preventDefault();
+          if (!text) return;
+          onChange([...snippets, { text, enter }]);
+          setText("");
+        }}
+      >
+        <input
+          id="snippet-text"
+          aria-label="New snippet"
+          placeholder="New snippet"
+          autoCapitalize="off"
+          autoCorrect="off"
+          spellCheck={false}
+          value={text}
+          onChange={(event) => setText(event.target.value)}
+        />
+        <label className="snippet-enter">
+          <input type="checkbox" checked={enter} onChange={(event) => setEnter(event.target.checked)} />⏎
+        </label>
+        <button id="snippet-add" disabled={!text}>
+          Add
+        </button>
+      </form>
     </Dialog>
   );
 }

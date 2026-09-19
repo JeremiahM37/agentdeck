@@ -3,6 +3,9 @@ interface ScrollOptions {
   host: HTMLElement;
   term: Terminal;
   enabled: () => boolean;
+  // A finger held still. xterm has no touch selection, so the page answers a
+  // long press by showing the buffer as text the phone can select natively.
+  longPress?: () => void;
   retainedHistory: (lines: number) => void;
   liveIntent: () => void;
   autoscrollHost?: HTMLElement;
@@ -36,8 +39,10 @@ export function installTerminalScroll({
   liveIntent,
   autoscrollHost = host,
   historyViewport = () => null,
+  longPress,
 }: ScrollOptions) {
   let gesture: Gesture | null = null,
+    held: number | undefined,
     momentum: number | undefined,
     disposed = false;
   const linePixels = () => Math.max(8, (term.options.fontSize || 15) * 0.8);
@@ -110,11 +115,21 @@ export function installTerminalScroll({
         // A second finger is a pinch to resize the type; the drag the first
         // finger began must not keep scrolling underneath it.
         gesture = null;
+        clearTimeout(held);
         stop();
         return;
       }
       if (e.pointerType !== "touch" || !e.isPrimary || !enabled()) return;
       stop();
+      clearTimeout(held);
+      if (longPress)
+        held = window.setTimeout(() => {
+          // Still down and never moved: a press, not the start of a scroll.
+          if (gesture && !gesture.dragged) {
+            gesture = null;
+            longPress();
+          }
+        }, 520);
       gesture = {
         id: e.pointerId,
         y: e.clientY,
@@ -134,8 +149,11 @@ export function installTerminalScroll({
       if (!gesture || e.pointerId !== gesture.id) return;
       const g = gesture,
         now = performance.now();
+      // Sideways counts too: a slow swipe between terminals is not a press.
+      if (Math.abs(e.clientX - g.x) > 10) clearTimeout(held);
       if (!g.dragged && Math.abs(e.clientY - g.start) < 6) return;
       g.dragged = true;
+      clearTimeout(held);
       try {
         host.setPointerCapture(e.pointerId);
       } catch {}
@@ -168,6 +186,7 @@ export function installTerminalScroll({
     if (!gesture || e.pointerId !== gesture.id) return;
     const g = gesture;
     gesture = null;
+    clearTimeout(held);
     try {
       host.releasePointerCapture(e.pointerId);
     } catch {}

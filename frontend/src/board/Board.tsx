@@ -266,7 +266,10 @@ export function Board({
         <h2>Task board</h2>
         <div className="btnrow">
           <button id="qb-routines" onClick={() => setSheet("routines")}>Routines</button>
-          <button onClick={() => setSheet("new")}>+ New task</button>
+          {/* A phone has the floating button under the thumb; one is enough. */}
+          <button className="wide-only-control" onClick={() => setSheet("new")}>
+            + New task
+          </button>
         </div>
       </div>
       <div id="quickbar">

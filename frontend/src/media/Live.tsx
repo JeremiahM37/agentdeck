@@ -189,11 +189,18 @@ export function Live({
         <button
           className="b"
           id="live-desktop"
+          aria-label="Live desktop"
           disabled={!!busy}
           title="Start a desktop on that machine and watch it here"
           onClick={() => open("desktops", { title: "Live desktop" })}
         >
-          {busy === "desktops" ? "Starting…" : "＋ Live desktop"}
+          {busy === "desktops" ? (
+            "Starting…"
+          ) : (
+            <>
+              ＋<span className="wide-only"> Live</span> desktop
+            </>
+          )}
         </button>
         <form
           className="live-expose"
@@ -205,7 +212,8 @@ export function Live({
           <input
             aria-label="Port on that machine's localhost"
             inputMode="numeric"
-            placeholder="localhost port"
+            placeholder="port"
+            title="A port on that machine's localhost"
             value={port}
             onChange={(event) => setPort(event.target.value.replace(/\D/g, "").slice(0, 5))}
           />

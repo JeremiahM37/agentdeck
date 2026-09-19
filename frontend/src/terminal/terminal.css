@@ -735,6 +735,64 @@ body.mobile-terminal #terminal-keybar {
   border: 0;
   border-radius: 6px;
 }
+#terminal-keybar button.snippets {
+  color: var(--accent);
+  font-size: 15px;
+}
+.snippet-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 12px 0;
+}
+.snippet-row {
+  display: flex;
+  max-width: 100%;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  overflow: hidden;
+}
+.snippet-row button {
+  border: 0;
+  border-radius: 0;
+  min-height: 38px;
+}
+.snippet-send {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+.snippet-send code {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 60vw;
+}
+.snippet-send span {
+  color: var(--muted);
+}
+.snippet-remove {
+  color: #ff9aa5;
+  border-left: 1px solid var(--line) !important;
+}
+.snippet-add {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+.snippet-add > input {
+  flex: 1;
+  min-width: 0;
+}
+dialog label.snippet-enter {
+  margin: 0;
+  gap: 4px;
+  justify-content: flex-start;
+}
+dialog label.snippet-enter input {
+  width: auto;
+}
 #terminal-keybar button.modifier {
   color: var(--muted);
 }
@@ -763,6 +821,42 @@ body.mobile-terminal #terminal-keybar {
   border: 1px solid #3a465a;
   font-size: 13px;
   pointer-events: none;
+}
+/* Shown while a long press has turned the terminal into selectable text. */
+#select-bar {
+  position: fixed;
+  top: 6px;
+  left: 6px;
+  right: 6px;
+  z-index: 40;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 6px 5px 12px;
+  border-radius: 10px;
+  background: #1b2432f2;
+  border: 1px solid #3a465a;
+  font-size: 12px;
+  color: var(--muted);
+}
+#select-bar span {
+  flex: 1;
+  min-width: 0;
+}
+#select-bar button {
+  min-height: 34px;
+  padding: 0 12px;
+  font-size: 12.5px;
+}
+#select-bar button.primary {
+  background: #7860d2;
+  border-color: #8f79df;
+  color: white;
+}
+body.mobile-terminal .frozen {
+  padding: 4px;
+  -webkit-user-select: text;
+  user-select: text;
 }
 body.mobile-terminal .terminal-host {
   padding: 3px 1px 1px 3px;
